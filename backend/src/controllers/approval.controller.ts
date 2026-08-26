@@ -1,26 +1,31 @@
 import { Response } from 'express';
 import { inMemoryDB } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { formatMinutesToDuration, formatTime12h } from '../utils/calculations';
+import { calculateDurationMinutes, calculateOvertimeMinutes, formatMinutesToDuration, formatTime12h, getTodayDateString } from '../utils/calculations';
 
 export const approvalController = {
-  // 1. List All Pending Approvals (Attendance Requests, Multi-day Requests, Corrections, Overtime)
+  // 1. List All Pending Approvals (Attendance Requests, Multi-day Requests, Today Requests, Closing Requests, Overtime)
   listPendingApprovals: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    // A. Pending Attendance Requests
     const pendingRequests = inMemoryDB.attendanceRequests
-      .filter((r) => r.status === 'WAITING_FOR_APPROVAL')
+      .filter((r) => r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL')
       .map((r) => {
         const employee = inMemoryDB.users.find((u) => u.id === r.employeeId);
         let parsedDates: string[] = [];
         try {
-          parsedDates = JSON.parse(r.dates);
+          parsedDates = typeof r.dates === 'string' ? JSON.parse(r.dates) : r.dates;
         } catch {
           parsedDates = [r.dates];
         }
 
+        let typeLabel = 'Attendance Request';
+        if (r.requestType === 'TODAY_ATTENDANCE') typeLabel = "Today's Check-in Request";
+        else if (r.requestType === 'CLOSING_REQUEST' || r.requestType === 'EARLY_CHECKOUT') typeLabel = 'Attendance Closing Request';
+        else if (r.requestType === 'MULTI_DAY_MISSED') typeLabel = 'Multi-Day Attendance Request';
+
         return {
           id: r.id,
-          type: r.requestType === 'MULTI_DAY_MISSED' ? 'MULTI_DAY_REQUEST' : r.requestType === 'CHECKOUT_CORRECTION' ? 'CHECKOUT_CORRECTION' : 'ATTENDANCE_REQUEST',
+          requestType: r.requestType,
+          type: typeLabel,
           employeeId: r.employeeId,
           employeeName: employee?.name || 'Unknown Employee',
           employeeCode: employee?.employeeCode || 'EMP',
@@ -31,11 +36,12 @@ export const approvalController = {
           checkOutTime: r.checkOutTime,
           reason: r.reason,
           remarks: r.remarks,
+          status: r.status,
           submittedAt: r.createdAt,
         };
       });
 
-    // B. Pending Overtime Approvals
+    // Pending Overtime Approvals
     const pendingOT = inMemoryDB.attendances
       .filter((a) => a.otStatus === 'OT_PENDING_APPROVAL')
       .map((a) => {
@@ -43,7 +49,8 @@ export const approvalController = {
         return {
           id: `ot-${a.id}`,
           attendanceId: a.id,
-          type: 'OVERTIME',
+          requestType: 'OVERTIME',
+          type: 'Overtime Approval',
           employeeId: a.employeeId,
           employeeName: employee?.name || 'Unknown Employee',
           employeeCode: employee?.employeeCode || 'EMP',
@@ -56,6 +63,7 @@ export const approvalController = {
           otFormatted: formatMinutesToDuration(a.otMinutes),
           reason: `Potential Overtime of ${formatMinutesToDuration(a.otMinutes)} clocked beyond scheduled shift.`,
           remarks: a.notes || '',
+          status: 'UNDER_APPROVAL',
           submittedAt: a.updatedAt,
         };
       });
@@ -73,10 +81,10 @@ export const approvalController = {
     });
   },
 
-  // 2. Action: Approve or Reject a Request
+  // 2. Process Approval (Approve, Reject, or Modify Times)
   processApproval: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
-    const { action, remarks } = req.body; // action: 'APPROVE' | 'REJECT'
+    const { action, remarks, approvedCheckInTime, approvedCheckOutTime } = req.body;
 
     if (!['APPROVE', 'REJECT'].includes(action)) {
       res.status(400).json({ success: false, message: "Action must be 'APPROVE' or 'REJECT'." });
@@ -100,7 +108,6 @@ export const approvalController = {
       attendance.otStatus = action === 'APPROVE' ? 'OT_APPROVED' : 'OT_REJECTED';
       attendance.updatedAt = new Date();
 
-      // Audit log
       inMemoryDB.auditLogs.push({
         id: `aud-${Date.now()}`,
         employeeId: attendance.employeeId,
@@ -141,29 +148,51 @@ export const approvalController = {
 
     const employee = inMemoryDB.users.find((u) => u.id === request.employeeId);
 
-    // If approved, create or update attendance records for each requested date
     if (action === 'APPROVE') {
       let datesList: string[] = [];
       try {
-        datesList = JSON.parse(request.dates);
+        datesList = typeof request.dates === 'string' ? JSON.parse(request.dates) : request.dates;
       } catch {
         datesList = [request.dates];
       }
 
+      const todayStr = getTodayDateString();
+
       for (const dateStr of datesList) {
-        const existing = inMemoryDB.attendances.find(
+        let existing = inMemoryDB.attendances.find(
           (a) => a.employeeId === request.employeeId && a.date === dateStr
         );
 
-        const checkInDate = new Date(`${dateStr}T${request.checkInTime || '09:00'}:00`);
-        const checkOutDate = request.checkOutTime ? new Date(`${dateStr}T${request.checkOutTime}:00`) : null;
-        const durationMins = checkOutDate ? Math.max(0, Math.floor((checkOutDate.getTime() - checkInDate.getTime()) / 60000)) : null;
+        const inTimeStr = approvedCheckInTime || request.checkInTime || '09:00';
+        const outTimeStr = approvedCheckOutTime || request.checkOutTime || null;
+
+        const checkInDate = new Date(`${dateStr}T${inTimeStr}:00`);
+        const checkOutDate = outTimeStr ? new Date(`${dateStr}T${outTimeStr}:00`) : null;
+        const durationMins = checkOutDate ? calculateDurationMinutes(checkInDate, checkOutDate) : null;
+
+        // Overtime check if checkout is present
+        let otMinutes = 0;
+        let otStatus = 'NONE';
+        if (checkOutDate) {
+          const schedule = inMemoryDB.schedules.find(
+            (s) => s.employeeId === request.employeeId && s.dayOfWeek === new Date(dateStr).getDay()
+          );
+          if (schedule && schedule.endTime) {
+            otMinutes = calculateOvertimeMinutes(checkOutDate, schedule.endTime);
+            if (otMinutes > 0) otStatus = 'OT_APPROVED';
+          }
+        }
 
         if (existing) {
           existing.status = 'PRESENT';
-          if (!existing.checkInTime) existing.checkInTime = checkInDate;
-          if (request.checkOutTime) existing.checkOutTime = checkOutDate;
-          if (durationMins) existing.workingDurationMinutes = durationMins;
+          if (inTimeStr) existing.checkInTime = checkInDate;
+          if (checkOutDate) {
+            existing.checkOutTime = checkOutDate;
+            existing.workingDurationMinutes = durationMins;
+            existing.otMinutes = otMinutes;
+            existing.otStatus = otStatus;
+          }
+          existing.notes = `Approved: ${request.reason}`;
           existing.updatedAt = new Date();
         } else {
           inMemoryDB.attendances.push({
@@ -183,8 +212,8 @@ export const approvalController = {
             checkOutLongitude: null,
             workingDurationMinutes: durationMins,
             status: 'PRESENT',
-            otMinutes: 0,
-            otStatus: 'NONE',
+            otMinutes,
+            otStatus,
             notes: `Approved request: ${request.reason}`,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -193,7 +222,6 @@ export const approvalController = {
       }
     }
 
-    // Audit log
     inMemoryDB.auditLogs.push({
       id: `aud-${Date.now()}`,
       employeeId: request.employeeId,
@@ -205,6 +233,7 @@ export const approvalController = {
       performedById: reviewerId,
       details: JSON.stringify({
         requestId: request.id,
+        requestType: request.requestType,
         dates: request.dates,
         reviewer: reviewerName,
         remarks: remarks || '',

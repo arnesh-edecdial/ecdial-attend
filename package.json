@@ -1,0 +1,11 @@
+{
+  "name": "ecdial-system",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix web run dev",
+    "dev:mobile": "npm --prefix mobile start",
+    "build": "npm --prefix backend run build && npm --prefix web run build"
+  }
+}

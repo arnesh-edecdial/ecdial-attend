@@ -40,7 +40,7 @@ export const attendanceController = {
     });
   },
 
-  // 2. Get Employee Today's Attendance Status
+  // 2. Get Employee Today's Attendance Status (Dynamic & State-Aware)
   getTodayStatus: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -52,7 +52,7 @@ export const attendanceController = {
     const todayDate = new Date();
     const dayOfWeek = todayDate.getDay(); // 0 = Sun, 1 = Mon ...
 
-    // Check holiday
+    // Check holiday / company leave
     const holiday = inMemoryDB.holidays.find((h) => h.date === todayStr);
 
     // Check schedule
@@ -66,12 +66,11 @@ export const attendanceController = {
       (a) => a.employeeId === employeeId && a.date === todayStr
     );
 
-    // Check pending request
-    const pendingRequest = inMemoryDB.attendanceRequests.find(
+    // Check single active/pending request
+    const activeRequest = inMemoryDB.attendanceRequests.find(
       (r) =>
         r.employeeId === employeeId &&
-        r.status === 'WAITING_FOR_APPROVAL' &&
-        r.dates.includes(todayStr)
+        (r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL')
     );
 
     const office = inMemoryDB.officeConfig;
@@ -80,8 +79,11 @@ export const attendanceController = {
     let checkInFormatted = null;
     let checkOutFormatted = null;
     let durationFormatted = null;
+    let isCurrentlyWorking = false;
 
-    if (attendance) {
+    if (holiday) {
+      displayStatus = 'COMPANY_LEAVE';
+    } else if (attendance) {
       if (attendance.checkInTime) {
         checkInFormatted = formatTime12h(attendance.checkInTime);
       }
@@ -90,17 +92,23 @@ export const attendanceController = {
       }
       if (attendance.workingDurationMinutes) {
         durationFormatted = formatMinutesToDuration(attendance.workingDurationMinutes);
+      } else if (attendance.checkInTime && !attendance.checkOutTime) {
+        const currentDur = calculateDurationMinutes(new Date(attendance.checkInTime), new Date());
+        durationFormatted = formatMinutesToDuration(currentDur);
       }
 
       if (attendance.status === 'PRESENT') {
-        displayStatus = attendance.checkOutTime ? 'COMPLETED' : 'CHECKED_IN';
+        if (attendance.checkOutTime) {
+          displayStatus = 'COMPLETED';
+        } else {
+          displayStatus = 'CHECKED_IN';
+          isCurrentlyWorking = true;
+        }
       } else {
         displayStatus = attendance.status;
       }
-    } else if (pendingRequest) {
+    } else if (activeRequest) {
       displayStatus = 'WAITING_FOR_APPROVAL';
-    } else if (holiday) {
-      displayStatus = 'HOLIDAY';
     } else if (!isWorkingDay) {
       displayStatus = 'WEEKLY_OFF';
     }
@@ -110,6 +118,18 @@ export const attendanceController = {
       data: {
         date: todayStr,
         displayStatus,
+        isCurrentlyWorking,
+        activeRequest: activeRequest
+          ? {
+              id: activeRequest.id,
+              requestType: activeRequest.requestType,
+              status: activeRequest.status,
+              dates: typeof activeRequest.dates === 'string' ? JSON.parse(activeRequest.dates) : activeRequest.dates,
+              checkInTime: activeRequest.checkInTime,
+              checkOutTime: activeRequest.checkOutTime,
+              reason: activeRequest.reason,
+            }
+          : null,
         attendance: attendance
           ? {
               ...attendance,
@@ -154,8 +174,18 @@ export const attendanceController = {
     }
 
     const todayStr = getTodayDateString();
-    const todayDate = new Date();
-    const dayOfWeek = todayDate.getDay();
+
+    // Rule 7, 8: Company Leave Day Check (Normal attendance disabled for everyone on Company Leave)
+    const holiday = inMemoryDB.holidays.find((h) => h.date === todayStr);
+    if (holiday) {
+      res.status(400).json({
+        success: false,
+        errorType: 'COMPANY_LEAVE',
+        message: 'Today is a company leave day. Attendance is not required.',
+        holidayName: holiday.name,
+      });
+      return;
+    }
 
     // Rule 9: Check existing duplicate check-in
     const existingAttendance = inMemoryDB.attendances.find(
@@ -203,7 +233,6 @@ export const attendanceController = {
     }
 
     if (Number(accuracy) > 150) {
-      // Inaccurate GPS reading
       res.status(400).json({
         success: false,
         errorType: 'GPS_INACCURATE',
@@ -222,7 +251,6 @@ export const attendanceController = {
     );
 
     if (!geoResult.isWithin) {
-      // Audit log failed attempt outside office
       inMemoryDB.auditLogs.push({
         id: `aud-${Date.now()}`,
         employeeId: employee.id,
@@ -252,11 +280,11 @@ export const attendanceController = {
       return;
     }
 
-    // Rule 8: Schedule / Working day check
+    const todayDate = new Date();
+    const dayOfWeek = todayDate.getDay();
     const schedule = inMemoryDB.schedules.find(
       (s) => s.employeeId === employee.id && s.dayOfWeek === dayOfWeek
     );
-    const holiday = inMemoryDB.holidays.find((h) => h.date === todayStr);
 
     const now = new Date();
     const newAttendance = {
@@ -278,14 +306,13 @@ export const attendanceController = {
       status: 'PRESENT',
       otMinutes: 0,
       otStatus: 'NONE',
-      notes: holiday ? `Present on Holiday (${holiday.name})` : schedule && !schedule.isWorkingDay ? 'Present on Weekly Off' : null,
+      notes: schedule && !schedule.isWorkingDay ? 'Present on Weekly Off' : null,
       createdAt: now,
       updatedAt: now,
     };
 
     inMemoryDB.attendances.push(newAttendance);
 
-    // Audit log successful check-in
     inMemoryDB.auditLogs.push({
       id: `aud-${Date.now()}`,
       employeeId: employee.id,
@@ -359,11 +386,9 @@ export const attendanceController = {
     attendance.checkOutLongitude = longitude !== undefined ? Number(longitude) : null;
     attendance.checkOutGpsAccuracy = accuracy !== undefined ? Number(accuracy) : null;
 
-    // Calculate working duration
     const durationMins = calculateDurationMinutes(new Date(attendance.checkInTime), now);
     attendance.workingDurationMinutes = durationMins;
 
-    // Check schedule for Overtime
     const dayOfWeek = now.getDay();
     const schedule = inMemoryDB.schedules.find(
       (s) => s.employeeId === employee.id && s.dayOfWeek === dayOfWeek
@@ -375,7 +400,6 @@ export const attendanceController = {
     if (schedule && schedule.endTime) {
       otMinutes = calculateOvertimeMinutes(now, schedule.endTime);
       if (otMinutes >= 30) {
-        // More than 30 mins overtime requires admin approval
         otStatus = 'OT_PENDING_APPROVAL';
       }
     }
@@ -384,7 +408,6 @@ export const attendanceController = {
     attendance.otStatus = otStatus;
     attendance.updatedAt = now;
 
-    // Audit log checkout
     inMemoryDB.auditLogs.push({
       id: `aud-${Date.now()}`,
       employeeId: employee.id,
@@ -425,22 +448,10 @@ export const attendanceController = {
     });
   },
 
-  // 5. Submit Single or Multi-Day Attendance Request / Correction
+  // 5. Submit Attendance Request (Single Active Request Model, Today Request, Closing Request)
   submitAttendanceRequest: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Authentication required.' });
-      return;
-    }
-
-    const { requestType, dates, checkInTime, checkOutTime, reason, remarks } = req.body;
-
-    if (!dates || !Array.isArray(dates) || dates.length === 0) {
-      res.status(400).json({ success: false, message: 'Please select at least one date.' });
-      return;
-    }
-
-    if (!reason || reason.trim() === '') {
-      res.status(400).json({ success: false, message: 'Please provide a reason for the attendance request.' });
       return;
     }
 
@@ -450,16 +461,58 @@ export const attendanceController = {
       return;
     }
 
+    // Rule 25, 26, 27: ONE ACTIVE/PENDING REQUEST ONLY
+    const existingActiveRequest = inMemoryDB.attendanceRequests.find(
+      (r) =>
+        r.employeeId === employee.id &&
+        (r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL')
+    );
+
+    if (existingActiveRequest) {
+      res.status(400).json({
+        success: false,
+        errorType: 'ACTIVE_REQUEST_EXISTS',
+        message: 'You already have an attendance request under approval.',
+        activeRequestId: existingActiveRequest.id,
+      });
+      return;
+    }
+
+    const { requestType, dates, checkInTime, checkOutTime, reason, remarks, closingTime } = req.body;
+
+    const todayStr = getTodayDateString();
+    let requestedDates = Array.isArray(dates) && dates.length > 0 ? dates : [todayStr];
+
+    if (!reason || reason.trim() === '') {
+      res.status(400).json({ success: false, message: 'Please provide a reason for the attendance request.' });
+      return;
+    }
+
+    // Determine specific request type
+    let finalType = requestType || 'MISSED_ATTENDANCE';
+    let finalCheckIn = checkInTime || '09:00';
+    let finalCheckOut = checkOutTime || null;
+
+    if (finalType === 'TODAY_ATTENDANCE' || requestedDates.includes(todayStr) && !checkOutTime) {
+      finalType = 'TODAY_ATTENDANCE';
+      finalCheckOut = null; // Today request does not predict checkout time!
+    } else if (finalType === 'CLOSING_REQUEST' || finalType === 'EARLY_CHECKOUT') {
+      finalCheckOut = closingTime || checkOutTime || '19:00';
+    } else if (requestedDates.length > 1) {
+      finalType = 'MULTI_DAY_MISSED';
+      finalCheckOut = checkOutTime || '18:00';
+    }
+
     const newRequest = {
       id: `req-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       employeeId: employee.id,
-      requestType: requestType || (dates.length > 1 ? 'MULTI_DAY_MISSED' : 'CHECKIN_FAILURE'),
-      dates: JSON.stringify(dates),
-      checkInTime: checkInTime || '09:00',
-      checkOutTime: checkOutTime || '20:00',
+      requestType: finalType,
+      dates: JSON.stringify(requestedDates),
+      checkInTime: finalCheckIn,
+      checkOutTime: finalCheckOut,
       reason,
       remarks: remarks || '',
-      status: 'WAITING_FOR_APPROVAL',
+      status: 'UNDER_APPROVAL', // State: UNDER_APPROVAL
       reviewedById: null,
       reviewedAt: null,
       reviewRemarks: null,
@@ -469,28 +522,27 @@ export const attendanceController = {
 
     inMemoryDB.attendanceRequests.push(newRequest);
 
-    // Audit log
     inMemoryDB.auditLogs.push({
       id: `aud-${Date.now()}`,
       employeeId: employee.id,
       employeeName: employee.name,
       action: 'REQUEST_SUBMITTED',
-      date: dates[0],
+      date: requestedDates[0],
       timestamp: new Date(),
       method: 'MANUAL_REQUEST',
       performedById: employee.id,
-      details: JSON.stringify({ dates, requestType: newRequest.requestType, reason }),
+      details: JSON.stringify({ dates: requestedDates, requestType: finalType, reason }),
       createdAt: new Date(),
     });
 
     res.json({
       success: true,
-      message: 'Attendance request submitted successfully. Waiting for admin approval.',
+      message: 'Attendance request submitted successfully. Status: UNDER APPROVAL.',
       data: newRequest,
     });
   },
 
-  // 6. Get Monthly Visual Calendar
+  // 6. Get Monthly Visual Calendar (with HOL, ✓, ½, ×, —)
   getMonthlyCalendar: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -499,84 +551,85 @@ export const attendanceController = {
 
     const employeeId = (req.query.employeeId as string) || req.user.id;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
-    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1; // 1-12
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
 
     const daysInMonth = new Date(year, month, 0).getDate();
     const calendarDays = [];
 
     const todayStr = getTodayDateString();
-    const now = new Date();
 
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const d = new Date(year, month - 1, day);
       const dayOfWeek = d.getDay();
 
-      // Find schedule
       const schedule = inMemoryDB.schedules.find(
         (s) => s.employeeId === employeeId && s.dayOfWeek === dayOfWeek
       );
       const isWorkingDay = schedule ? schedule.isWorkingDay : dayOfWeek !== 0;
-
-      // Find holiday
       const holiday = inMemoryDB.holidays.find((h) => h.date === dateStr);
 
-      // Find attendance
       const attendance = inMemoryDB.attendances.find(
         (a) => a.employeeId === employeeId && a.date === dateStr
       );
 
-      // Find pending request
       const pendingRequest = inMemoryDB.attendanceRequests.find(
         (r) =>
           r.employeeId === employeeId &&
-          r.status === 'WAITING_FOR_APPROVAL' &&
+          (r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL') &&
           r.dates.includes(dateStr)
       );
 
-      let status = 'FUTURE';
-      let colorCode = 'GREY'; // GREEN, RED, YELLOW, PURPLE, GREY
+      let status = 'NOT_MARKED';
+      let symbol = '—';
+      let colorCode = 'GREY';
       let badge = '';
 
-      if (dateStr > todayStr) {
-        status = 'UPCOMING';
+      if (holiday) {
+        status = 'COMPANY_LEAVE';
+        symbol = 'HOL';
         colorCode = 'GREY';
-        if (holiday) badge = 'HOLIDAY';
-        else if (!isWorkingDay) badge = 'WEEKLY_OFF';
+        badge = holiday.name;
       } else if (attendance) {
-        if (attendance.otStatus === 'OT_APPROVED' || (attendance.otStatus === 'OT_PENDING_APPROVAL' && attendance.otMinutes > 0)) {
-          status = 'PRESENT_WITH_OT';
-          colorCode = 'PURPLE';
-          badge = 'OVERTIME';
-        } else if (attendance.status === 'PRESENT') {
+        if (attendance.status === 'PRESENT') {
           status = 'PRESENT';
+          symbol = '✓';
           colorCode = 'GREEN';
           badge = 'PRESENT';
-        } else if (attendance.status === 'INCOMPLETE') {
-          status = 'INCOMPLETE';
+          if (attendance.otMinutes > 0 && attendance.otStatus === 'OT_APPROVED') {
+            badge = `OT +${formatMinutesToDuration(attendance.otMinutes)}`;
+            colorCode = 'PURPLE';
+          }
+        } else if (attendance.status === 'HALF_DAY') {
+          status = 'HALF_DAY';
+          symbol = '½';
           colorCode = 'YELLOW';
-          badge = 'INCOMPLETE';
+          badge = 'HALF_DAY';
         }
       } else if (pendingRequest) {
-        status = 'WAITING_FOR_APPROVAL';
+        status = 'UNDER_APPROVAL';
+        symbol = '½';
         colorCode = 'YELLOW';
-        badge = 'WAITING_APPROVAL';
-      } else if (holiday) {
-        status = 'HOLIDAY';
-        colorCode = 'GREY';
-        badge = 'HOLIDAY';
+        badge = 'UNDER_APPROVAL';
       } else if (!isWorkingDay) {
         status = 'WEEKLY_OFF';
+        symbol = '—';
         colorCode = 'GREY';
-        badge = 'WEEKLY_OFF';
+        badge = 'OFF';
       } else if (dateStr < todayStr) {
         status = 'ABSENT';
+        symbol = '×';
         colorCode = 'RED';
         badge = 'ABSENT';
-      } else {
-        status = 'NOT_MARKED_YET';
+      } else if (dateStr === todayStr) {
+        status = 'TODAY';
+        symbol = '—';
         colorCode = 'GREY';
         badge = 'TODAY';
+      } else {
+        status = 'UPCOMING';
+        symbol = '—';
+        colorCode = 'GREY';
       }
 
       calendarDays.push({
@@ -585,8 +638,10 @@ export const attendanceController = {
         dayOfWeek,
         dayName: ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][dayOfWeek],
         status,
-        colorCode, // 'GREEN' | 'RED' | 'YELLOW' | 'PURPLE' | 'GREY'
+        symbol,
+        colorCode,
         badge,
+        isCompanyLeave: Boolean(holiday),
         holidayName: holiday ? holiday.name : null,
         checkIn: attendance?.checkInTime ? formatTime12h(attendance.checkInTime) : null,
         checkOut: attendance?.checkOutTime ? formatTime12h(attendance.checkOutTime) : null,
@@ -594,8 +649,6 @@ export const attendanceController = {
           ? formatMinutesToDuration(attendance.workingDurationMinutes)
           : null,
         otFormatted: attendance?.otMinutes ? formatMinutesToDuration(attendance.otMinutes) : null,
-        otStatus: attendance?.otStatus || null,
-        pendingRequestId: pendingRequest ? pendingRequest.id : null,
       });
     }
 
@@ -609,7 +662,7 @@ export const attendanceController = {
     });
   },
 
-  // 7. Admin Daily Overview Dashboard
+  // 7. Admin Daily Overview Dashboard (Dynamic Live Stats & Full Employee List)
   getTodayDashboard: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const todayStr = (req.query.date as string) || getTodayDateString();
     const roleFilter = req.query.role as string;
@@ -634,9 +687,9 @@ export const attendanceController = {
 
     let presentCount = 0;
     let absentCount = 0;
+    let notMarkedCount = 0;
+    let currentlyWorkingCount = 0;
     let pendingCount = 0;
-    let incompleteCount = 0;
-    let otPendingCount = 0;
 
     const employeeRows = users.map((employee) => {
       const schedule = inMemoryDB.schedules.find(
@@ -651,38 +704,53 @@ export const attendanceController = {
       const pendingRequest = inMemoryDB.attendanceRequests.find(
         (r) =>
           r.employeeId === employee.id &&
-          r.status === 'WAITING_FOR_APPROVAL' &&
+          (r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL') &&
           r.dates.includes(todayStr)
       );
 
       let status = 'NOT_MARKED';
-      let ot = null;
+      let statusBadge = '— Not Marked';
+      let isWorking = false;
+      let checkInFormatted = attendance?.checkInTime ? formatTime12h(attendance.checkInTime) : null;
+      let checkOutFormatted = attendance?.checkOutTime ? formatTime12h(attendance.checkOutTime) : null;
+      let durationFormatted = null;
 
-      if (attendance) {
-        if (attendance.otStatus === 'OT_PENDING_APPROVAL') {
-          otPendingCount++;
-          ot = `${formatMinutesToDuration(attendance.otMinutes)} (Pending)`;
-        } else if (attendance.otStatus === 'OT_APPROVED') {
-          ot = `${formatMinutesToDuration(attendance.otMinutes)} (Approved)`;
-        }
-
+      if (holiday) {
+        status = 'COMPANY_LEAVE';
+        statusBadge = `Holiday (${holiday.name})`;
+      } else if (attendance) {
         if (attendance.status === 'PRESENT') {
           presentCount++;
-          status = attendance.checkOutTime ? 'COMPLETED' : 'PRESENT';
-        } else if (attendance.status === 'INCOMPLETE') {
-          incompleteCount++;
-          status = 'INCOMPLETE';
+          if (attendance.checkOutTime) {
+            status = 'COMPLETED';
+            statusBadge = `✓ Present (${checkInFormatted} → ${checkOutFormatted})`;
+            durationFormatted = attendance.workingDurationMinutes
+              ? formatMinutesToDuration(attendance.workingDurationMinutes)
+              : null;
+          } else {
+            status = 'PRESENT';
+            statusBadge = `✓ Present (${checkInFormatted} — Working)`;
+            isWorking = true;
+            currentlyWorkingCount++;
+            const currentDur = calculateDurationMinutes(new Date(attendance.checkInTime), new Date());
+            durationFormatted = formatMinutesToDuration(currentDur);
+          }
         }
       } else if (pendingRequest) {
         pendingCount++;
-        status = 'WAITING_FOR_APPROVAL';
-      } else if (holiday) {
-        status = 'HOLIDAY';
+        status = 'UNDER_APPROVAL';
+        statusBadge = '⏳ Under Approval';
       } else if (!isWorkingDay) {
         status = 'WEEKLY_OFF';
+        statusBadge = 'Scheduled Day Off';
       } else {
         absentCount++;
         status = 'ABSENT';
+        statusBadge = '× Absent';
+      }
+
+      if (status === 'NOT_MARKED') {
+        notMarkedCount++;
       }
 
       return {
@@ -691,22 +759,21 @@ export const attendanceController = {
         name: employee.name,
         role: employee.role,
         department: employee.department,
-        checkIn: attendance?.checkInTime ? formatTime12h(attendance.checkInTime) : null,
-        checkOut: attendance?.checkOutTime ? formatTime12h(attendance.checkOutTime) : null,
-        duration: attendance?.workingDurationMinutes
-          ? formatMinutesToDuration(attendance.workingDurationMinutes)
-          : null,
+        checkIn: checkInFormatted,
+        checkOut: checkOutFormatted,
+        duration: durationFormatted,
         status,
-        ot,
-        otStatus: attendance?.otStatus || null,
+        statusBadge,
+        isWorking,
+        otMinutes: attendance?.otMinutes || 0,
+        otStatus: attendance?.otStatus || 'NONE',
         attendanceId: attendance?.id || null,
         schedule: schedule
-          ? `${schedule.startTime} - ${schedule.endTime} (${schedule.isWorkingDay ? 'Working' : 'Off'})`
-          : '09:00 - 20:00',
+          ? `${schedule.startTime} - ${schedule.endTime}`
+          : '09:00 - 18:00',
       };
     });
 
-    // Apply status filter if present
     const filteredRows = statusFilter
       ? employeeRows.filter((r) => r.status === statusFilter)
       : employeeRows;
@@ -715,12 +782,14 @@ export const attendanceController = {
       success: true,
       data: {
         date: todayStr,
+        isCompanyLeave: Boolean(holiday),
+        holidayName: holiday?.name || null,
         summary: {
           present: presentCount,
           absent: absentCount,
+          notMarked: notMarkedCount,
+          currentlyWorking: currentlyWorkingCount,
           pending: pendingCount,
-          incomplete: incompleteCount,
-          otPending: otPendingCount,
           totalEmployees: users.length,
         },
         employees: filteredRows,

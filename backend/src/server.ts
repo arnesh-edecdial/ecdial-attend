@@ -49,14 +49,14 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   });
 });
 
-// Initialize database and start listening
+// Initialize database and start listening on all network interfaces (0.0.0.0)
 async function startServer() {
   await initDatabase();
-  app.listen(PORT, () => {
+  app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`====================================================`);
     console.log(`  ECDIAL Backend API Server running on port ${PORT}`);
     console.log(`  Health Check: http://localhost:${PORT}/health`);
-    console.log(`  API Base URL: http://localhost:${PORT}/api`);
+    console.log(`  LAN Base URL: http://192.168.151.50:${PORT}/api`);
     console.log(`====================================================`);
   });
 }

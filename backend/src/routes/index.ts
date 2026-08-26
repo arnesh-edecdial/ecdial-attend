@@ -30,7 +30,7 @@ router.get('/attendance/status/today', authMiddleware, attendanceController.getT
 router.post('/attendance/checkin', authMiddleware, attendanceController.checkIn);
 router.post('/attendance/checkout', authMiddleware, attendanceController.checkOut);
 
-// C. Attendance Requests (Single date & Multi-day)
+// C. Attendance Requests (Single date, Multi-day, Today Request, Closing Request)
 router.post('/attendance/requests', authMiddleware, attendanceController.submitAttendanceRequest);
 
 // D. Monthly Visual Calendar
@@ -48,7 +48,7 @@ router.put(
   scheduleController.updateEmployeeSchedule
 );
 
-// G. Government Holidays
+// G. Company Leave / Holidays
 router.get('/attendance/holidays', authMiddleware, holidayController.listHolidays);
 router.post(
   '/attendance/holidays',
@@ -95,15 +95,33 @@ router.get(
 );
 
 // ==========================================
-// 3. QUOTATION GENERATION ROUTES
+// 3. QUOTATION GENERATION & CATALOG ROUTES
 // ==========================================
-// A. Product Catalog
+// A. Product Catalog & Machine Models
 router.get('/catalog/products', authMiddleware, catalogController.listProducts);
 router.post(
   '/catalog/products',
   authMiddleware,
-  requireRole(['ADMIN', 'MANAGER', 'SALES']),
+  requireRole(['ADMIN', 'MANAGER']),
   catalogController.createProduct
+);
+router.put(
+  '/catalog/products/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER']),
+  catalogController.updateProduct
+);
+router.patch(
+  '/catalog/products/:id/toggle',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER']),
+  catalogController.toggleProductStatus
+);
+router.delete(
+  '/catalog/products/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER']),
+  catalogController.deleteProduct
 );
 
 // B. Quotation Operations

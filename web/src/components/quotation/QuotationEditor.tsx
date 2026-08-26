@@ -3,7 +3,7 @@ import { api } from '../../services/api';
 import { QuotationItem } from '../../types';
 import { CatalogPickerModal } from './CatalogPickerModal';
 import { QuotationPreviewModal } from './QuotationPreviewModal';
-import { Plus, Trash2, BookOpen, Eye, FileDown, Save, Sparkles, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, BookOpen, Eye, FileDown, Save, Sparkles, AlertTriangle, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 interface QuotationEditorProps {
@@ -16,19 +16,20 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
   onSuccess,
 }) => {
   const { currentUser } = useAuth();
+  const [machinesList, setMachinesList] = useState<any[]>([]);
 
   // 1. Customer Details (Minimum: Name + Address)
-  const [customerName, setCustomerName] = useState<string>('');
-  const [customerAddress, setCustomerAddress] = useState<string>('');
-  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [customerName, setCustomerName] = useState<string>('Mr. Senthilnathan');
+  const [customerAddress, setCustomerAddress] = useState<string>('Coimbatore, Tamil Nadu');
+  const [customerPhone, setCustomerPhone] = useState<string>('+91 98765 43210');
   const [customerEmail, setCustomerEmail] = useState<string>('');
 
-  // 2. Main Units Table Items
+  // 2. Main Units Table Items matching Image 2
   const [mainItems, setMainItems] = useState<QuotationItem[]>([
     {
       section: 'MAIN_UNIT',
       itemOrder: 1,
-      description: 'Daikin 1.5 Ton 3 Star Inverter Split AC',
+      description: 'Daikin 1.5Tr 3Star Inverter Split Ac , 100% Copper (FTKC48XV16)',
       quantity: 1,
       unit: 'Nos',
       unitPrice: 30423.73,
@@ -36,32 +37,82 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
     },
   ]);
 
-  // 3. Low-Side Materials Toggle & Items
-  const [hasLowSide, setHasLowSide] = useState<boolean>(false);
+  // 3. Low-Side Materials Toggle & Items matching Image 2
+  const [hasLowSide, setHasLowSide] = useState<boolean>(true);
   const [lowSideItems, setLowSideItems] = useState<QuotationItem[]>([
     {
       section: 'LOW_SIDE',
       itemOrder: 1,
-      description: 'Standard Installation and testing commissioning charges',
+      description: 'Installation and testing commissioning Charges of Split ac',
       quantity: 1,
-      unit: 'Service',
+      unit: 'Nos',
       unitPrice: 1500.0,
       amount: 1500.0,
     },
     {
       section: 'LOW_SIDE',
       itemOrder: 2,
-      description: 'Supply and installation of Copper Pipe with insulation',
+      description: 'Supply and installation of Copper Pipe',
       quantity: 1,
       unit: 'Mtr',
       unitPrice: 1280.0,
       amount: 1280.0,
     },
+    {
+      section: 'LOW_SIDE',
+      itemOrder: 3,
+      description: 'Supply and installation of Communication Cable',
+      quantity: 1,
+      unit: 'Mtr',
+      unitPrice: 290.0,
+      amount: 290.0,
+    },
+    {
+      section: 'LOW_SIDE',
+      itemOrder: 4,
+      description: 'Supply and installation of Supply Cable',
+      quantity: 1,
+      unit: 'Mtr',
+      unitPrice: 190.0,
+      amount: 190.0,
+    },
+    {
+      section: 'LOW_SIDE',
+      itemOrder: 5,
+      description: 'Supply and installation of Outdoor Stand',
+      quantity: 1,
+      unit: 'Nos',
+      unitPrice: 1450.0,
+      amount: 1450.0,
+    },
+    {
+      section: 'LOW_SIDE',
+      itemOrder: 6,
+      description: 'Supply And Installation Of White Packing Tape',
+      quantity: 1,
+      unit: 'Nos',
+      unitPrice: 300.0,
+      amount: 300.0,
+    },
   ]);
 
-  // 4. Configurable Terms & Payment
-  const [terms, setTerms] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<string>('');
+  // 4. Terms & Payment matching Image 2
+  const [terms, setTerms] = useState<string>(`1. AC Price is inclusive of 18 % taxes. 18% Tax Additional for Lowside.
+2. Electrical, Plumbing, civil work, Structural, core cutting, class cutting, scaffolding, Crane works, Aircurtains, IDU Room wall opening for customer scope.
+3. We have given the quotation as per the bill of quantities If there is any variation in the quantities used in the site, it will be charged extra, Extra Materials like Copper Pipe, Communication Cable, Supply Cable, etc.,
+4. Payment method:
+   • 100% Payment advance with P.O for Machine.
+   • 70% Advance of Total Lowside Value along with PO
+   • 25% After completion of erection works.
+   • 5% Payment after raising the final bill.
+5. Final bill will be raised on the basis of actual quantities used in the site (after taking the measurement).
+6. This Quotation Is Valid For 10 days`);
+
+  const [paymentMethod, setPaymentMethod] = useState<string>(`(i) 100% Payment advance with P.O for Machine.
+(ii) 70% Advance of Total Lowside Value along with PO
+(iii) 25% After completion of erection works.
+(iv) 5% Payment after raising the final bill.`);
+
   const [cgstPercent, setCgstPercent] = useState<number>(9.0);
   const [sgstPercent, setSgstPercent] = useState<number>(9.0);
 
@@ -76,14 +127,19 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
 
   const availableUnits = ['Nos', 'Mtr', 'Sqft', 'Kg', 'Set', 'Box', 'Piece', 'Hour', 'Service', 'Roll', 'Other'];
 
-  // Load default quotation configuration or existing quotation if editing
   useEffect(() => {
     const loadDefaults = async () => {
       try {
-        const configRes = await api.getQuotationConfig();
+        const [configRes, productsRes] = await Promise.all([
+          api.getQuotationConfig(),
+          api.listProducts('MAIN_UNIT'),
+        ]);
+
+        if (productsRes.success) {
+          setMachinesList(productsRes.data);
+        }
+
         if (configRes.success) {
-          setTerms(configRes.data.defaultTerms);
-          setPaymentMethod(configRes.data.defaultPaymentMethod);
           setCgstPercent(configRes.data.defaultCgstPercent);
           setSgstPercent(configRes.data.defaultSgstPercent);
         }
@@ -147,11 +203,20 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
     }
   };
 
+  const handleSelectPreconfiguredMachine = (machineId: string, index: number) => {
+    const selected = machinesList.find((m) => m.id === machineId);
+    if (selected) {
+      updateItem('MAIN_UNIT', index, 'description', selected.name);
+      updateItem('MAIN_UNIT', index, 'unitPrice', selected.defaultPrice);
+      updateItem('MAIN_UNIT', index, 'unit', selected.defaultUnit);
+    }
+  };
+
   const addItem = (section: 'MAIN_UNIT' | 'LOW_SIDE') => {
     const newItem: QuotationItem = {
       section,
       itemOrder: (section === 'MAIN_UNIT' ? mainItems.length : lowSideItems.length) + 1,
-      description: section === 'MAIN_UNIT' ? 'Custom AC Equipment' : 'Custom Material / Service',
+      description: section === 'MAIN_UNIT' ? 'Daikin AC Equipment' : 'Low-Side Material / Service',
       quantity: 1,
       unit: section === 'MAIN_UNIT' ? 'Nos' : 'Mtr',
       unitPrice: 0,
@@ -184,11 +249,11 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
   // Handle Save / Preview / Generate PDF
   const handleSaveQuotation = async (status: 'DRAFT' | 'FINAL') => {
     if (!customerName.trim()) {
-      alert('Please enter the Customer Name.');
+      alert('Please enter Customer Name.');
       return null;
     }
     if (!customerAddress.trim()) {
-      alert('Please enter the Customer Address.');
+      alert('Please enter Customer Address.');
       return null;
     }
 
@@ -272,11 +337,11 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
             <Sparkles size={18} color="var(--primary-400)" />
             <h2 style={{ fontSize: '20px', fontWeight: 800 }}>
-              {editQuotationId ? 'Edit Quotation' : 'Create Fast Quotation'}
+              {editQuotationId ? 'Edit Quotation' : 'Create Quotation (Commercial Offer)'}
             </h2>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            Zero-friction quotation creation • Editable catalogue snapshots • Authoritative backend totals
+            All machine and low-side unit prices are 100% editable • Machine catalog list accessible for Sales & Admin
           </p>
         </div>
 
@@ -299,23 +364,10 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
         </div>
       )}
 
-      {stockWarnings && stockWarnings.length > 0 && (
-        <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(245,158,11,0.15)', border: '1px solid var(--status-pending)', color: 'var(--status-pending)', fontSize: '13px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, marginBottom: '4px' }}>
-            <AlertTriangle size={15} /> Stock Availability Advisory:
-          </div>
-          <ul style={{ paddingLeft: '20px' }}>
-            {stockWarnings.map((w, idx) => (
-              <li key={idx}>{w} (Quotation created without stock out)</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {/* 1. CUSTOMER INFORMATION */}
       <div className="glass-card">
-        <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '16px' }}>
-          1. Customer Information
+        <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '16px' }}>
+          1. Customer Details (To,)
         </h3>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -324,7 +376,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. Nexus Tech Park Facilities Ltd / Mr. Rajesh"
+              placeholder="e.g. Mr. Senthilnathan"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               required
@@ -336,45 +388,35 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. +91 94440 12345"
+              placeholder="e.g. +91 98765 43210"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
             />
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Customer Address *</label>
-            <textarea
-              className="form-control"
-              placeholder="Enter full site/billing address..."
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-              style={{ minHeight: '60px' }}
-              required
-            />
-          </div>
-
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Email Address (Optional)</label>
-            <input
-              type="email"
-              className="form-control"
-              placeholder="e.g. facilities@nexustech.com"
-              value={customerEmail}
-              onChange={(e) => setCustomerEmail(e.target.value)}
-            />
-          </div>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="form-label">Customer Address / Site Location *</label>
+          <input
+            type="text"
+            className="form-control"
+            placeholder="e.g. Coimbatore, Tamil Nadu"
+            value={customerAddress}
+            onChange={(e) => setCustomerAddress(e.target.value)}
+            required
+          />
         </div>
       </div>
 
-      {/* 2. MAIN UNIT ITEMS */}
+      {/* 2. SECTION A: MAIN UNIT */}
       <div className="glass-card">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-            2. Main Unit (Equipment & System)
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ background: 'var(--primary-500)', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>A</span>
+            <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF' }}>
+              MAIN UNIT (Machines & Equipment)
+            </h3>
+          </div>
 
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
@@ -384,10 +426,10 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                 setCatalogModalOpen(true);
               }}
             >
-              <BookOpen size={14} /> Browse Catalogue
+              <BookOpen size={14} /> Catalog Shortcut
             </button>
             <button className="btn btn-primary btn-sm" onClick={() => addItem('MAIN_UNIT')}>
-              <Plus size={14} /> + Add Item
+              <Plus size={14} /> + Add Machine
             </button>
           </div>
         </div>
@@ -397,20 +439,36 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
           <table className="custom-table">
             <thead>
               <tr>
-                <th style={{ width: '40px' }}>#</th>
-                <th>Item Description</th>
-                <th style={{ width: '100px' }}>Qty</th>
-                <th style={{ width: '120px' }}>Unit ▼</th>
-                <th style={{ width: '150px' }}>Unit Price (₹)</th>
-                <th style={{ width: '150px', textAlign: 'right' }}>Amount (₹)</th>
+                <th style={{ width: '45px', textAlign: 'center' }}>Sl.No</th>
+                <th>Description (Choose from Catalog or Type Custom)</th>
+                <th style={{ width: '90px', textAlign: 'center' }}>Qty</th>
+                <th style={{ width: '110px', textAlign: 'center' }}>Unit ▼</th>
+                <th style={{ width: '140px', textAlign: 'right' }}>Price (₹) [Editable]</th>
+                <th style={{ width: '140px', textAlign: 'right' }}>Amount (₹)</th>
                 <th style={{ width: '45px' }}></th>
               </tr>
             </thead>
             <tbody>
               {mainItems.map((item, index) => (
                 <tr key={index}>
-                  <td style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{index + 1}</td>
+                  <td style={{ textAlign: 'center', color: 'var(--text-dim)', fontWeight: 700 }}>{index + 1}</td>
                   <td>
+                    {/* Machine Dropdown Quick Picker */}
+                    {machinesList.length > 0 && (
+                      <div style={{ marginBottom: '6px' }}>
+                        <select
+                          className="form-select"
+                          style={{ padding: '4px 8px', fontSize: '12px', background: 'rgba(0, 102, 204, 0.1)', borderColor: 'var(--primary-500)' }}
+                          onChange={(e) => handleSelectPreconfiguredMachine(e.target.value, index)}
+                          defaultValue=""
+                        >
+                          <option value="" disabled>⚡ Quick Pick Machine from Catalogue...</option>
+                          {machinesList.map((m) => (
+                            <option key={m.id} value={m.id}>{m.name} — ₹{m.defaultPrice}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <input
                       type="text"
                       className="form-control"
@@ -424,6 +482,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                       min="1"
                       step="1"
                       className="form-control"
+                      style={{ textAlign: 'center' }}
                       value={item.quantity}
                       onChange={(e) => updateItem('MAIN_UNIT', index, 'quantity', e.target.value)}
                     />
@@ -443,12 +502,13 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                     <input
                       type="number"
                       step="0.01"
-                      className="form-control"
+                      className="form-control font-mono"
+                      style={{ textAlign: 'right' }}
                       value={item.unitPrice}
                       onChange={(e) => updateItem('MAIN_UNIT', index, 'unitPrice', e.target.value)}
                     />
                   </td>
-                  <td style={{ textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                  <td style={{ textAlign: 'right', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
                     ₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </td>
                   <td>
@@ -467,7 +527,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
           </table>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '13.5px', fontWeight: 700 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '14px', fontWeight: 700 }}>
           <span style={{ color: 'var(--text-muted)', marginRight: '12px' }}>Main Unit Total:</span>
           <span style={{ color: '#FFFFFF', fontFamily: 'var(--font-mono)' }}>
             ₹{mainUnitTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -475,21 +535,24 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
         </div>
       </div>
 
-      {/* 3. LOW-SIDE MATERIALS (OPTIONAL TOGGLE) */}
+      {/* 3. SECTION B: LOW-SIDE MATERIALS */}
       <div className="glass-card">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: hasLowSide ? '16px' : 0 }}>
-          <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-              3. Low-Side Materials (Optional)
-            </h3>
-            <p style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
-              Enable if installation piping, cabling, stands, or extra accessories are required
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ background: 'var(--primary-500)', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>B</span>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF' }}>
+                LOW SIDE (B) IF NEED EXTRA MATERIALS
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Piping, cabling, outdoor stand, white packing tape, installation charges (all rates editable)
+              </p>
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '13px', fontWeight: 600, color: hasLowSide ? 'var(--status-present)' : 'var(--text-dim)' }}>
-              {hasLowSide ? 'LOW-SIDE ENABLED (ON)' : 'LOW-SIDE DISABLED (OFF)'}
+              {hasLowSide ? 'ENABLED (ON)' : 'DISABLED (OFF)'}
             </span>
             <label className="switch">
               <input
@@ -515,7 +578,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                 <BookOpen size={14} /> Browse Materials
               </button>
               <button className="btn btn-primary btn-sm" onClick={() => addItem('LOW_SIDE')}>
-                <Plus size={14} /> + Add Material
+                <Plus size={14} /> + Add Material Row
               </button>
             </div>
 
@@ -523,19 +586,19 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
               <table className="custom-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '40px' }}>#</th>
-                    <th>Material / Service Description</th>
-                    <th style={{ width: '100px' }}>Qty</th>
-                    <th style={{ width: '120px' }}>Unit ▼</th>
-                    <th style={{ width: '150px' }}>Rate (₹)</th>
-                    <th style={{ width: '150px', textAlign: 'right' }}>Amount (₹)</th>
+                    <th style={{ width: '45px', textAlign: 'center' }}>Sl.No</th>
+                    <th>Description</th>
+                    <th style={{ width: '90px', textAlign: 'center' }}>Qty</th>
+                    <th style={{ width: '110px', textAlign: 'center' }}>Unit ▼</th>
+                    <th style={{ width: '140px', textAlign: 'right' }}>Price (₹) [Editable]</th>
+                    <th style={{ width: '140px', textAlign: 'right' }}>Amount (₹)</th>
                     <th style={{ width: '45px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {lowSideItems.map((item, index) => (
                     <tr key={index}>
-                      <td style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{index + 1}</td>
+                      <td style={{ textAlign: 'center', color: 'var(--text-dim)', fontWeight: 700 }}>{index + 1}</td>
                       <td>
                         <input
                           type="text"
@@ -550,6 +613,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                           min="1"
                           step="0.1"
                           className="form-control"
+                          style={{ textAlign: 'center' }}
                           value={item.quantity}
                           onChange={(e) => updateItem('LOW_SIDE', index, 'quantity', e.target.value)}
                         />
@@ -569,12 +633,13 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                         <input
                           type="number"
                           step="0.01"
-                          className="form-control"
+                          className="form-control font-mono"
+                          style={{ textAlign: 'right' }}
                           value={item.unitPrice}
                           onChange={(e) => updateItem('LOW_SIDE', index, 'unitPrice', e.target.value)}
                         />
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                      <td style={{ textAlign: 'right', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
                         ₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
@@ -592,8 +657,8 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
               </table>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '13.5px', fontWeight: 700 }}>
-              <span style={{ color: 'var(--text-muted)', marginRight: '12px' }}>Low-Side Materials Total:</span>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px', fontSize: '14px', fontWeight: 700 }}>
+              <span style={{ color: 'var(--text-muted)', marginRight: '12px' }}>Low-Side Total:</span>
               <span style={{ color: '#FFFFFF', fontFamily: 'var(--font-mono)' }}>
                 ₹{lowSideTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
@@ -602,19 +667,19 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
         )}
       </div>
 
-      {/* 4. TOTALS BREAKDOWN & TERMS */}
+      {/* 4. TOTALS & TERMS */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '24px' }}>
-        {/* Terms & Payment Presets */}
+        {/* Terms & Payment Presets matching Image 2 */}
         <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-            4. Terms, Conditions & Payment Milestones
+          <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+            Terms & Conditions (1 to 6) & Payment Milestones (i to iv)
           </h3>
 
           <div className="form-group">
             <label className="form-label">Terms & Conditions</label>
             <textarea
               className="form-control"
-              style={{ minHeight: '100px', fontSize: '12.5px' }}
+              style={{ minHeight: '120px', fontSize: '12px' }}
               value={terms}
               onChange={(e) => setTerms(e.target.value)}
             />
@@ -624,45 +689,33 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
             <label className="form-label">Payment Method / Milestones</label>
             <textarea
               className="form-control"
-              style={{ minHeight: '90px', fontSize: '12.5px' }}
+              style={{ minHeight: '90px', fontSize: '12px' }}
               value={paymentMethod}
               onChange={(e) => setPaymentMethod(e.target.value)}
             />
           </div>
         </div>
 
-        {/* Financial Summary Card */}
+        {/* Commercial Summary Box */}
         <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--primary-400)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '16px' }}>
               Quotation Summary
             </h3>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13.5px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Main Unit (A):</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>₹{mainUnitTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-              </div>
-
-              {hasLowSide && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Low-Side (B):</span>
-                  <span style={{ fontFamily: 'var(--font-mono)' }}>₹{lowSideTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '8px', borderTop: '1px solid var(--border-color)', fontWeight: 700 }}>
-                <span style={{ color: '#FFFFFF' }}>Subtotal:</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <span style={{ color: 'var(--text-muted)' }}>Sub Total (A):</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', color: 'var(--text-muted)' }}>
-                <span>CGST ({cgstPercent}%):</span>
+                <span>CGST {cgstPercent}%:</span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>₹{cgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', color: 'var(--text-muted)' }}>
-                <span>SGST ({sgstPercent}%):</span>
+                <span>SGST {sgstPercent}%:</span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>₹{sgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
 
@@ -670,13 +723,13 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
                 display: 'flex',
                 justifyContent: 'space-between',
                 paddingTop: '12px',
-                marginTop: '6px',
+                marginTop: '8px',
                 borderTop: '2px solid var(--primary-500)',
                 fontSize: '18px',
-                fontWeight: 800,
+                fontWeight: 900,
                 color: 'var(--primary-400)',
               }}>
-                <span>GRAND TOTAL:</span>
+                <span>TOTAL (A):</span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
             </div>
