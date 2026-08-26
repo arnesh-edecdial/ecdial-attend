@@ -77,6 +77,17 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
         </TouchableOpacity>
       </View>
 
+      {/* Month Navigation */}
+      <View style={styles.monthNav}>
+        <TouchableOpacity onPress={() => setMonth((m) => (m === 1 ? 12 : m - 1))}>
+          <Text style={styles.navArrow}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.monthTitle}>{monthNames[month - 1]} {year}</Text>
+        <TouchableOpacity onPress={() => setMonth((m) => (m === 12 ? 1 : m + 1))}>
+          <Text style={styles.navArrow}>›</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Legend */}
       <View style={styles.legend}>
         <View style={styles.legendItem}>
@@ -101,9 +112,9 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
         </View>
       </View>
 
-      {/* Days Grid */}
+      {/* Days Header */}
       <View style={styles.daysHeader}>
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+        {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
           <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#EF4444' }]}>
             {d}
           </Text>
@@ -119,10 +130,16 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
             return (
               <TouchableOpacity
                 key={day.date}
-                style={[styles.dayCell, isSelected && styles.dayCellSelected]}
+                style={[
+                  styles.dayCell,
+                  isSelected && styles.dayCellSelected,
+                  day.colorCode === 'GREEN' && styles.dayCellPresent,
+                  day.colorCode === 'RED' && styles.dayCellAbsent,
+                ]}
                 onPress={() => setSelectedDay(day)}
+                activeOpacity={0.7}
               >
-                <Text style={[styles.dayNum, isSelected && { color: '#0066CC', fontWeight: '800' }]}>
+                <Text style={[styles.dayNum, isSelected && { color: '#0066CC', fontWeight: '900' }]}>
                   {day.dayNumber}
                 </Text>
                 <View style={[styles.statusDot, { backgroundColor: getColorDot(day.colorCode) }]} />
@@ -135,16 +152,17 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
       {/* Selected Day Details */}
       {selectedDay && (
         <View style={styles.detailCard}>
-          <Text style={styles.detailDate}>{selectedDay.date} ({selectedDay.dayName})</Text>
-          <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 13, color: '#94A3B8' }}>Status:</Text>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: getColorDot(selectedDay.colorCode) }}>
-              {selectedDay.badge || selectedDay.status}
-            </Text>
+          <View style={styles.rowBetween}>
+            <Text style={styles.detailDate}>{selectedDay.date} ({selectedDay.dayName})</Text>
+            <View style={[styles.statusBadge, { backgroundColor: getColorDot(selectedDay.colorCode) + '20' }]}>
+              <Text style={[styles.statusBadgeText, { color: getColorDot(selectedDay.colorCode) }]}>
+                {selectedDay.badge || selectedDay.status}
+              </Text>
+            </View>
           </View>
 
           {selectedDay.holidayName && (
-            <Text style={styles.holidayText}>Holiday: {selectedDay.holidayName}</Text>
+            <Text style={styles.holidayText}>🏢 Holiday: {selectedDay.holidayName}</Text>
           )}
 
           <View style={styles.timeRow}>
@@ -181,45 +199,70 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0F1D',
+    backgroundColor: '#F8FAFC',
   },
   content: {
-    padding: 20,
+    padding: 16,
+    paddingBottom: 110,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
   },
   subtitle: {
-    fontSize: 13,
-    color: '#94A3B8',
+    fontSize: 11,
+    color: '#64748B',
   },
   closeBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
   },
   closeBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  monthNav: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  navArrow: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0066CC',
+    paddingHorizontal: 12,
+  },
+  monthTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   legend: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    gap: 10,
+    backgroundColor: '#FFFFFF',
     padding: 10,
-    borderRadius: 8,
-    marginBottom: 16,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   legendItem: {
     flexDirection: 'row',
@@ -232,17 +275,17 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   legendText: {
-    fontSize: 11,
-    color: '#94A3B8',
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '600',
   },
   daysHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 8,
-    paddingHorizontal: 6,
   },
   dayHeaderText: {
-    fontSize: 12,
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#64748B',
     width: 40,
@@ -251,96 +294,122 @@ const styles = StyleSheet.create({
   calendarGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'flex-start',
-    gap: 6,
-    marginBottom: 20,
+    justifyContent: 'space-between',
+    gap: 4,
+    marginBottom: 16,
   },
   dayCell: {
-    width: 42,
-    height: 48,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    width: 40,
+    height: 44,
+    backgroundColor: '#FFFFFF',
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: '#E2E8F0',
+    marginBottom: 4,
   },
   dayCellSelected: {
-    backgroundColor: 'rgba(0, 102, 204, 0.25)',
     borderColor: '#0066CC',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 2,
   },
+  dayCellPresent: { backgroundColor: '#ECFDF5' },
+  dayCellAbsent: { backgroundColor: '#FEF2F2' },
   dayNum: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 4,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginTop: 2,
   },
   detailCard: {
-    backgroundColor: 'rgba(18, 27, 48, 0.9)',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
   },
   detailDate: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: '#0F172A',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
   holidayText: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 11.5,
+    color: '#0284C7',
     marginTop: 4,
+    fontWeight: '600',
   },
   timeRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginVertical: 12,
+    gap: 8,
+    marginVertical: 10,
   },
   timeBox: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    padding: 10,
+    backgroundColor: '#F8FAFC',
+    padding: 8,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   timeBoxLabel: {
-    fontSize: 10,
-    color: '#94A3B8',
+    fontSize: 9.5,
+    color: '#64748B',
     textTransform: 'uppercase',
+    fontWeight: '700',
   },
   timeBoxVal: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
     marginTop: 2,
   },
   durationNote: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#0066CC',
-    fontWeight: '600',
-    marginBottom: 4,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   otNote: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#8B5CF6',
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   requestBtn: {
-    marginTop: 10,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    marginTop: 8,
+    backgroundColor: '#0F172A',
     paddingVertical: 10,
     borderRadius: 8,
     alignItems: 'center',
   },
   requestBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
 });

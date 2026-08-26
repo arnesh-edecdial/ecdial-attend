@@ -12,7 +12,7 @@ export interface User {
 
 export interface TodayAttendanceStatus {
   date: string;
-  displayStatus: 'NOT_MARKED' | 'PRESENT' | 'CHECKED_IN' | 'COMPLETED' | 'WAITING_FOR_APPROVAL' | 'HOLIDAY' | 'WEEKLY_OFF';
+  displayStatus: 'NOT_MARKED' | 'PRESENT' | 'CHECKED_IN' | 'COMPLETED' | 'WAITING_FOR_APPROVAL' | 'HOLIDAY' | 'COMPANY_LEAVE' | 'WEEKLY_OFF';
   attendance: {
     id: string;
     checkInFormatted: string | null;

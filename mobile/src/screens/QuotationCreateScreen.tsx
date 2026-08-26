@@ -8,6 +8,7 @@ import {
   ScrollView,
   Switch,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { QuotationItem } from '../types';
@@ -22,6 +23,9 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   onSuccess,
 }) => {
   const [machinesList, setMachinesList] = useState<any[]>([]);
+  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
+  const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
+  const [activeItemIndexForPicker, setActiveItemIndexForPicker] = useState<number>(0);
 
   // 1. Customer matching Image 2
   const [customerName, setCustomerName] = useState<string>('Mr. Senthilnathan');
@@ -108,9 +112,12 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
         const res = await mobileApi.listProducts('MAIN_UNIT');
         if (res.success) {
           setMachinesList(res.data);
+          if (res.data.length > 0) {
+            setSelectedMachineId(res.data[0].id);
+          }
         }
       } catch (err) {
-        console.error(err);
+        console.error('Failed to load catalogue', err);
       }
     })();
   }, []);
@@ -173,10 +180,18 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
     else setLowSideItems(list);
   };
 
-  const selectMachine = (machine: any, idx: number) => {
-    updateItem('MAIN_UNIT', idx, 'description', machine.name);
-    updateItem('MAIN_UNIT', idx, 'unitPrice', machine.defaultPrice);
-    updateItem('MAIN_UNIT', idx, 'unit', machine.defaultUnit);
+  // Dedicated interactive Machine Model selector (Rules 16, 17, 18, 19)
+  const handleSelectMachineModel = (machine: any, targetIdx: number) => {
+    setSelectedMachineId(machine.id);
+    const updated = [...mainItems];
+    const item = { ...updated[targetIdx] };
+    item.description = `${machine.name} (${machine.model || machine.name})`;
+    item.unitPrice = Number(machine.defaultPrice) || 0;
+    item.unit = machine.defaultUnit || 'Nos';
+    item.amount = Math.round((item.quantity * item.unitPrice + Number.EPSILON) * 100) / 100;
+    updated[targetIdx] = item;
+    setMainItems(updated);
+    setCatalogueModalVisible(false);
   };
 
   const removeItem = (section: 'MAIN_UNIT' | 'LOW_SIDE', idx: number) => {
@@ -273,12 +288,12 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
         />
       </View>
 
-      {/* 2. SECTION A: MAIN UNIT */}
+      {/* 2. SECTION A: MAIN UNIT WITH MACHINE SELECTOR (Rules 16, 17, 18, 19) */}
       <View style={styles.card}>
         <View style={styles.rowBetween}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <View style={styles.badgeLetter}><Text style={styles.badgeLetterText}>A</Text></View>
-            <Text style={styles.cardLabel}>MAIN UNIT</Text>
+            <Text style={styles.cardLabel}>MAIN UNIT (MACHINE SELECTION)</Text>
           </View>
           <TouchableOpacity onPress={addMainItem}>
             <Text style={styles.addText}>+ ADD MACHINE</Text>
@@ -287,33 +302,54 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
 
         {mainItems.map((item, idx) => (
           <View key={idx} style={styles.itemBox}>
-            {/* Quick Pick Chips for Sales Team */}
-            {machinesList.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {machinesList.map((m) => (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={styles.machineChip}
-                      onPress={() => selectMachine(m, idx)}
-                    >
-                      <Text style={styles.machineChipText} numberOfLines={1}>
-                        ⚡ {m.model || m.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-            )}
-
             <View style={styles.rowBetween}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0066CC' }}>Machine #{idx + 1}</Text>
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#0066CC' }}>
+                Machine #{idx + 1}
+              </Text>
               {mainItems.length > 1 && (
                 <TouchableOpacity onPress={() => removeItem('MAIN_UNIT', idx)}>
                   <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '700' }}>Remove</Text>
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Tap to Pick Machine Model from Catalogue Modal */}
+            <TouchableOpacity
+              style={styles.selectModelBtn}
+              onPress={() => {
+                setActiveItemIndexForPicker(idx);
+                setCatalogueModalVisible(true);
+              }}
+            >
+              <Text style={{ fontSize: 16 }}>❄️</Text>
+              <Text style={styles.selectModelBtnText} numberOfLines={1}>
+                {item.description || 'Tap to select Machine Model from Catalogue'}
+              </Text>
+              <Text style={styles.selectModelArrow}>›</Text>
+            </TouchableOpacity>
+
+            {/* Quick Horizontal Machine Selector Chips */}
+            {machinesList.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {machinesList.map((m) => {
+                    const isSelected = selectedMachineId === m.id;
+                    return (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[styles.machineChip, isSelected && styles.machineChipSelected]}
+                        onPress={() => handleSelectMachineModel(m, idx)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.machineChipText, isSelected && styles.machineChipTextSelected]}>
+                          {isSelected ? '✓ ' : ''}{m.model || m.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
 
             <TextInput
               style={[styles.input, { marginVertical: 6, fontWeight: '600' }]}
@@ -469,6 +505,67 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
         <Text style={styles.cancelBtnText}>Cancel</Text>
       </TouchableOpacity>
+
+      {/* MACHINE MODEL CATALOGUE PICKER MODAL (Rule 17, 18) */}
+      <Modal
+        visible={catalogueModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCatalogueModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Select Machine Model</Text>
+                <Text style={styles.modalSubtitle}>Tap any machine to add into quotation</Text>
+              </View>
+              <TouchableOpacity onPress={() => setCatalogueModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '800' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 14, gap: 10 }}>
+              {machinesList.map((m) => {
+                const isSelected = selectedMachineId === m.id;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={[styles.modalMachineCard, isSelected && styles.modalMachineCardSelected]}
+                    onPress={() => handleSelectMachineModel(m, activeItemIndexForPicker)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.rowBetween}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.modalMachineName}>{m.name}</Text>
+                        <Text style={styles.modalMachineDetails}>
+                          Model: {m.model || 'Standard'} • Capacity: {m.capacity || '1.5 Ton'}
+                        </Text>
+                      </View>
+                      {isSelected ? (
+                        <View style={styles.selectedBadge}>
+                          <Text style={styles.selectedBadgeText}>✓ SELECTED</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.selectBadge}>
+                          <Text style={styles.selectBadgeText}>TAP TO SELECT</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={[styles.rowBetween, { marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderColor: '#F1F5F9' }]}>
+                      <Text style={styles.modalMachinePrice}>
+                        Price: ₹{Number(m.defaultPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </Text>
+                      <Text style={styles.modalMachineStock}>Available: {m.availableStock || 10} Units</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -480,7 +577,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 100,
   },
   header: {
     marginBottom: 14,
@@ -538,6 +635,28 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 13,
   },
+  selectModelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8,
+  },
+  selectModelBtnText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0066CC',
+  },
+  selectModelArrow: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0066CC',
+  },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -549,17 +668,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   machineChip: {
-    backgroundColor: '#E0F2FE',
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: '#0284C7',
+    borderColor: '#CBD5E1',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 99,
   },
+  machineChipSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0066CC',
+    borderWidth: 1.5,
+  },
   machineChipText: {
-    color: '#0369A1',
+    color: '#475569',
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '600',
+  },
+  machineChipTextSelected: {
+    color: '#0066CC',
+    fontWeight: '800',
   },
   itemBox: {
     backgroundColor: '#F8FAFC',
@@ -630,5 +758,93 @@ const styles = StyleSheet.create({
   cancelBtnText: {
     color: '#64748B',
     fontSize: 13,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalContainer: {
+    width: '100%',
+    maxHeight: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  modalMachineCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  modalMachineCardSelected: {
+    borderColor: '#0066CC',
+    backgroundColor: '#EFF6FF',
+  },
+  modalMachineName: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalMachineDetails: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  selectedBadge: {
+    backgroundColor: '#0066CC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  selectedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  selectBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  selectBadgeText: {
+    color: '#64748B',
+    fontSize: 9.5,
+    fontWeight: '700',
+  },
+  modalMachinePrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0066CC',
+  },
+  modalMachineStock: {
+    fontSize: 11,
+    color: '#64748B',
   },
 });

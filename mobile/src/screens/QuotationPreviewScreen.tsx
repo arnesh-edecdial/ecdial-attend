@@ -32,7 +32,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
     setIsSharing(true);
     try {
       const pdfUrl = mobileApi.getPdfUrl(quotation.id);
-      const localFileUri = `${FileSystem.documentDirectory}Quotation_${quotation.quotationNumber}.pdf`;
+      const docDir = (FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '';
+      const localFileUri = `${docDir}Quotation_${quotation.quotationNumber}.pdf`;
 
       // Download temporary PDF on device for sharing
       const downloadResult = await FileSystem.downloadAsync(pdfUrl, localFileUri);
@@ -242,7 +243,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 14,
-    paddingBottom: 40,
+    paddingBottom: 110,
   },
   header: {
     flexDirection: 'row',

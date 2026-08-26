@@ -6,12 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   RefreshControl,
-  ActivityIndicator,
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { TodayAttendanceStatus } from '../types';
+import { DynamicQRCode } from '../components/DynamicQRCode';
 
 interface AttendanceScreenProps {
+  onOpenDrawer: () => void;
   onOpenScanner: () => void;
   onOpenRequest: (date?: string, mode?: 'TODAY' | 'MISSED' | 'CLOSING') => void;
   onOpenCalendar: () => void;
@@ -19,11 +20,13 @@ interface AttendanceScreenProps {
   onOpenApprovals?: () => void;
   onOpenMachines?: () => void;
   onOpenAdminCalendar?: () => void;
+  onOpenStock?: () => void;
   userName?: string;
-  userRole?: string;
+  userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
 }
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
+  onOpenDrawer,
   onOpenScanner,
   onOpenRequest,
   onOpenCalendar,
@@ -31,6 +34,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenApprovals,
   onOpenMachines,
   onOpenAdminCalendar,
+  onOpenStock,
   userName = 'Arun Kumar',
   userRole = 'ADMIN',
 }) => {
@@ -123,10 +127,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={isLoading} onRefresh={fetchStatus} tintColor="#10B981" />}
     >
-      {/* 1. TOP HEADER (Matching Image 1) */}
+      {/* 1. TOP HEADER (Responsive & Safe) */}
       <View style={styles.topHeader}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity style={styles.menuIcon}>
+          {/* HAMBURGER MENU BUTTON (Rule 5) */}
+          <TouchableOpacity
+            style={styles.menuIcon}
+            onPress={onOpenDrawer}
+            activeOpacity={0.7}
+          >
             <View style={styles.menuLine} />
             <View style={[styles.menuLine, { width: 14 }]} />
             <View style={styles.menuLine} />
@@ -134,40 +143,51 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
           <View style={styles.greetingContainer}>
             <Text style={styles.greetingText}>Good Morning, 👋</Text>
-            <Text style={styles.userNameText}>{userName}</Text>
+            <Text style={styles.userNameText} numberOfLines={1}>{userName}</Text>
             <Text style={styles.subGreeting}>
-              {userRole === 'ADMIN' ? 'Admin Management Dashboard' : 'Have a productive day at work!'}
+              {userRole === 'ADMIN'
+                ? 'Admin Management Dashboard'
+                : userRole === 'SALES'
+                ? 'Sales & Quotations Portal'
+                : 'Have a productive day at work!'}
             </Text>
           </View>
         </View>
 
         <View style={styles.headerRight}>
-          {/* Notification Bell with Badge */}
-          <TouchableOpacity style={styles.bellButton} onPress={onOpenApprovals}>
-            <Text style={{ fontSize: 20 }}>🔔</Text>
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {dashboardData?.summary?.pending || 3}
-              </Text>
-            </View>
+          {/* Notification Bell */}
+          <TouchableOpacity
+            style={styles.bellButton}
+            onPress={userRole === 'ADMIN' ? onOpenApprovals : onOpenCalendar}
+          >
+            <Text style={{ fontSize: 18 }}>🔔</Text>
+            {userRole === 'ADMIN' && (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText}>
+                  {dashboardData?.summary?.pending ?? 3}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           {/* User Avatar with Green Online Dot */}
-          <View style={styles.avatarWrapper}>
+          <TouchableOpacity style={styles.avatarWrapper} onPress={onOpenDrawer}>
             <View style={styles.avatarCircle}>
-              <Text style={{ fontSize: 18 }}>👨‍💼</Text>
+              <Text style={{ fontSize: 18 }}>
+                {userRole === 'ADMIN' ? '👨‍💼' : userRole === 'SALES' ? '👩‍💼' : '👷‍♂️'}
+              </Text>
             </View>
             <View style={styles.onlineDot} />
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
       {/* ========================================================================= */}
-      {/* CASE A: ADMIN ROLE VIEW (Today's Stats + Live Employee List + QR Control) */}
+      {/* CASE A: ADMIN ROLE VIEW (Today's Stats + Visible Office QR + Employees)    */}
       {/* ========================================================================= */}
       {userRole === 'ADMIN' && (
         <View style={{ marginBottom: 14 }}>
-          {/* TODAY'S ATTENDANCE STATS CARDS (Rule 3) */}
+          {/* 1. TODAY'S ATTENDANCE STATS CARDS (Rule 3) */}
           <View style={styles.adminStatsGrid}>
             <View style={[styles.adminStatCard, { borderLeftColor: '#10B981', borderLeftWidth: 4 }]}>
               <Text style={styles.adminStatNum}>{dashboardData?.summary?.present ?? 8}</Text>
@@ -190,34 +210,38 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* DYNAMIC OFFICE ATTENDANCE QR CARD (Rule 9, 10) */}
+          {/* 2. OFFICE ATTENDANCE QR DISPLAY (Rules 8, 9, 10 — VISIBLE & SCANNABLE) */}
           <View style={styles.adminQrCard}>
             <View style={styles.rowBetween}>
               <View>
-                <Text style={styles.qrCardTitle}>OFFICE ATTENDANCE QR</Text>
-                <Text style={styles.qrCardSub}>Dynamic Token • Rotates every 30s</Text>
+                <Text style={styles.qrCardTitle}>OFFICE ATTENDANCE</Text>
+                <View style={styles.activeQrPill}>
+                  <View style={styles.activeDot} />
+                  <Text style={styles.activeQrPillText}>ACTIVE QR CODE</Text>
+                </View>
               </View>
               <TouchableOpacity style={styles.regenBtn} onPress={fetchStatus}>
                 <Text style={styles.regenBtnText}>⚡ Regenerate</Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.qrInfoRow}>
-              <View style={styles.qrCodeIconBox}>
-                <Text style={{ fontSize: 28 }}>🔲</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.qrTokenText} numberOfLines={1}>
-                  Token: {officeQR?.token?.substring(0, 16) || 'ACTIVE_SESSION'}...
-                </Text>
-                <Text style={styles.qrExpiresText}>
-                  Valid for: ECDIAL Coimbatore • Radius 100m
-                </Text>
-              </View>
+            {/* Rendered Scannable Vector QR Code */}
+            <View style={styles.qrVisualContainer}>
+              <DynamicQRCode
+                value={officeQR?.token || 'ECDIAL-OFFICE-ATTENDANCE-ACTIVE-SESSION'}
+                size={160}
+              />
             </View>
+
+            <Text style={styles.qrHelperText}>
+              📱 Employees scan this QR code on arrival & departure
+            </Text>
+            <Text style={styles.qrOfficeLabel}>
+              {officeQR?.officeName || 'ECDIAL Headquarters'} • Radius: 100m • Rotates 30s
+            </Text>
           </View>
 
-          {/* TODAY'S EMPLOYEE ATTENDANCE LIST (Rule 4, 5) */}
+          {/* 3. TODAY'S EMPLOYEE ATTENDANCE LIST (Rule 4, 5) */}
           <View style={styles.employeeListCard}>
             <View style={styles.rowBetween}>
               <Text style={styles.sectionHeaderTitle}>Today's Employees</Text>
@@ -234,9 +258,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 { id: '4', name: 'Ramesh Tech', role: 'Technician', statusBadge: '× Absent', status: 'ABSENT' },
               ]).map((emp: any) => (
                 <View key={emp.id} style={styles.empRow}>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={styles.empName}>{emp.name}</Text>
-                    <Text style={styles.empRole}>{emp.role}</Text>
+                    <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
                   </View>
                   <View style={[styles.empBadge, emp.status === 'PRESENT' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
                     <Text style={[styles.empBadgeText, emp.status === 'PRESENT' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
@@ -248,9 +272,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* ADMIN QUICK ACTIONS (Rule 40) */}
+          {/* 4. ADMIN QUICK ACTIONS (Rule 27) */}
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Management Actions</Text>
+            <Text style={styles.sectionTitle}>Quick Management</Text>
           </View>
 
           <View style={styles.quickActionsGrid}>
@@ -265,7 +289,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               <View style={[styles.actionIconCircle, { backgroundColor: '#E0F2FE' }]}>
                 <Text style={{ fontSize: 20 }}>📅</Text>
               </View>
-              <Text style={styles.actionCardTitle}>Leave Days</Text>
+              <Text style={styles.actionCardTitle}>Calendar</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenStock}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#F1F5F9' }]}>
+                <Text style={{ fontSize: 20 }}>📦</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Stock</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionCard} onPress={onOpenMachines}>
@@ -286,11 +317,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* CASE B: EMPLOYEE & SALES VIEW (Hero Card + Scan Action + Calendar)       */}
+      {/* CASE B: EMPLOYEE & SALES VIEW (Hero Card + Scan Action + Stock/Quotes)    */}
       {/* ========================================================================= */}
       {userRole !== 'ADMIN' && (
         <View>
-          {/* COMPANY LEAVE NOTICE (Rule 7, 8) */}
+          {/* COMPANY LEAVE NOTICE */}
           {isCompanyLeave && (
             <View style={styles.companyLeaveBanner}>
               <Text style={{ fontSize: 22 }}>🏢</Text>
@@ -307,7 +338,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           <View style={styles.heroCard}>
             <View style={styles.heroTopRow}>
               <View style={styles.ringWrapper}>
-                <View style={[styles.statusRing, isCheckedIn ? styles.ringGreen : isCompanyLeave ? styles.ringGray : styles.ringGray]}>
+                <View style={[styles.statusRing, isCheckedIn ? styles.ringGreen : styles.ringGray]}>
                   <View style={styles.ringInner}>
                     <Text style={[styles.checkmarkIcon, { color: isCheckedIn ? '#10B981' : '#94A3B8' }]}>
                       {isCheckedIn ? '✓' : isCompanyLeave ? '🏢' : '⏱'}
@@ -371,7 +402,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   </View>
                   <View>
                     <Text style={styles.statLabel}>Work Schedule</Text>
-                    <Text style={[styles.statVal, { color: '#D97706', fontSize: 11 }]}>9:00 AM - 6:00 PM</Text>
+                    <Text style={[styles.statVal, { color: '#D97706', fontSize: 10.5 }]}>9:00 AM - 6:00 PM</Text>
                   </View>
                 </View>
                 <View style={[styles.accentBar, { backgroundColor: '#F59E0B' }]} />
@@ -379,7 +410,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* MAIN QR SCAN BANNER (Rule 11, 12, 42) */}
+          {/* MAIN QR SCAN BANNER */}
           {!isCompanyLeave ? (
             <TouchableOpacity style={styles.scanBanner} onPress={onOpenScanner} activeOpacity={0.88}>
               <View style={styles.scanIconBox}>
@@ -409,40 +440,48 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           )}
 
-          {/* REQUEST ACTION BUTTONS (Rule 26, 33, 43) */}
-          <View style={styles.requestButtonsRow}>
-            {/* Request Button 1: Start Attendance or Missed Attendance */}
-            <TouchableOpacity
-              style={[
-                styles.requestButtonMain,
-                hasActiveRequest && styles.requestButtonDisabled,
-              ]}
-              onPress={() => onOpenRequest(undefined, isCheckedIn ? 'CLOSING' : 'TODAY')}
-              disabled={hasActiveRequest}
-            >
-              <Text style={styles.requestButtonText}>
-                {hasActiveRequest
-                  ? 'UNDER APPROVAL'
-                  : isCheckedIn
-                  ? 'Request Closing / Offsite'
-                  : 'Request Attendance'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Quick Action for Sales: Create Quotation */}
-            {userRole === 'SALES' && (
+          {/* QUICK SHORTCUTS FOR SALES (Rules 28) */}
+          {userRole === 'SALES' && (
+            <View style={styles.salesShortcutsRow}>
               <TouchableOpacity
-                style={[styles.requestButtonMain, { backgroundColor: '#0066CC' }]}
+                style={[styles.salesActionCard, { backgroundColor: '#0066CC' }]}
                 onPress={onOpenQuotations}
               >
-                <Text style={styles.requestButtonText}>+ Create Quotation</Text>
+                <Text style={{ fontSize: 18, color: '#FFFFFF' }}>➕</Text>
+                <Text style={styles.salesActionCardText}>Create Quotation</Text>
               </TouchableOpacity>
-            )}
-          </View>
+
+              <TouchableOpacity
+                style={[styles.salesActionCard, { backgroundColor: '#0A1E3F' }]}
+                onPress={onOpenStock}
+              >
+                <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📦</Text>
+                <Text style={styles.salesActionCardText}>View Stock</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* REQUEST ATTENDANCE BUTTON */}
+          <TouchableOpacity
+            style={[
+              styles.requestButtonMain,
+              hasActiveRequest && styles.requestButtonDisabled,
+            ]}
+            onPress={() => onOpenRequest(undefined, isCheckedIn ? 'CLOSING' : 'TODAY')}
+            disabled={hasActiveRequest}
+          >
+            <Text style={styles.requestButtonText}>
+              {hasActiveRequest
+                ? 'UNDER APPROVAL'
+                : isCheckedIn
+                ? 'Request Closing / Offsite'
+                : 'Request Attendance'}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* 5. MONTHLY ATTENDANCE CALENDAR (Rule 38, 40, 42) */}
+      {/* 5. MONTHLY ATTENDANCE CALENDAR */}
       <View style={styles.calendarCard}>
         <View style={styles.calendarHeaderRow}>
           <Text style={styles.calendarTitle}>Attendance Calendar</Text>
@@ -531,7 +570,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 90,
+    paddingBottom: 110,
   },
   topHeader: {
     flexDirection: 'row',
@@ -543,41 +582,50 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
   },
   menuIcon: {
-    width: 36,
-    height: 36,
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
+    alignItems: 'center',
     gap: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   menuLine: {
-    width: 20,
+    width: 18,
     height: 2.5,
     backgroundColor: '#0F172A',
     borderRadius: 2,
   },
   greetingContainer: {
     justifyContent: 'center',
+    flex: 1,
   },
   greetingText: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#475569',
     fontWeight: '600',
   },
   userNameText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
     color: '#0F172A',
     marginTop: -2,
   },
   subGreeting: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#64748B',
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   bellButton: {
     width: 38,
@@ -612,9 +660,9 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#E0F2FE',
     borderWidth: 2,
     borderColor: '#0284C7',
@@ -635,7 +683,7 @@ const styles = StyleSheet.create({
   adminStatsGrid: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   adminStatCard: {
     flex: 1,
@@ -660,60 +708,76 @@ const styles = StyleSheet.create({
   },
   adminQrCard: {
     backgroundColor: '#0F1E36',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
   },
   qrCardTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '900',
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
-  qrCardSub: {
-    fontSize: 10.5,
-    color: '#94A3B8',
+  activeQrPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 99,
+    marginTop: 3,
+    alignSelf: 'flex-start',
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  activeQrPillText: {
+    color: '#10B981',
+    fontSize: 9.5,
+    fontWeight: '800',
   },
   regenBtn: {
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
   regenBtnText: {
     color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  qrInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    gap: 10,
-  },
-  qrCodeIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  qrTokenText: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: '#10B981',
   },
-  qrExpiresText: {
-    fontSize: 10,
+  qrVisualContainer: {
+    marginVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrHelperText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  qrOfficeLabel: {
+    fontSize: 10.5,
     color: '#94A3B8',
-    marginTop: 2,
+    textAlign: 'center',
+    marginTop: 4,
   },
   employeeListCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
-    marginBottom: 12,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -890,7 +954,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   statVal: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '800',
   },
   accentBar: {
@@ -941,17 +1005,35 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
   },
-  requestButtonsRow: {
+  salesShortcutsRow: {
     flexDirection: 'row',
     gap: 10,
     marginBottom: 14,
   },
-  requestButtonMain: {
+  salesActionCard: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  salesActionCardText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  requestButtonMain: {
     backgroundColor: '#0F172A',
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
+    marginBottom: 14,
   },
   requestButtonDisabled: {
     backgroundColor: '#94A3B8',
@@ -995,11 +1077,13 @@ const styles = StyleSheet.create({
   },
   quickActionsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginBottom: 14,
   },
   actionCard: {
     flex: 1,
+    minWidth: 60,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     paddingVertical: 12,
@@ -1018,7 +1102,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   actionCardTitle: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#334155',
   },
@@ -1066,7 +1150,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   weekdayText: {
-    width: 40,
+    width: 38,
     textAlign: 'center',
     fontSize: 9.5,
     fontWeight: '700',
@@ -1079,7 +1163,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dayBox: {
-    width: 40,
+    width: 38,
     height: 38,
     borderRadius: 8,
     backgroundColor: '#F8FAFC',
@@ -1128,7 +1212,7 @@ const styles = StyleSheet.create({
     borderRadius: 3.5,
   },
   legendLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#64748B',
     fontWeight: '600',
   },
