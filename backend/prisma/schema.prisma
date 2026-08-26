@@ -1,0 +1,216 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  TECHNICIAN
+  SALES
+  MANAGER
+  ACCOUNTANT
+  ADMIN
+  IT_ADMIN
+}
+
+model User {
+  id           String             @id @default(uuid())
+  employeeCode String             @unique
+  name         String
+  email        String             @unique
+  password     String
+  role         Role               @default(TECHNICIAN)
+  phone        String?
+  department   String?
+  isActive     Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  schedules          EmployeeSchedule[]
+  attendances        Attendance[]
+  attendanceRequests AttendanceRequest[]  @relation("EmployeeRequests")
+  reviewedRequests   AttendanceRequest[]  @relation("ReviewedRequests")
+  quotations         Quotation[]
+  auditLogs          AttendanceAuditLog[] @relation("AuditUser")
+  performedAudits    AttendanceAuditLog[] @relation("AuditPerformer")
+}
+
+model EmployeeSchedule {
+  id           String   @id @default(uuid())
+  employeeId   String
+  dayOfWeek    Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime    String   // "09:00"
+  endTime      String   // "20:00"
+  isWorkingDay Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  employee     User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek])
+}
+
+model GovernmentHoliday {
+  id          String   @id @default(uuid())
+  date        String   @unique // YYYY-MM-DD
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model OfficeConfig {
+  id                  String   @id @default(uuid())
+  officeName          String   @default("ECDIAL Headquarters")
+  latitude            Float    @default(13.0827)
+  longitude           Float    @default(80.2707)
+  allowedRadiusMeters Float    @default(100.0)
+  qrRotationSeconds   Int      @default(30)
+  isDefault           Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Attendance {
+  id                     String    @id @default(uuid())
+  employeeId             String
+  date                   String    // YYYY-MM-DD
+  checkInTime            DateTime?
+  checkInMethod          String    @default("QR")
+  checkInDistance        Float?
+  checkInGpsAccuracy     Float?
+  checkInLatitude        Float?
+  checkInLongitude       Float?
+  checkOutTime           DateTime?
+  checkOutDistance       Float?
+  checkOutGpsAccuracy    Float?
+  checkOutLatitude       Float?
+  checkOutLongitude      Float?
+  workingDurationMinutes Int?
+  status                 String    @default("PRESENT") // PRESENT, ABSENT, WAITING_FOR_APPROVAL, INCOMPLETE, HOLIDAY, WEEKLY_OFF
+  otMinutes              Int       @default(0)
+  otStatus               String    @default("NONE") // NONE, OT_PENDING_APPROVAL, OT_APPROVED, OT_REJECTED
+  notes                  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  employee               User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+}
+
+model AttendanceRequest {
+  id            String    @id @default(uuid())
+  employeeId    String
+  requestType   String    // "CHECKIN_FAILURE", "CHECKOUT_CORRECTION", "MULTI_DAY_MISSED"
+  dates         String    // JSON array of strings e.g. "[\"2026-08-18\",\"2026-08-19\"]"
+  checkInTime   String?   // "09:00"
+  checkOutTime  String?   // "18:00"
+  reason        String
+  remarks       String?
+  status        String    @default("WAITING_FOR_APPROVAL") // WAITING_FOR_APPROVAL, APPROVED, REJECTED
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewRemarks String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  employee      User      @relation("EmployeeRequests", fields: [employeeId], references: [id], onDelete: Cascade)
+  reviewedBy    User?     @relation("ReviewedRequests", fields: [reviewedById], references: [id])
+}
+
+model AttendanceAuditLog {
+  id            String   @id @default(uuid())
+  employeeId    String?
+  employeeName  String
+  action        String   // "CHECK_IN", "CHECK_OUT", "REQUEST_SUBMITTED", "REQUEST_APPROVED", "REQUEST_REJECTED", "OT_APPROVED", "OT_REJECTED", "SCHEDULE_UPDATED", "OFFICE_CONFIG_UPDATED"
+  date          String   // YYYY-MM-DD
+  timestamp     DateTime @default(now())
+  method        String?  // "QR", "MANUAL_APPROVAL", "SYSTEM"
+  distance      Float?
+  gpsAccuracy   Float?
+  performedById String?
+  details       String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  employee      User?    @relation("AuditUser", fields: [employeeId], references: [id])
+  performedBy   User?    @relation("AuditPerformer", fields: [performedById], references: [id])
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  name           String
+  model          String?
+  category       String   @default("MAIN_UNIT") // MAIN_UNIT, LOW_SIDE
+  description    String   @db.Text
+  defaultUnit    String   @default("Nos")
+  defaultPrice   Float
+  availableStock Int      @default(10)
+  imageUrl       String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Quotation {
+  id                  String          @id @default(uuid())
+  quotationNumber     String          @unique // e.g. "ECD-Q-2026-00124"
+  revisionNumber      Int             @default(1)
+  originalQuotationId String?
+  date                String          // YYYY-MM-DD
+  customerName        String
+  customerAddress     String          @db.Text
+  customerPhone       String?
+  customerEmail       String?
+  customerLocation    String?
+  createdById         String
+  hasLowSide          Boolean         @default(false)
+  mainUnitTotal       Float           @default(0.0)
+  lowSideTotal        Float           @default(0.0)
+  subtotal            Float           @default(0.0)
+  cgstPercent         Float           @default(9.0)
+  cgstAmount          Float           @default(0.0)
+  sgstPercent         Float           @default(9.0)
+  sgstAmount          Float           @default(0.0)
+  grandTotal          Float           @default(0.0)
+  termsAndConditions  String          @db.Text
+  paymentMethod       String          @db.Text
+  status              String          @default("DRAFT") // DRAFT, FINAL, SENT, ACCEPTED, REJECTED, EXPIRED
+  notes               String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  createdBy           User            @relation(fields: [createdById], references: [id])
+  items               QuotationItem[]
+}
+
+model QuotationItem {
+  id          String    @id @default(uuid())
+  quotationId String
+  section     String    // "MAIN_UNIT" or "LOW_SIDE"
+  productId   String?
+  itemOrder   Int       @default(0)
+  description String    @db.Text
+  quantity    Float     @default(1.0)
+  unit        String    @default("Nos")
+  unitPrice   Float     @default(0.0)
+  amount      Float     @default(0.0)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model QuotationConfig {
+  id                   String   @id @default(uuid())
+  defaultCgstPercent   Float    @default(9.0)
+  defaultSgstPercent   Float    @default(9.0)
+  defaultTerms         String   @db.Text
+  defaultPaymentMethod String   @db.Text
+  availableUnits       String   @default("Nos,Mtr,Sqft,Kg,Set,Box,Piece,Hour,Service,Other")
+  updatedAt            DateTime @updatedAt
+}
