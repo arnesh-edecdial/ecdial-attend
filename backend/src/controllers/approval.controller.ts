@@ -1,15 +1,19 @@
 import { Response } from 'express';
-import { inMemoryDB } from '../db/store';
+import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { calculateDurationMinutes, calculateOvertimeMinutes, formatMinutesToDuration, formatTime12h, getTodayDateString } from '../utils/calculations';
+import { calculateDurationMinutes, formatMinutesToDuration, formatTime12h } from '../utils/calculations';
 
 export const approvalController = {
-  // 1. List All Pending Approvals (Attendance Requests, Multi-day Requests, Today Requests, Closing Requests, Overtime)
+  // 1. List All Pending Approvals (Attendance Requests & Pending Overtime)
   listPendingApprovals: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const pendingRequests = inMemoryDB.attendanceRequests
-      .filter((r) => r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL')
-      .map((r) => {
-        const employee = inMemoryDB.users.find((u) => u.id === r.employeeId);
+    try {
+      const pendingRequests = await prisma.attendanceRequest.findMany({
+        where: { status: { in: ['WAITING_FOR_APPROVAL', 'UNDER_APPROVAL'] } },
+        include: { employee: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const formattedRequests = pendingRequests.map((r) => {
         let parsedDates: string[] = [];
         try {
           parsedDates = typeof r.dates === 'string' ? JSON.parse(r.dates) : r.dates;
@@ -27,9 +31,9 @@ export const approvalController = {
           requestType: r.requestType,
           type: typeLabel,
           employeeId: r.employeeId,
-          employeeName: employee?.name || 'Unknown Employee',
-          employeeCode: employee?.employeeCode || 'EMP',
-          role: employee?.role || 'TECHNICIAN',
+          employeeName: r.employee?.name || 'Unknown Employee',
+          employeeCode: r.employee?.employeeCode || 'EMP',
+          role: r.employee?.role || 'TECHNICIAN',
           dates: parsedDates,
           datesFormatted: parsedDates.join(', '),
           checkInTime: r.checkInTime,
@@ -41,47 +45,52 @@ export const approvalController = {
         };
       });
 
-    // Pending Overtime Approvals
-    const pendingOT = inMemoryDB.attendances
-      .filter((a) => a.otStatus === 'OT_PENDING_APPROVAL')
-      .map((a) => {
-        const employee = inMemoryDB.users.find((u) => u.id === a.employeeId);
-        return {
-          id: `ot-${a.id}`,
-          attendanceId: a.id,
-          requestType: 'OVERTIME',
-          type: 'Overtime Approval',
-          employeeId: a.employeeId,
-          employeeName: employee?.name || 'Unknown Employee',
-          employeeCode: employee?.employeeCode || 'EMP',
-          role: employee?.role || 'TECHNICIAN',
-          dates: [a.date],
-          datesFormatted: a.date,
-          checkInTime: a.checkInTime ? formatTime12h(a.checkInTime) : null,
-          checkOutTime: a.checkOutTime ? formatTime12h(a.checkOutTime) : null,
-          otMinutes: a.otMinutes,
-          otFormatted: formatMinutesToDuration(a.otMinutes),
-          reason: `Potential Overtime of ${formatMinutesToDuration(a.otMinutes)} clocked beyond scheduled shift.`,
-          remarks: a.notes || '',
-          status: 'UNDER_APPROVAL',
-          submittedAt: a.updatedAt,
-        };
+      // Pending Overtime Approvals
+      const pendingOTAttendances = await prisma.attendance.findMany({
+        where: { otStatus: 'OT_PENDING_APPROVAL' },
+        include: { employee: true },
+        orderBy: { date: 'desc' },
       });
 
-    const combinedQueue = [...pendingRequests, ...pendingOT];
+      const formattedOT = pendingOTAttendances.map((a) => ({
+        id: `ot-${a.id}`,
+        attendanceId: a.id,
+        requestType: 'OVERTIME',
+        type: 'Overtime Approval',
+        employeeId: a.employeeId,
+        employeeName: a.employee?.name || 'Unknown Employee',
+        employeeCode: a.employee?.employeeCode || 'EMP',
+        role: a.employee?.role || 'TECHNICIAN',
+        dates: [a.date],
+        datesFormatted: a.date,
+        checkInTime: a.checkInTime ? formatTime12h(a.checkInTime) : null,
+        checkOutTime: a.checkOutTime ? formatTime12h(a.checkOutTime) : null,
+        otMinutes: a.otMinutes,
+        otFormatted: formatMinutesToDuration(a.otMinutes),
+        reason: `Overtime of ${formatMinutesToDuration(a.otMinutes)} clocked beyond shift.`,
+        remarks: a.notes || '',
+        status: 'UNDER_APPROVAL',
+        submittedAt: a.updatedAt,
+      }));
 
-    res.json({
-      success: true,
-      data: {
-        totalPending: combinedQueue.length,
-        attendanceRequestsCount: pendingRequests.length,
-        overtimeRequestsCount: pendingOT.length,
-        queue: combinedQueue,
-      },
-    });
+      const combinedQueue = [...formattedRequests, ...formattedOT];
+
+      res.json({
+        success: true,
+        data: {
+          totalPending: combinedQueue.length,
+          attendanceRequestsCount: formattedRequests.length,
+          overtimeRequestsCount: formattedOT.length,
+          queue: combinedQueue,
+        },
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to list pending approvals.' });
+    }
   },
 
-  // 2. Process Approval (Approve, Reject, or Modify Times)
+  // 2. Process Approval (Approve or Reject with DB Sync)
   processApproval: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const { action, remarks, approvedCheckInTime, approvedCheckOutTime } = req.body;
@@ -91,159 +100,225 @@ export const approvalController = {
       return;
     }
 
-    const reviewerId = req.user?.id || 'usr-admin-1';
+    const reviewerId = req.user?.id;
     const reviewerName = req.user?.name || 'Admin';
 
-    // Case 1: Overtime Item (starts with "ot-")
-    if (id.startsWith('ot-')) {
-      const attendanceId = id.replace('ot-', '');
-      const attendance = inMemoryDB.attendances.find((a) => a.id === attendanceId);
+    try {
+      // Case 1: Overtime Item (starts with "ot-")
+      if (id.startsWith('ot-')) {
+        const attendanceId = id.replace('ot-', '');
+        const attendance = await prisma.attendance.findUnique({
+          where: { id: attendanceId },
+          include: { employee: true },
+        });
 
-      if (!attendance) {
-        res.status(404).json({ success: false, message: 'Attendance record not found.' });
+        if (!attendance) {
+          res.status(404).json({ success: false, message: 'Attendance record not found.' });
+          return;
+        }
+
+        const newOtStatus = action === 'APPROVE' ? 'OT_APPROVED' : 'OT_REJECTED';
+        await prisma.attendance.update({
+          where: { id: attendanceId },
+          data: { otStatus: newOtStatus },
+        });
+
+        await prisma.attendanceAuditLog.create({
+          data: {
+            employeeId: attendance.employeeId,
+            employeeName: attendance.employee.name,
+            action: action === 'APPROVE' ? 'OT_APPROVED' : 'OT_REJECTED',
+            date: attendance.date,
+            method: 'MANUAL_APPROVAL',
+            performedById: reviewerId,
+            details: JSON.stringify({ otMinutes: attendance.otMinutes, action, remarks, reviewerName }),
+          },
+        });
+
+        res.json({
+          success: true,
+          message: `Overtime ${action === 'APPROVE' ? 'Approved' : 'Rejected'} successfully.`,
+        });
         return;
       }
 
-      const employee = inMemoryDB.users.find((u) => u.id === attendance.employeeId);
-      attendance.otStatus = action === 'APPROVE' ? 'OT_APPROVED' : 'OT_REJECTED';
-      attendance.updatedAt = new Date();
+      // Case 2: Attendance Request
+      const request = await prisma.attendanceRequest.findUnique({
+        where: { id },
+        include: { employee: true },
+      });
 
-      inMemoryDB.auditLogs.push({
-        id: `aud-${Date.now()}`,
-        employeeId: attendance.employeeId,
-        employeeName: employee?.name || 'Employee',
-        action: action === 'APPROVE' ? 'OT_APPROVED' : 'OT_REJECTED',
-        date: attendance.date,
-        timestamp: new Date(),
-        method: 'ADMIN_APPROVAL',
-        performedById: reviewerId,
-        details: JSON.stringify({
-          attendanceId,
-          otMinutes: attendance.otMinutes,
-          reviewer: reviewerName,
-          remarks: remarks || '',
-        }),
-        createdAt: new Date(),
+      if (!request) {
+        res.status(404).json({ success: false, message: 'Attendance request not found.' });
+        return;
+      }
+
+      const finalStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      await prisma.attendanceRequest.update({
+        where: { id },
+        data: {
+          status: finalStatus,
+          reviewedById: reviewerId,
+          reviewedAt: new Date(),
+          reviewRemarks: remarks || null,
+        },
+      });
+
+      if (action === 'APPROVE') {
+        let parsedDates: string[] = [];
+        try {
+          parsedDates = typeof request.dates === 'string' ? JSON.parse(request.dates) : request.dates;
+        } catch {
+          parsedDates = [request.dates];
+        }
+
+        const inTimeStr = approvedCheckInTime || request.checkInTime || '09:00';
+        const outTimeStr = approvedCheckOutTime !== undefined ? approvedCheckOutTime : (request.checkOutTime || null);
+
+        for (const dateStr of parsedDates) {
+          const inDate = new Date(`${dateStr}T${inTimeStr}:00`);
+          let outDate: Date | null = null;
+          let durMins: number | null = null;
+
+          if (outTimeStr && outTimeStr.trim() !== '') {
+            outDate = new Date(`${dateStr}T${outTimeStr}:00`);
+            durMins = calculateDurationMinutes(inDate, outDate);
+          }
+
+          await prisma.attendance.upsert({
+            where: {
+              employeeId_date: {
+                employeeId: request.employeeId,
+                date: dateStr,
+              },
+            },
+            update: {
+              checkInTime: inDate,
+              checkOutTime: outDate,
+              workingDurationMinutes: durMins || null,
+              status: 'PRESENT',
+              notes: `Approved via Attendance Request (${request.reason})`,
+            },
+            create: {
+              employeeId: request.employeeId,
+              date: dateStr,
+              checkInTime: inDate,
+              checkOutTime: outDate,
+              checkInMethod: 'MANUAL_APPROVAL',
+              workingDurationMinutes: durMins || null,
+              status: 'PRESENT',
+              notes: `Approved via Attendance Request (${request.reason})`,
+            },
+          });
+        }
+      }
+
+      // Log Audit
+      await prisma.attendanceAuditLog.create({
+        data: {
+          employeeId: request.employeeId,
+          employeeName: request.employee.name,
+          action: action === 'APPROVE' ? 'REQUEST_APPROVED' : 'REQUEST_REJECTED',
+          date: new Date().toISOString().substring(0, 10),
+          method: 'MANUAL_APPROVAL',
+          performedById: reviewerId,
+          details: JSON.stringify({ requestId: id, action, remarks, reviewerName }),
+        },
       });
 
       res.json({
         success: true,
-        message: `Overtime ${action === 'APPROVE' ? 'Approved' : 'Rejected'} for ${employee?.name || 'Employee'}.`,
+        message: `Attendance request ${action === 'APPROVE' ? 'Approved' : 'Rejected'} successfully.`,
       });
+    } catch (err: any) {
+      console.error('[Process Approval Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to process approval.' });
+    }
+  },
+
+  // 3. Admin Direct Resolve Missing Attendance (Rule 14)
+  directResolveAttendance: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'IT_ADMIN')) {
+      res.status(403).json({ success: false, message: 'Admin permissions required.' });
       return;
     }
 
-    // Case 2: Attendance Request
-    const request = inMemoryDB.attendanceRequests.find((r) => r.id === id);
-    if (!request) {
-      res.status(404).json({ success: false, message: 'Attendance request not found.' });
+    const { employeeId, date, status, checkInTime, checkOutTime, remarks } = req.body;
+
+    if (!employeeId || !date || !status) {
+      res.status(400).json({ success: false, message: 'employeeId, date, and status are required.' });
       return;
     }
 
-    request.status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-    request.reviewedById = reviewerId;
-    request.reviewedAt = new Date();
-    request.reviewRemarks = remarks || '';
-    request.updatedAt = new Date();
-
-    const employee = inMemoryDB.users.find((u) => u.id === request.employeeId);
-
-    if (action === 'APPROVE') {
-      let datesList: string[] = [];
-      try {
-        datesList = typeof request.dates === 'string' ? JSON.parse(request.dates) : request.dates;
-      } catch {
-        datesList = [request.dates];
+    try {
+      const employee = await prisma.user.findUnique({ where: { id: employeeId } });
+      if (!employee) {
+        res.status(404).json({ success: false, message: 'Employee not found.' });
+        return;
       }
 
-      const todayStr = getTodayDateString();
+      let inDate: Date | null = null;
+      let outDate: Date | null = null;
+      let durMins: number | null = null;
 
-      for (const dateStr of datesList) {
-        let existing = inMemoryDB.attendances.find(
-          (a) => a.employeeId === request.employeeId && a.date === dateStr
-        );
+      if (checkInTime && checkInTime.trim() !== '') {
+        inDate = new Date(`${date}T${checkInTime}:00`);
+      }
 
-        const inTimeStr = approvedCheckInTime || request.checkInTime || '09:00';
-        const outTimeStr = approvedCheckOutTime || request.checkOutTime || null;
-
-        const checkInDate = new Date(`${dateStr}T${inTimeStr}:00`);
-        const checkOutDate = outTimeStr ? new Date(`${dateStr}T${outTimeStr}:00`) : null;
-        const durationMins = checkOutDate ? calculateDurationMinutes(checkInDate, checkOutDate) : null;
-
-        // Overtime check if checkout is present
-        let otMinutes = 0;
-        let otStatus = 'NONE';
-        if (checkOutDate) {
-          const schedule = inMemoryDB.schedules.find(
-            (s) => s.employeeId === request.employeeId && s.dayOfWeek === new Date(dateStr).getDay()
-          );
-          if (schedule && schedule.endTime) {
-            otMinutes = calculateOvertimeMinutes(checkOutDate, schedule.endTime);
-            if (otMinutes > 0) otStatus = 'OT_APPROVED';
-          }
-        }
-
-        if (existing) {
-          existing.status = 'PRESENT';
-          if (inTimeStr) existing.checkInTime = checkInDate;
-          if (checkOutDate) {
-            existing.checkOutTime = checkOutDate;
-            existing.workingDurationMinutes = durationMins;
-            existing.otMinutes = otMinutes;
-            existing.otStatus = otStatus;
-          }
-          existing.notes = `Approved: ${request.reason}`;
-          existing.updatedAt = new Date();
-        } else {
-          inMemoryDB.attendances.push({
-            id: `att-req-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            employeeId: request.employeeId,
-            date: dateStr,
-            checkInTime: checkInDate,
-            checkInMethod: 'MANUAL_APPROVAL',
-            checkInDistance: null,
-            checkInGpsAccuracy: null,
-            checkInLatitude: null,
-            checkInLongitude: null,
-            checkOutTime: checkOutDate,
-            checkOutDistance: null,
-            checkOutGpsAccuracy: null,
-            checkOutLatitude: null,
-            checkOutLongitude: null,
-            workingDurationMinutes: durationMins,
-            status: 'PRESENT',
-            otMinutes,
-            otStatus,
-            notes: `Approved request: ${request.reason}`,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          });
+      if (checkOutTime && checkOutTime.trim() !== '') {
+        outDate = new Date(`${date}T${checkOutTime}:00`);
+        if (inDate) {
+          durMins = calculateDurationMinutes(inDate, outDate);
         }
       }
+
+      const updated = await prisma.attendance.upsert({
+        where: {
+          employeeId_date: {
+            employeeId: employee.id,
+            date,
+          },
+        },
+        update: {
+          status,
+          checkInTime: inDate,
+          checkOutTime: outDate,
+          workingDurationMinutes: durMins,
+          notes: remarks || `Directly resolved by Admin (${req.user.name})`,
+        },
+        create: {
+          employeeId: employee.id,
+          date,
+          status,
+          checkInTime: inDate,
+          checkOutTime: outDate,
+          checkInMethod: 'ADMIN_DIRECT',
+          workingDurationMinutes: durMins,
+          notes: remarks || `Directly resolved by Admin (${req.user.name})`,
+        },
+      });
+
+      await prisma.attendanceAuditLog.create({
+        data: {
+          employeeId: employee.id,
+          employeeName: employee.name,
+          action: 'ADMIN_DIRECT_RESOLVE',
+          date,
+          timestamp: new Date(),
+          method: 'ADMIN_PORTAL',
+          performedById: req.user.id,
+          details: JSON.stringify({ status, checkInTime, checkOutTime, remarks, resolvedBy: req.user.name }),
+        },
+      });
+
+      res.json({
+        success: true,
+        message: `Attendance for ${date} marked as ${status}.`,
+        data: updated,
+      });
+    } catch (err: any) {
+      console.error('[Direct Resolve Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to resolve attendance.' });
     }
-
-    inMemoryDB.auditLogs.push({
-      id: `aud-${Date.now()}`,
-      employeeId: request.employeeId,
-      employeeName: employee?.name || 'Employee',
-      action: action === 'APPROVE' ? 'REQUEST_APPROVED' : 'REQUEST_REJECTED',
-      date: new Date().toISOString().substring(0, 10),
-      timestamp: new Date(),
-      method: 'ADMIN_APPROVAL',
-      performedById: reviewerId,
-      details: JSON.stringify({
-        requestId: request.id,
-        requestType: request.requestType,
-        dates: request.dates,
-        reviewer: reviewerName,
-        remarks: remarks || '',
-      }),
-      createdAt: new Date(),
-    });
-
-    res.json({
-      success: true,
-      message: `Request successfully ${action === 'APPROVE' ? 'Approved' : 'Rejected'} for ${employee?.name || 'Employee'}.`,
-    });
   },
 };

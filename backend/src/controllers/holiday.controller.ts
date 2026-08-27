@@ -1,11 +1,18 @@
 import { Response } from 'express';
-import { inMemoryDB } from '../db/store';
+import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 
 export const holidayController = {
   listHolidays: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const list = [...inMemoryDB.holidays].sort((a, b) => a.date.localeCompare(b.date));
-    res.json({ success: true, data: list });
+    try {
+      const list = await prisma.governmentHoliday.findMany({
+        orderBy: { date: 'asc' },
+      });
+      res.json({ success: true, data: list });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to list holidays.' });
+    }
   },
 
   createHoliday: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -16,43 +23,56 @@ export const holidayController = {
       return;
     }
 
-    const existing = inMemoryDB.holidays.find((h) => h.date === date);
-    if (existing) {
-      res.status(400).json({ success: false, message: `A holiday is already configured for ${date}.` });
-      return;
+    try {
+      const existing = await prisma.governmentHoliday.findUnique({ where: { date } });
+      if (existing) {
+        res.status(400).json({ success: false, message: `A company leave / holiday is already configured for ${date}.` });
+        return;
+      }
+
+      const newHoliday = await prisma.governmentHoliday.create({
+        data: {
+          date: date.trim(),
+          name: name.trim(),
+          description: description ? description.trim() : null,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: `Company leave '${name}' configured for ${date}.`,
+        data: newHoliday,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to create holiday.' });
     }
-
-    const newHoliday = {
-      id: `hol-${Date.now()}`,
-      date,
-      name,
-      description: description || '',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    inMemoryDB.holidays.push(newHoliday);
-
-    res.json({
-      success: true,
-      message: `Government holiday '${name}' configured for ${date}.`,
-      data: newHoliday,
-    });
   },
 
   deleteHoliday: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const id = req.params.id;
-    const index = inMemoryDB.holidays.findIndex((h) => h.id === id || h.date === id);
+    const idOrDate = req.params.id;
 
-    if (index === -1) {
-      res.status(404).json({ success: false, message: 'Holiday not found.' });
-      return;
+    try {
+      const holiday = await prisma.governmentHoliday.findFirst({
+        where: {
+          OR: [{ id: idOrDate }, { date: idOrDate }],
+        },
+      });
+
+      if (!holiday) {
+        res.status(404).json({ success: false, message: 'Holiday not found.' });
+        return;
+      }
+
+      await prisma.governmentHoliday.delete({ where: { id: holiday.id } });
+
+      res.json({
+        success: true,
+        message: `Company leave '${holiday.name}' for ${holiday.date} removed.`,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to delete holiday.' });
     }
-
-    const deleted = inMemoryDB.holidays.splice(index, 1)[0];
-    res.json({
-      success: true,
-      message: `Holiday '${deleted.name}' removed.`,
-    });
   },
 };

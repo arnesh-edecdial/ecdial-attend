@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { inMemoryDB } from '../db/store';
+import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 
 export const auditController = {
@@ -8,26 +8,27 @@ export const auditController = {
     const action = req.query.action as string;
     const date = req.query.date as string;
 
-    let logs = [...inMemoryDB.auditLogs].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    try {
+      const logs = await prisma.attendanceAuditLog.findMany({
+        where: {
+          ...(employeeId ? { employeeId } : {}),
+          ...(action ? { action } : {}),
+          ...(date ? { date } : {}),
+        },
+        orderBy: { timestamp: 'desc' },
+        take: 100,
+      });
 
-    if (employeeId) {
-      logs = logs.filter((l) => l.employeeId === employeeId);
+      res.json({
+        success: true,
+        data: {
+          total: logs.length,
+          logs,
+        },
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to retrieve audit logs.' });
     }
-    if (action) {
-      logs = logs.filter((l) => l.action === action);
-    }
-    if (date) {
-      logs = logs.filter((l) => l.date === date);
-    }
-
-    res.json({
-      success: true,
-      data: {
-        total: logs.length,
-        logs: logs.slice(0, 100), // Return last 100 logs
-      },
-    });
   },
 };

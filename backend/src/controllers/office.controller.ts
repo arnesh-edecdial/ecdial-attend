@@ -1,13 +1,20 @@
 import { Response } from 'express';
-import { inMemoryDB } from '../db/store';
+import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 
 export const officeController = {
   getConfig: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    res.json({
-      success: true,
-      data: inMemoryDB.officeConfig,
-    });
+    try {
+      const config = (await prisma.officeConfig.findFirst({ where: { isDefault: true } })) ||
+        (await prisma.officeConfig.findFirst());
+      res.json({
+        success: true,
+        data: config,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to retrieve office config.' });
+    }
   },
 
   updateConfig: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -18,37 +25,58 @@ export const officeController = {
       return;
     }
 
-    const radius = Number(allowedRadiusMeters) || 100.0;
-    const rotation = Number(qrRotationSeconds) || 30;
+    try {
+      const radius = Number(allowedRadiusMeters) || 100.0;
+      const rotation = Number(qrRotationSeconds) || 30;
 
-    inMemoryDB.officeConfig = {
-      ...inMemoryDB.officeConfig,
-      officeName: officeName || inMemoryDB.officeConfig.officeName,
-      latitude: Number(latitude),
-      longitude: Number(longitude),
-      allowedRadiusMeters: radius,
-      qrRotationSeconds: rotation,
-      updatedAt: new Date(),
-    };
+      const existing = await prisma.officeConfig.findFirst({ where: { isDefault: true } });
 
-    // Audit log
-    inMemoryDB.auditLogs.push({
-      id: `aud-${Date.now()}`,
-      employeeId: req.user?.id,
-      employeeName: req.user?.name || 'Admin',
-      action: 'OFFICE_CONFIG_UPDATED',
-      date: new Date().toISOString().substring(0, 10),
-      timestamp: new Date(),
-      method: 'ADMIN_CONFIG',
-      performedById: req.user?.id,
-      details: JSON.stringify(inMemoryDB.officeConfig),
-      createdAt: new Date(),
-    });
+      let updated;
+      if (existing) {
+        updated = await prisma.officeConfig.update({
+          where: { id: existing.id },
+          data: {
+            officeName: officeName || existing.officeName,
+            latitude: Number(latitude),
+            longitude: Number(longitude),
+            allowedRadiusMeters: radius,
+            qrRotationSeconds: rotation,
+          },
+        });
+      } else {
+        updated = await prisma.officeConfig.create({
+          data: {
+            officeName: officeName || 'ECDIAL Headquarters',
+            latitude: Number(latitude),
+            longitude: Number(longitude),
+            allowedRadiusMeters: radius,
+            qrRotationSeconds: rotation,
+            isDefault: true,
+          },
+        });
+      }
 
-    res.json({
-      success: true,
-      message: 'Office location and radius configuration updated successfully.',
-      data: inMemoryDB.officeConfig,
-    });
+      // Audit log
+      await prisma.attendanceAuditLog.create({
+        data: {
+          employeeId: req.user?.id,
+          employeeName: req.user?.name || 'Admin',
+          action: 'OFFICE_CONFIG_UPDATED',
+          date: new Date().toISOString().substring(0, 10),
+          method: 'ADMIN_CONFIG',
+          performedById: req.user?.id,
+          details: JSON.stringify(updated),
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'Office location and radius configuration updated successfully.',
+        data: updated,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to update office config.' });
+    }
   },
 };

@@ -1,50 +1,73 @@
 import { Response } from 'express';
-import { inMemoryDB } from '../db/store';
+import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { calculateQuotationTotals, getTodayDateString, roundCurrency } from '../utils/calculations';
 import { generateQuotationPDF } from '../services/pdf.service';
 
-/**
- * Generate sequential formatted quotation number e.g. ECD-Q-2026-00125
- */
-function generateNextQuotationNumber(): string {
+async function generateNextQuotationNumber(): Promise<string> {
   const currentYear = new Date().getFullYear();
-  const count = inMemoryDB.quotations.length + 1;
-  const seq = String(count + 100).padStart(5, '0');
+  const count = await prisma.quotation.count();
+  const seq = String(count + 1 + 100).padStart(5, '0');
   return `ECD-Q-${currentYear}-${seq}`;
 }
 
 export const quotationController = {
   // 1. Get Quotation System Configuration (GST rates, terms, payment methods, units)
   getConfig: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    res.json({
-      success: true,
-      data: inMemoryDB.quotationConfig,
-    });
+    try {
+      const config = await prisma.quotationConfig.findFirst();
+      res.json({
+        success: true,
+        data: config,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to retrieve quotation config.' });
+    }
   },
 
   // 2. Update Configuration (Admin only)
   updateConfig: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { defaultCgstPercent, defaultSgstPercent, defaultTerms, defaultPaymentMethod, availableUnits } = req.body;
 
-    inMemoryDB.quotationConfig = {
-      ...inMemoryDB.quotationConfig,
-      defaultCgstPercent: defaultCgstPercent !== undefined ? Number(defaultCgstPercent) : inMemoryDB.quotationConfig.defaultCgstPercent,
-      defaultSgstPercent: defaultSgstPercent !== undefined ? Number(defaultSgstPercent) : inMemoryDB.quotationConfig.defaultSgstPercent,
-      defaultTerms: defaultTerms !== undefined ? defaultTerms : inMemoryDB.quotationConfig.defaultTerms,
-      defaultPaymentMethod: defaultPaymentMethod !== undefined ? defaultPaymentMethod : inMemoryDB.quotationConfig.defaultPaymentMethod,
-      availableUnits: availableUnits !== undefined ? availableUnits : inMemoryDB.quotationConfig.availableUnits,
-      updatedAt: new Date(),
-    };
+    try {
+      const existing = await prisma.quotationConfig.findFirst();
+      let updated;
+      if (existing) {
+        updated = await prisma.quotationConfig.update({
+          where: { id: existing.id },
+          data: {
+            defaultCgstPercent: defaultCgstPercent !== undefined ? Number(defaultCgstPercent) : existing.defaultCgstPercent,
+            defaultSgstPercent: defaultSgstPercent !== undefined ? Number(defaultSgstPercent) : existing.defaultSgstPercent,
+            defaultTerms: defaultTerms !== undefined ? defaultTerms : existing.defaultTerms,
+            defaultPaymentMethod: defaultPaymentMethod !== undefined ? defaultPaymentMethod : existing.defaultPaymentMethod,
+            availableUnits: availableUnits !== undefined ? availableUnits : existing.availableUnits,
+          },
+        });
+      } else {
+        updated = await prisma.quotationConfig.create({
+          data: {
+            defaultCgstPercent: Number(defaultCgstPercent) || 9.0,
+            defaultSgstPercent: Number(defaultSgstPercent) || 9.0,
+            defaultTerms: defaultTerms || 'Standard Terms',
+            defaultPaymentMethod: defaultPaymentMethod || '100% Machine with PO',
+            availableUnits: availableUnits || 'Nos,Mtr,Sqft,Kg,Set,Box,Piece,Hour,Service,Other',
+          },
+        });
+      }
 
-    res.json({
-      success: true,
-      message: 'Quotation settings updated.',
-      data: inMemoryDB.quotationConfig,
-    });
+      res.json({
+        success: true,
+        message: 'Quotation settings updated.',
+        data: updated,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to update quotation config.' });
+    }
   },
 
-  // 3. Create Fast New Quotation (Requires only Customer Name & Customer Address)
+  // 3. Create Fast New Quotation
   createQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Authentication required.' });
@@ -67,7 +90,6 @@ export const quotationController = {
       notes,
     } = req.body;
 
-    // Minimum requirement: Customer Name and Customer Address
     if (!customerName || !customerName.trim()) {
       res.status(400).json({ success: false, message: 'Customer Name is required.' });
       return;
@@ -78,201 +100,206 @@ export const quotationController = {
       return;
     }
 
-    const todayStr = getTodayDateString();
-    const quotationNumber = generateNextQuotationNumber();
+    try {
+      const todayStr = getTodayDateString();
+      const quotationNumber = await generateNextQuotationNumber();
 
-    // Default configuration values
-    const config = inMemoryDB.quotationConfig;
-    const cgst = cgstPercent !== undefined ? Number(cgstPercent) : config.defaultCgstPercent;
-    const sgst = sgstPercent !== undefined ? Number(sgstPercent) : config.defaultSgstPercent;
-    const terms = termsAndConditions || config.defaultTerms;
-    const payment = paymentMethod || config.defaultPaymentMethod;
+      const config = (await prisma.quotationConfig.findFirst()) || {
+        defaultCgstPercent: 9.0,
+        defaultSgstPercent: 9.0,
+        defaultTerms: '1. AC Price inclusive of 18% taxes.',
+        defaultPaymentMethod: '100% with PO.',
+      };
 
-    // Prepare quotation items and check stock warnings (stock is NOT reduced)
-    const processedItems: any[] = [];
-    const rawItems = Array.isArray(items) ? items : [];
-    const stockWarnings: string[] = [];
+      const cgst = cgstPercent !== undefined ? Number(cgstPercent) : config.defaultCgstPercent;
+      const sgst = sgstPercent !== undefined ? Number(sgstPercent) : config.defaultSgstPercent;
+      const terms = termsAndConditions || config.defaultTerms;
+      const payment = paymentMethod || config.defaultPaymentMethod;
 
-    rawItems.forEach((item: any, index: number) => {
-      const qty = Number(item.quantity) || 1;
-      const price = Number(item.unitPrice) || 0;
-      const itemAmount = roundCurrency(qty * price);
+      const rawItems = Array.isArray(items) ? items : [];
+      const processedItems: any[] = [];
+      const stockWarnings: string[] = [];
 
-      if (item.productId) {
-        const prod = inMemoryDB.products.find((p) => p.id === item.productId);
-        if (prod && prod.availableStock < qty) {
-          stockWarnings.push(`'${item.description}' exceeds current available stock (Requested: ${qty}, Available: ${prod.availableStock})`);
+      for (let index = 0; index < rawItems.length; index++) {
+        const item = rawItems[index];
+        const qty = Number(item.quantity) || 1;
+        const price = Number(item.unitPrice) || 0;
+        const itemAmount = roundCurrency(qty * price);
+
+        if (item.productId) {
+          const prod = await prisma.product.findUnique({ where: { id: item.productId } });
+          if (prod && prod.availableStock < qty) {
+            stockWarnings.push(
+              `Requested quantity (${qty}) for '${prod.name}' exceeds available warehouse stock (${prod.availableStock}).`
+            );
+          }
         }
+
+        processedItems.push({
+          section: item.section || 'MAIN_UNIT',
+          productId: item.productId || null,
+          itemOrder: index + 1,
+          description: item.description || 'AC Equipment / Material',
+          quantity: qty,
+          unit: item.unit || 'Nos',
+          unitPrice: price,
+          amount: itemAmount,
+          notes: item.notes || '',
+        });
       }
 
-      processedItems.push({
-        id: `qitem-${Date.now()}-${index}`,
-        section: item.section || 'MAIN_UNIT',
-        productId: item.productId || null,
-        itemOrder: index + 1,
-        description: item.description || 'AC Equipment',
-        quantity: qty,
-        unit: item.unit || 'Nos',
-        unitPrice: price,
-        amount: itemAmount,
-        notes: item.notes || '',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+      const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst);
+
+      // Create Quotation with Items in Supabase DB
+      const newQuotation = await prisma.quotation.create({
+        data: {
+          quotationNumber,
+          revisionNumber: 1,
+          date: todayStr,
+          customerName: customerName.trim(),
+          customerAddress: customerAddress.trim(),
+          customerPhone: customerPhone ? customerPhone.trim() : null,
+          customerEmail: customerEmail ? customerEmail.trim() : null,
+          customerLocation: customerLocation ? customerLocation.trim() : customerAddress.trim(),
+          createdById: req.user.id,
+          hasLowSide: Boolean(hasLowSide),
+          mainUnitTotal: totals.mainUnitTotal,
+          lowSideTotal: totals.lowSideTotal,
+          subtotal: totals.subtotal,
+          cgstPercent: cgst,
+          cgstAmount: totals.cgstAmount,
+          sgstPercent: sgst,
+          sgstAmount: totals.sgstAmount,
+          grandTotal: totals.grandTotal,
+          termsAndConditions: terms,
+          paymentMethod: payment,
+          status: status || 'DRAFT',
+          notes: notes || null,
+          items: {
+            create: processedItems,
+          },
+        },
+        include: {
+          items: true,
+          createdBy: {
+            select: { id: true, name: true, email: true, role: true },
+          },
+        },
       });
-    });
 
-    // Authoritative calculations
-    const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst);
-
-    const quotationId = `quot-${Date.now()}`;
-    const newQuotation = {
-      id: quotationId,
-      quotationNumber,
-      revisionNumber: 1,
-      originalQuotationId: null,
-      date: todayStr,
-      customerName: customerName.trim(),
-      customerAddress: customerAddress.trim(),
-      customerPhone: customerPhone || null,
-      customerEmail: customerEmail || null,
-      customerLocation: customerLocation || null,
-      createdById: req.user.id,
-      hasLowSide: Boolean(hasLowSide),
-      mainUnitTotal: totals.mainUnitTotal,
-      lowSideTotal: totals.lowSideTotal,
-      subtotal: totals.subtotal,
-      cgstPercent: totals.cgstPercent,
-      cgstAmount: totals.cgstAmount,
-      sgstPercent: totals.sgstPercent,
-      sgstAmount: totals.sgstAmount,
-      grandTotal: totals.grandTotal,
-      termsAndConditions: terms,
-      paymentMethod: payment,
-      status: status || 'DRAFT', // 'DRAFT' | 'FINAL' | 'SENT'
-      notes: notes || '',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    inMemoryDB.quotations.push(newQuotation);
-    processedItems.forEach((pi) => {
-      pi.quotationId = quotationId;
-      inMemoryDB.quotationItems.push(pi);
-    });
-
-    // Audit log
-    inMemoryDB.auditLogs.push({
-      id: `aud-${Date.now()}`,
-      employeeId: req.user.id,
-      employeeName: req.user.name,
-      action: 'QUOTATION_CREATED',
-      date: todayStr,
-      timestamp: new Date(),
-      method: 'SALES_PORTAL',
-      performedById: req.user.id,
-      details: JSON.stringify({
-        quotationNumber,
-        customerName: newQuotation.customerName,
-        grandTotal: totals.grandTotal,
-        itemCount: processedItems.length,
-      }),
-      createdAt: new Date(),
-    });
-
-    res.json({
-      success: true,
-      message: `Quotation ${quotationNumber} created successfully.`,
-      data: {
-        ...newQuotation,
-        items: processedItems,
-        stockWarnings: stockWarnings.length > 0 ? stockWarnings : null,
-      },
-    });
+      res.json({
+        success: true,
+        message: 'Quotation generated successfully.',
+        data: newQuotation,
+        stockWarnings: stockWarnings.length > 0 ? stockWarnings : undefined,
+      });
+    } catch (err: any) {
+      console.error('[Create Quotation Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to create quotation.' });
+    }
   },
 
-  // 4. List Quotations with Filters
+  // 4. List Quotations (Sales sees only their own; Admin sees all)
   listQuotations: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const status = req.query.status as string;
-    const search = (req.query.search as string)?.toLowerCase();
-    const createdBy = req.query.createdBy as string;
-
-    let list = [...inMemoryDB.quotations].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    // Sales reps view their own quotations unless admin/manager
-    if (req.user && req.user.role === 'SALES') {
-      list = list.filter((q) => q.createdById === req.user!.id);
-    } else if (createdBy) {
-      list = list.filter((q) => q.createdById === createdBy);
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
     }
 
-    if (status) {
-      list = list.filter((q) => q.status === status);
+    const { createdBy, status } = req.query;
+    const isSales = req.user.role === 'SALES';
+
+    try {
+      const quotations = await prisma.quotation.findMany({
+        where: {
+          ...(isSales ? { createdById: req.user.id } : createdBy ? { createdById: createdBy as string } : {}),
+          ...(status ? { status: status as string } : {}),
+        },
+        include: {
+          createdBy: { select: { id: true, name: true, email: true, role: true } },
+          items: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const formatted = quotations.map((q) => ({
+        id: q.id,
+        quotationNumber: q.quotationNumber,
+        revisionNumber: q.revisionNumber,
+        date: q.date,
+        customerName: q.customerName,
+        customerAddress: q.customerAddress,
+        customerPhone: q.customerPhone,
+        customerEmail: q.customerEmail,
+        customerLocation: q.customerLocation,
+        createdById: q.createdById,
+        createdByName: q.createdBy?.name || 'Sales Rep',
+        hasLowSide: q.hasLowSide,
+        mainUnitTotal: q.mainUnitTotal,
+        lowSideTotal: q.lowSideTotal,
+        subtotal: q.subtotal,
+        cgstPercent: q.cgstPercent,
+        cgstAmount: q.cgstAmount,
+        sgstPercent: q.sgstPercent,
+        sgstAmount: q.sgstAmount,
+        grandTotal: q.grandTotal,
+        termsAndConditions: q.termsAndConditions,
+        paymentMethod: q.paymentMethod,
+        status: q.status,
+        itemCount: q.items.length,
+        items: q.items,
+        createdAt: q.createdAt,
+      }));
+
+      res.json({
+        success: true,
+        data: formatted,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to list quotations.' });
     }
-
-    if (search) {
-      list = list.filter(
-        (q) =>
-          q.quotationNumber.toLowerCase().includes(search) ||
-          q.customerName.toLowerCase().includes(search) ||
-          q.customerAddress.toLowerCase().includes(search)
-      );
-    }
-
-    const formattedList = list.map((q) => {
-      const creator = inMemoryDB.users.find((u) => u.id === q.createdById);
-      const itemsCount = inMemoryDB.quotationItems.filter((qi) => qi.quotationId === q.id).length;
-      return {
-        ...q,
-        createdByName: creator?.name || 'Sales Rep',
-        itemsCount,
-      };
-    });
-
-    res.json({
-      success: true,
-      data: formattedList,
-    });
   },
 
-  // 5. Get Quotation By ID (Details & Item Breakdown)
+  // 5. Get Single Quotation Details
   getQuotationById: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const id = req.params.id;
-    const quotation = inMemoryDB.quotations.find((q) => q.id === id || q.quotationNumber === id);
+    const { id } = req.params;
 
-    if (!quotation) {
-      res.status(404).json({ success: false, message: 'Quotation not found.' });
-      return;
+    try {
+      const quotation = await prisma.quotation.findFirst({
+        where: {
+          OR: [{ id }, { quotationNumber: id }],
+        },
+        include: {
+          items: { orderBy: { itemOrder: 'asc' } },
+          createdBy: { select: { id: true, name: true, email: true, role: true } },
+        },
+      });
+
+      if (!quotation) {
+        res.status(404).json({ success: false, message: 'Quotation not found.' });
+        return;
+      }
+
+      // Check access permission for Sales
+      if (req.user && req.user.role === 'SALES' && quotation.createdById !== req.user.id) {
+        res.status(403).json({ success: false, message: 'Access denied to this quotation.' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: quotation,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to retrieve quotation.' });
     }
-
-    const items = inMemoryDB.quotationItems
-      .filter((qi) => qi.quotationId === quotation.id)
-      .sort((a, b) => a.itemOrder - b.itemOrder);
-
-    const creator = inMemoryDB.users.find((u) => u.id === quotation.createdById);
-
-    res.json({
-      success: true,
-      data: {
-        ...quotation,
-        createdByName: creator?.name || 'Sales Rep',
-        createdByEmail: creator?.email || 'sales@ecdial.com',
-        items,
-      },
-    });
   },
 
-  // 6. Update Quotation (or create revision if finalized)
+  // 6. Update Quotation
   updateQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const id = req.params.id;
-    const quotation = inMemoryDB.quotations.find((q) => q.id === id || q.quotationNumber === id);
-
-    if (!quotation) {
-      res.status(404).json({ success: false, message: 'Quotation not found.' });
-      return;
-    }
-
+    const { id } = req.params;
     const {
       customerName,
       customerAddress,
@@ -289,140 +316,139 @@ export const quotationController = {
       notes,
     } = req.body;
 
-    const cgst = cgstPercent !== undefined ? Number(cgstPercent) : quotation.cgstPercent;
-    const sgst = sgstPercent !== undefined ? Number(sgstPercent) : quotation.sgstPercent;
+    try {
+      const quotation = await prisma.quotation.findUnique({ where: { id } });
+      if (!quotation) {
+        res.status(404).json({ success: false, message: 'Quotation not found.' });
+        return;
+      }
 
-    // Process updated items
-    const rawItems = Array.isArray(items) ? items : [];
-    const processedItems: any[] = [];
+      if (req.user && req.user.role === 'SALES' && quotation.createdById !== req.user.id) {
+        res.status(403).json({ success: false, message: 'Access denied.' });
+        return;
+      }
 
-    rawItems.forEach((item: any, index: number) => {
-      const qty = Number(item.quantity) || 1;
-      const price = Number(item.unitPrice) || 0;
-      const itemAmount = roundCurrency(qty * price);
+      const cgst = cgstPercent !== undefined ? Number(cgstPercent) : quotation.cgstPercent;
+      const sgst = sgstPercent !== undefined ? Number(sgstPercent) : quotation.sgstPercent;
+      const rawItems = Array.isArray(items) ? items : [];
 
-      processedItems.push({
-        id: item.id || `qitem-${Date.now()}-${index}`,
-        quotationId: quotation.id,
-        section: item.section || 'MAIN_UNIT',
-        productId: item.productId || null,
-        itemOrder: index + 1,
-        description: item.description || 'Equipment',
-        quantity: qty,
-        unit: item.unit || 'Nos',
-        unitPrice: price,
-        amount: itemAmount,
-        notes: item.notes || '',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+      const processedItems: any[] = [];
+      rawItems.forEach((item: any, idx: number) => {
+        const qty = Number(item.quantity) || 1;
+        const price = Number(item.unitPrice) || 0;
+        processedItems.push({
+          quotationId: quotation.id,
+          section: item.section || 'MAIN_UNIT',
+          productId: item.productId || null,
+          itemOrder: idx + 1,
+          description: item.description || 'AC Material',
+          quantity: qty,
+          unit: item.unit || 'Nos',
+          unitPrice: price,
+          amount: roundCurrency(qty * price),
+          notes: item.notes || '',
+        });
       });
-    });
 
-    const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide !== undefined ? hasLowSide : quotation.hasLowSide), cgst, sgst);
+      const totals = calculateQuotationTotals(
+        processedItems,
+        hasLowSide !== undefined ? Boolean(hasLowSide) : quotation.hasLowSide,
+        cgst,
+        sgst
+      );
 
-    // If quotation was already finalized and being revised, increase revision number
-    if (quotation.status === 'FINAL' || quotation.status === 'SENT') {
-      quotation.revisionNumber = (quotation.revisionNumber || 1) + 1;
+      // Execute in transaction: delete old items and insert updated items
+      await prisma.$transaction([
+        prisma.quotationItem.deleteMany({ where: { quotationId: id } }),
+        ...(processedItems.length > 0
+          ? [prisma.quotationItem.createMany({ data: processedItems })]
+          : []),
+        prisma.quotation.update({
+          where: { id },
+          data: {
+            ...(customerName ? { customerName: customerName.trim() } : {}),
+            ...(customerAddress ? { customerAddress: customerAddress.trim() } : {}),
+            ...(customerPhone !== undefined ? { customerPhone: customerPhone ? customerPhone.trim() : null } : {}),
+            ...(customerEmail !== undefined ? { customerEmail: customerEmail ? customerEmail.trim() : null } : {}),
+            ...(customerLocation !== undefined ? { customerLocation: customerLocation ? customerLocation.trim() : null } : {}),
+            ...(hasLowSide !== undefined ? { hasLowSide: Boolean(hasLowSide) } : {}),
+            mainUnitTotal: totals.mainUnitTotal,
+            lowSideTotal: totals.lowSideTotal,
+            subtotal: totals.subtotal,
+            cgstPercent: cgst,
+            cgstAmount: totals.cgstAmount,
+            sgstPercent: sgst,
+            sgstAmount: totals.sgstAmount,
+            grandTotal: totals.grandTotal,
+            ...(termsAndConditions ? { termsAndConditions } : {}),
+            ...(paymentMethod ? { paymentMethod } : {}),
+            ...(status ? { status } : {}),
+            ...(notes !== undefined ? { notes } : {}),
+          },
+        }),
+      ]);
+
+      const updated = await prisma.quotation.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      res.json({
+        success: true,
+        message: 'Quotation updated successfully.',
+        data: updated,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to update quotation.' });
     }
-
-    quotation.customerName = customerName !== undefined ? customerName.trim() : quotation.customerName;
-    quotation.customerAddress = customerAddress !== undefined ? customerAddress.trim() : quotation.customerAddress;
-    quotation.customerPhone = customerPhone !== undefined ? customerPhone : quotation.customerPhone;
-    quotation.customerEmail = customerEmail !== undefined ? customerEmail : quotation.customerEmail;
-    quotation.customerLocation = customerLocation !== undefined ? customerLocation : quotation.customerLocation;
-    quotation.hasLowSide = hasLowSide !== undefined ? Boolean(hasLowSide) : quotation.hasLowSide;
-    quotation.mainUnitTotal = totals.mainUnitTotal;
-    quotation.lowSideTotal = totals.lowSideTotal;
-    quotation.subtotal = totals.subtotal;
-    quotation.cgstPercent = totals.cgstPercent;
-    quotation.cgstAmount = totals.cgstAmount;
-    quotation.sgstPercent = totals.sgstPercent;
-    quotation.sgstAmount = totals.sgstAmount;
-    quotation.grandTotal = totals.grandTotal;
-    quotation.termsAndConditions = termsAndConditions !== undefined ? termsAndConditions : quotation.termsAndConditions;
-    quotation.paymentMethod = paymentMethod !== undefined ? paymentMethod : quotation.paymentMethod;
-    quotation.status = status !== undefined ? status : quotation.status;
-    quotation.notes = notes !== undefined ? notes : quotation.notes;
-    quotation.updatedAt = new Date();
-
-    // Replace items
-    inMemoryDB.quotationItems = inMemoryDB.quotationItems.filter((qi) => qi.quotationId !== quotation.id);
-    processedItems.forEach((pi) => inMemoryDB.quotationItems.push(pi));
-
-    // Audit log
-    inMemoryDB.auditLogs.push({
-      id: `aud-${Date.now()}`,
-      employeeId: req.user?.id,
-      employeeName: req.user?.name || 'Sales',
-      action: 'QUOTATION_UPDATED',
-      date: getTodayDateString(),
-      timestamp: new Date(),
-      method: 'SALES_PORTAL',
-      performedById: req.user?.id,
-      details: JSON.stringify({
-        quotationNumber: quotation.quotationNumber,
-        revision: quotation.revisionNumber,
-        grandTotal: totals.grandTotal,
-      }),
-      createdAt: new Date(),
-    });
-
-    res.json({
-      success: true,
-      message: `Quotation ${quotation.quotationNumber} updated successfully.`,
-      data: {
-        ...quotation,
-        items: processedItems,
-      },
-    });
   },
 
-  // 7. Update Quotation Status (DRAFT, FINAL, SENT, ACCEPTED, REJECTED, EXPIRED)
+  // 7. Update Status
   updateStatus: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const id = req.params.id;
+    const { id } = req.params;
     const { status } = req.body;
 
-    const allowed = ['DRAFT', 'FINAL', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED'];
-    if (!allowed.includes(status)) {
-      res.status(400).json({ success: false, message: `Invalid status. Allowed: ${allowed.join(', ')}` });
-      return;
+    try {
+      const updated = await prisma.quotation.update({
+        where: { id },
+        data: { status },
+      });
+
+      res.json({
+        success: true,
+        message: `Status updated to ${status}.`,
+        data: updated,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to update status.' });
     }
-
-    const quotation = inMemoryDB.quotations.find((q) => q.id === id || q.quotationNumber === id);
-    if (!quotation) {
-      res.status(404).json({ success: false, message: 'Quotation not found.' });
-      return;
-    }
-
-    quotation.status = status;
-    quotation.updatedAt = new Date();
-
-    res.json({
-      success: true,
-      message: `Quotation status updated to ${status}.`,
-      data: quotation,
-    });
   },
 
-  // 8. Download / Stream Professional A4 PDF
+  // 8. Dynamic Professional PDF Generation
   downloadPdf: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const id = req.params.id;
-    const quotation = inMemoryDB.quotations.find((q) => q.id === id || q.quotationNumber === id);
-
-    if (!quotation) {
-      res.status(404).json({ success: false, message: 'Quotation not found.' });
-      return;
-    }
-
-    const items = inMemoryDB.quotationItems
-      .filter((qi) => qi.quotationId === quotation.id)
-      .sort((a, b) => a.itemOrder - b.itemOrder);
-
-    const mainItems = items.filter((i) => i.section === 'MAIN_UNIT');
-    const lowSideItems = items.filter((i) => i.section === 'LOW_SIDE');
-    const creator = inMemoryDB.users.find((u) => u.id === quotation.createdById);
+    const { id } = req.params;
 
     try {
+      const quotation = await prisma.quotation.findFirst({
+        where: {
+          OR: [{ id }, { quotationNumber: id }],
+        },
+        include: {
+          items: { orderBy: { itemOrder: 'asc' } },
+          createdBy: true,
+        },
+      });
+
+      if (!quotation) {
+        res.status(404).json({ success: false, message: 'Quotation not found.' });
+        return;
+      }
+
+      const mainItems = quotation.items.filter((i) => i.section === 'MAIN_UNIT');
+      const lowSideItems = quotation.items.filter((i) => i.section === 'LOW_SIDE');
+
       const pdfBuffer = await generateQuotationPDF({
         quotationNumber: quotation.quotationNumber,
         revisionNumber: quotation.revisionNumber,
@@ -431,8 +457,8 @@ export const quotationController = {
         customerAddress: quotation.customerAddress,
         customerPhone: quotation.customerPhone,
         customerEmail: quotation.customerEmail,
-        createdByName: creator?.name || 'ECDIAL Sales Executive',
-        createdByEmail: creator?.email || 'sales@ecdial.com',
+        createdByName: quotation.createdBy?.name || 'ECDIAL Sales Rep',
+        createdByEmail: quotation.createdBy?.email || 'sales@ecdial.com',
         hasLowSide: quotation.hasLowSide,
         mainUnitTotal: quotation.mainUnitTotal,
         lowSideTotal: quotation.lowSideTotal,
@@ -444,18 +470,29 @@ export const quotationController = {
         grandTotal: quotation.grandTotal,
         termsAndConditions: quotation.termsAndConditions,
         paymentMethod: quotation.paymentMethod,
-        mainItems,
-        lowSideItems,
+        mainItems: mainItems.map((m) => ({
+          description: m.description,
+          quantity: m.quantity,
+          unit: m.unit,
+          unitPrice: m.unitPrice,
+          amount: m.amount,
+        })),
+        lowSideItems: lowSideItems.map((l) => ({
+          description: l.description,
+          quantity: l.quantity,
+          unit: l.unit,
+          unitPrice: l.unitPrice,
+          amount: l.amount,
+        })),
       });
 
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="Quotation_${quotation.quotationNumber}.pdf"`
-      );
+      res.setHeader('Content-Disposition', `inline; filename="Quotation_${quotation.quotationNumber}.pdf"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
       res.send(pdfBuffer);
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Failed to generate quotation PDF: ' + err.message });
+      console.error('[PDF Generation Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to generate PDF.' });
     }
   },
 };

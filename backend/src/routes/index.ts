@@ -13,11 +13,29 @@ import { authMiddleware, requireRole } from '../middleware/auth';
 const router = Router();
 
 // ==========================================
-// 1. AUTHENTICATION & DIRECTORY ROUTES
+// 1. AUTHENTICATION & EMPLOYEE LIFECYCLE ROUTES
 // ==========================================
 router.post('/auth/login', authController.login);
 router.get('/auth/me', authMiddleware, authController.getCurrentUser);
 router.get('/auth/employees', authMiddleware, authController.listEmployees);
+router.post(
+  '/auth/employees',
+  authMiddleware,
+  requireRole(['ADMIN', 'IT_ADMIN']),
+  authController.createEmployee
+);
+router.put(
+  '/auth/employees/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'IT_ADMIN']),
+  authController.updateEmployee
+);
+router.patch(
+  '/auth/employees/:id/toggle-status',
+  authMiddleware,
+  requireRole(['ADMIN', 'IT_ADMIN']),
+  authController.toggleEmployeeStatus
+);
 
 // ==========================================
 // 2. ATTENDANCE MANAGEMENT ROUTES
@@ -84,6 +102,12 @@ router.post(
   authMiddleware,
   requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
   approvalController.processApproval
+);
+router.post(
+  '/attendance/direct-resolve',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  approvalController.directResolveAttendance
 );
 
 // J. Audit Logs
