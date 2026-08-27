@@ -26,6 +26,15 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
   const [leaveModalVisible, setLeaveModalVisible] = useState<boolean>(false);
   const [holidayName, setHolidayName] = useState<string>('Company Annual Leave');
 
+  // Direct Resolution State
+  const [resolveModalVisible, setResolveModalVisible] = useState<boolean>(false);
+  const [selectedEmpToResolve, setSelectedEmpToResolve] = useState<any | null>(null);
+  const [resolveStatus, setResolveStatus] = useState<'PRESENT' | 'HALF_DAY' | 'ABSENT' | 'LEAVE'>('PRESENT');
+  const [resolveCheckIn, setResolveCheckIn] = useState<string>('09:00');
+  const [resolveCheckOut, setResolveCheckOut] = useState<string>('18:00');
+  const [resolveRemarks, setResolveRemarks] = useState<string>('Admin direct resolution');
+  const [isSubmittingResolve, setIsSubmittingResolve] = useState<boolean>(false);
+
   const fetchCalendar = async () => {
     try {
       setIsLoading(true);
@@ -183,17 +192,17 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
           {/* 4 Attendance Summary Badges */}
           <View style={styles.summaryStatsRow}>
             <View style={[styles.statBox, { borderLeftColor: '#10B981', borderLeftWidth: 3.5 }]}>
-              <Text style={styles.statNum}>{dayDetails?.summary?.present ?? 8}</Text>
+              <Text style={styles.statNum}>{dayDetails?.summary?.present ?? 0}</Text>
               <Text style={styles.statLabel}>PRESENT</Text>
             </View>
 
             <View style={[styles.statBox, { borderLeftColor: '#EF4444', borderLeftWidth: 3.5 }]}>
-              <Text style={[styles.statNum, { color: '#DC2626' }]}>{dayDetails?.summary?.absent ?? 2}</Text>
+              <Text style={[styles.statNum, { color: '#DC2626' }]}>{dayDetails?.summary?.absent ?? 0}</Text>
               <Text style={styles.statLabel}>ABSENT</Text>
             </View>
 
             <View style={[styles.statBox, { borderLeftColor: '#F59E0B', borderLeftWidth: 3.5 }]}>
-              <Text style={[styles.statNum, { color: '#D97706' }]}>{dayDetails?.summary?.notMarked ?? 2}</Text>
+              <Text style={[styles.statNum, { color: '#D97706' }]}>{dayDetails?.summary?.notMarked ?? 0}</Text>
               <Text style={styles.statLabel}>NOT MARKED</Text>
             </View>
 
@@ -224,31 +233,154 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
 
           {/* List of Employees for Selected Date (Rule 24, 26) */}
           <Text style={[styles.sectionHeading, { marginTop: 16 }]}>
-            Employee Attendance ({dayDetails?.employees?.length || 4})
+            Employee Attendance ({dayDetails?.employees?.length || 0})
           </Text>
 
           <View style={styles.empListContainer}>
-            {(dayDetails?.employees || [
-              { id: '1', name: 'Arun Kumar', role: 'Technician', statusBadge: '✓ Present (09:04 AM)', status: 'PRESENT' },
-              { id: '2', name: 'Priya Sharma', role: 'Sales', statusBadge: '✓ Present (09:12 AM)', status: 'PRESENT' },
-              { id: '3', name: 'Suresh Patel', role: 'Manager', statusBadge: '✓ Present (08:55 AM)', status: 'PRESENT' },
-              { id: '4', name: 'Ramesh Tech', role: 'Technician', statusBadge: '× Absent', status: 'ABSENT' },
-            ]).map((emp: any) => (
-              <View key={emp.id} style={styles.empRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.empName}>{emp.name}</Text>
-                  <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
-                </View>
-                <View style={[styles.empBadge, emp.status === 'PRESENT' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
-                  <Text style={[styles.empBadgeText, emp.status === 'PRESENT' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
-                    {emp.statusBadge || emp.status}
-                  </Text>
-                </View>
+            {!dayDetails?.employees || dayDetails.employees.length === 0 ? (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <Text style={{ fontSize: 12, color: '#64748B' }}>No attendance records available for this date.</Text>
               </View>
-            ))}
+            ) : (
+              dayDetails.employees.map((emp: any) => (
+                <View key={emp.id} style={styles.empRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.empName}>{emp.name}</Text>
+                    <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
+                    {emp.checkIn && (
+                      <Text style={styles.empTimeNote}>
+                        In: {emp.checkIn} {emp.checkOut ? `• Out: ${emp.checkOut}` : ''}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                    <View style={[styles.empBadge, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
+                      <Text style={[styles.empBadgeText, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
+                        {emp.statusBadge || emp.status}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.resolveBtn}
+                      onPress={() => {
+                        setSelectedEmpToResolve(emp);
+                        setResolveStatus(emp.status === 'PRESENT' ? 'PRESENT' : 'PRESENT');
+                        setResolveCheckIn('09:00');
+                        setResolveCheckOut('18:00');
+                        setResolveModalVisible(true);
+                      }}
+                    >
+                      <Text style={styles.resolveBtnText}>⚙️ Set Attendance</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
           </View>
         </View>
       )}
+
+      {/* ADMIN DIRECT RESOLVE MODAL (Rule 14) */}
+      <Modal
+        visible={resolveModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setResolveModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Set Employee Attendance</Text>
+            <Text style={styles.modalSub}>
+              Directly record attendance for {selectedEmpToResolve?.name} on {selectedDay?.date}.
+            </Text>
+
+            <Text style={styles.inputLabel}>Select Status *</Text>
+            <View style={styles.statusOptionsRow}>
+              {(['PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE'] as const).map((st) => (
+                <TouchableOpacity
+                  key={st}
+                  style={[styles.statusOptBtn, resolveStatus === st && styles.statusOptBtnActive]}
+                  onPress={() => setResolveStatus(st)}
+                >
+                  <Text style={[styles.statusOptText, resolveStatus === st && styles.statusOptTextActive]}>
+                    {st === 'PRESENT' ? 'Present' : st === 'HALF_DAY' ? 'Half Day' : st === 'ABSENT' ? 'Absent' : 'Leave'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {(resolveStatus === 'PRESENT' || resolveStatus === 'HALF_DAY') && (
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Check-In Time</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={resolveCheckIn}
+                    onChangeText={setResolveCheckIn}
+                    placeholder="09:00"
+                  />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Closing Time</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={resolveCheckOut}
+                    onChangeText={setResolveCheckOut}
+                    placeholder="18:00"
+                  />
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.inputLabel}>Admin Remarks</Text>
+            <TextInput
+              style={styles.input}
+              value={resolveRemarks}
+              onChangeText={setResolveRemarks}
+              placeholder="e.g. Approved site attendance / verified"
+            />
+
+            <TouchableOpacity
+              style={[styles.confirmBtn, isSubmittingResolve && { opacity: 0.6 }]}
+              onPress={async () => {
+                if (!selectedEmpToResolve || !selectedDay) return;
+                setIsSubmittingResolve(true);
+                try {
+                  const res = await mobileApi.directResolveAttendance({
+                    employeeId: selectedEmpToResolve.id,
+                    date: selectedDay.date,
+                    status: resolveStatus,
+                    checkInTime: resolveCheckIn,
+                    checkOutTime: resolveCheckOut,
+                    remarks: resolveRemarks,
+                  });
+                  if (res.success) {
+                    alert(`✓ Attendance for ${selectedEmpToResolve.name} recorded as ${resolveStatus}.`);
+                    setResolveModalVisible(false);
+                    fetchDayDetails(selectedDay.date);
+                    fetchCalendar();
+                  }
+                } catch (err: any) {
+                  alert(err.message || 'Failed to set attendance');
+                } finally {
+                  setIsSubmittingResolve(false);
+                }
+              }}
+              disabled={isSubmittingResolve}
+            >
+              {isSubmittingResolve ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.confirmBtnText}>Save Attendance Record</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setResolveModalVisible(false)}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* MARK COMPANY LEAVE MODAL */}
       <Modal visible={leaveModalVisible} transparent animationType="fade" onRequestClose={() => setLeaveModalVisible(false)}>
@@ -584,5 +716,50 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  empTimeNote: {
+    fontSize: 9.5,
+    color: '#0066CC',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  resolveBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  resolveBtnText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#0066CC',
+  },
+  statusOptionsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10,
+  },
+  statusOptBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  statusOptBtnActive: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  statusOptText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  statusOptTextActive: {
+    color: '#FFFFFF',
   },
 });

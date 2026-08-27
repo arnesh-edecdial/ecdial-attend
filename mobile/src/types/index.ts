@@ -42,6 +42,7 @@ export interface CalendarDay {
   checkOut: string | null;
   workingDuration: string | null;
   otFormatted: string | null;
+  isCompanyLeave?: boolean;
 }
 
 export interface QuotationItem {
@@ -77,5 +78,7 @@ export interface Quotation {
   termsAndConditions: string;
   paymentMethod: string;
   status: string;
+  createdById?: string | null;
+  createdByName?: string | null;
   items?: QuotationItem[];
 }

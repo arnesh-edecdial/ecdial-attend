@@ -15,7 +15,7 @@ interface AppDrawerProps {
   userRole: 'ADMIN' | 'SALES' | 'EMPLOYEE';
   userName: string;
   onNavigate: (screen: string) => void;
-  onSwitchRole: (role: 'ADMIN' | 'SALES' | 'EMPLOYEE', name: string) => void;
+  onLogout: () => void;
 }
 
 export const AppDrawer: React.FC<AppDrawerProps> = ({
@@ -24,16 +24,15 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
   userRole,
   userName,
   onNavigate,
-  onSwitchRole,
+  onLogout,
 }) => {
   const getMenuItems = () => {
     if (userRole === 'ADMIN') {
       return [
         { id: 'HOME', label: 'Dashboard Home', icon: '🏠' },
+        { id: 'ADMIN_EMPLOYEES', label: 'Employee Management', icon: '👥' },
         { id: 'ADMIN_CALENDAR', label: 'Company Calendar & Leave', icon: '📅' },
         { id: 'ADMIN_APPROVALS', label: 'Attendance Requests', icon: '📝' },
-        { id: 'OFFICE_QR', label: 'Office Attendance QR', icon: '🔲' },
-        { id: 'EMPLOYEES', label: 'Employees List', icon: '👥' },
         { id: 'STOCK', label: 'Stock & Inventory', icon: '📦' },
         { id: 'ADMIN_MACHINES', label: 'Machine Models', icon: '❄️' },
         { id: 'QUOTATIONS', label: 'All Quotations', icon: '📄' },
@@ -102,40 +101,11 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
               </TouchableOpacity>
             ))}
 
-            {/* Persona Switcher Section */}
-            <View style={styles.switchRoleSection}>
-              <Text style={styles.sectionHeading}>SWITCH USER PERSONA</Text>
-
-              <TouchableOpacity
-                style={[styles.roleSwitchBtn, userRole === 'ADMIN' && styles.roleSwitchBtnActive]}
-                onPress={() => {
-                  onSwitchRole('ADMIN', 'Arun Kumar');
-                  onClose();
-                }}
-              >
-                <Text style={styles.roleSwitchText}>👨‍💼 Admin (Arun Kumar)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.roleSwitchBtn, userRole === 'SALES' && styles.roleSwitchBtnActive]}
-                onPress={() => {
-                  onSwitchRole('SALES', 'Priya Sharma');
-                  onClose();
-                }}
-              >
-                <Text style={styles.roleSwitchText}>👩‍💼 Sales (Priya Sharma)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.roleSwitchBtn, userRole === 'EMPLOYEE' && styles.roleSwitchBtnActive]}
-                onPress={() => {
-                  onSwitchRole('EMPLOYEE', 'Ramesh Tech');
-                  onClose();
-                }}
-              >
-                <Text style={styles.roleSwitchText}>👷‍♂️ Technician (Ramesh Tech)</Text>
-              </TouchableOpacity>
-            </View>
+            {/* Logout Action (Rule 18) */}
+            <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
+              <Text style={{ fontSize: 18 }}>🚪</Text>
+              <Text style={styles.logoutBtnText}>Sign Out / Logout</Text>
+            </TouchableOpacity>
           </ScrollView>
 
           {/* Footer Branding */}
@@ -251,28 +221,23 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '600',
   },
-  switchRoleSection: {
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  roleSwitchBtn: {
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 6,
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 20,
+    marginBottom: 20,
   },
-  roleSwitchBtnActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#0066CC',
-  },
-  roleSwitchText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
+  logoutBtnText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '800',
   },
   drawerFooter: {
     padding: 16,

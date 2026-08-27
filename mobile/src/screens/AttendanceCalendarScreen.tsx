@@ -12,23 +12,25 @@ import { CalendarDay } from '../types';
 
 interface AttendanceCalendarScreenProps {
   onClose: () => void;
-  onRequestCorrection: (date?: string) => void;
+  onRequestCorrection: (date: string) => void;
+  employeeId?: string;
 }
 
 export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> = ({
   onClose,
   onRequestCorrection,
+  employeeId,
 }) => {
-  const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
 
   const fetchCalendar = async () => {
     try {
       setIsLoading(true);
-      const res = await mobileApi.getCalendar(undefined, year, month);
+      const res = await mobileApi.getCalendar(employeeId, year, month);
       if (res.success) {
         setDays(res.data.days);
         const todayStr = new Date().toISOString().substring(0, 10);
@@ -43,9 +45,12 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
 
   useEffect(() => {
     fetchCalendar();
-  }, [year, month]);
+  }, [year, month, employeeId]);
 
-  const getColorDot = (code: string) => {
+  const getColorDot = (code: string, isSunday?: boolean) => {
+    if (isSunday && (code === 'GREY' || !code)) {
+      return '#8B5CF6'; // Distinct subtle purple for Sunday weekly off
+    }
     switch (code) {
       case 'GREEN':
         return '#10B981';
@@ -56,7 +61,7 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
       case 'PURPLE':
         return '#8B5CF6';
       default:
-        return '#64748B';
+        return '#94A3B8';
     }
   };
 
@@ -104,18 +109,18 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
         </View>
         <View style={styles.legendItem}>
           <View style={[styles.dot, { backgroundColor: '#8B5CF6' }]} />
-          <Text style={styles.legendText}>Overtime</Text>
+          <Text style={styles.legendText}>Sunday/Off</Text>
         </View>
         <View style={styles.legendItem}>
-          <View style={[styles.dot, { backgroundColor: '#64748B' }]} />
-          <Text style={styles.legendText}>Off/Holiday</Text>
+          <View style={[styles.dot, { backgroundColor: '#94A3B8' }]} />
+          <Text style={styles.legendText}>No Record</Text>
         </View>
       </View>
 
       {/* Days Header */}
       <View style={styles.daysHeader}>
         {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
-          <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#EF4444' }]}>
+          <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#8B5CF6' }]}>
             {d}
           </Text>
         ))}
@@ -127,6 +132,9 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
         <View style={styles.calendarGrid}>
           {days.map((day) => {
             const isSelected = selectedDay?.date === day.date;
+            const isSunday = new Date(day.date).getDay() === 0;
+            const dotColor = getColorDot(day.colorCode, isSunday);
+
             return (
               <TouchableOpacity
                 key={day.date}
@@ -135,14 +143,21 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
                   isSelected && styles.dayCellSelected,
                   day.colorCode === 'GREEN' && styles.dayCellPresent,
                   day.colorCode === 'RED' && styles.dayCellAbsent,
+                  isSunday && day.colorCode === 'GREY' && styles.dayCellSunday,
                 ]}
                 onPress={() => setSelectedDay(day)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.dayNum, isSelected && { color: '#0066CC', fontWeight: '900' }]}>
+                <Text
+                  style={[
+                    styles.dayNum,
+                    isSunday && { color: '#8B5CF6', fontWeight: '700' },
+                    isSelected && { color: '#0066CC', fontWeight: '900' },
+                  ]}
+                >
                   {day.dayNumber}
                 </Text>
-                <View style={[styles.statusDot, { backgroundColor: getColorDot(day.colorCode) }]} />
+                <View style={[styles.statusDot, { backgroundColor: dotColor }]} />
               </TouchableOpacity>
             );
           })}
@@ -150,48 +165,56 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
       )}
 
       {/* Selected Day Details */}
-      {selectedDay && (
-        <View style={styles.detailCard}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.detailDate}>{selectedDay.date} ({selectedDay.dayName})</Text>
-            <View style={[styles.statusBadge, { backgroundColor: getColorDot(selectedDay.colorCode) + '20' }]}>
-              <Text style={[styles.statusBadgeText, { color: getColorDot(selectedDay.colorCode) }]}>
-                {selectedDay.badge || selectedDay.status}
-              </Text>
+      {selectedDay && (() => {
+        const isSunday = new Date(selectedDay.date).getDay() === 0;
+        const displayBadge = isSunday && selectedDay.colorCode === 'GREY'
+          ? 'Sunday (Weekly Off)'
+          : (selectedDay.badge || selectedDay.status);
+        const dotColor = getColorDot(selectedDay.colorCode, isSunday);
+
+        return (
+          <View style={styles.detailCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.detailDate}>{selectedDay.date} ({selectedDay.dayName})</Text>
+              <View style={[styles.statusBadge, { backgroundColor: dotColor + '20' }]}>
+                <Text style={[styles.statusBadgeText, { color: dotColor }]}>
+                  {displayBadge}
+                </Text>
+              </View>
             </View>
+
+            {selectedDay.holidayName && (
+              <Text style={styles.holidayText}>🏢 Holiday: {selectedDay.holidayName}</Text>
+            )}
+
+            <View style={styles.timeRow}>
+              <View style={styles.timeBox}>
+                <Text style={styles.timeBoxLabel}>Check-In</Text>
+                <Text style={styles.timeBoxVal}>{selectedDay.checkIn || '—'}</Text>
+              </View>
+              <View style={styles.timeBox}>
+                <Text style={styles.timeBoxLabel}>Check-Out</Text>
+                <Text style={styles.timeBoxVal}>{selectedDay.checkOut || '—'}</Text>
+              </View>
+            </View>
+
+            {selectedDay.workingDuration && (
+              <Text style={styles.durationNote}>Working Duration: {selectedDay.workingDuration}</Text>
+            )}
+
+            {selectedDay.otFormatted && (
+              <Text style={styles.otNote}>Overtime: +{selectedDay.otFormatted}</Text>
+            )}
+
+            <TouchableOpacity
+              style={styles.requestBtn}
+              onPress={() => onRequestCorrection(selectedDay.date)}
+            >
+              <Text style={styles.requestBtnText}>Request Correction for this Date</Text>
+            </TouchableOpacity>
           </View>
-
-          {selectedDay.holidayName && (
-            <Text style={styles.holidayText}>🏢 Holiday: {selectedDay.holidayName}</Text>
-          )}
-
-          <View style={styles.timeRow}>
-            <View style={styles.timeBox}>
-              <Text style={styles.timeBoxLabel}>Check-In</Text>
-              <Text style={styles.timeBoxVal}>{selectedDay.checkIn || '—'}</Text>
-            </View>
-            <View style={styles.timeBox}>
-              <Text style={styles.timeBoxLabel}>Check-Out</Text>
-              <Text style={styles.timeBoxVal}>{selectedDay.checkOut || '—'}</Text>
-            </View>
-          </View>
-
-          {selectedDay.workingDuration && (
-            <Text style={styles.durationNote}>Working Duration: {selectedDay.workingDuration}</Text>
-          )}
-
-          {selectedDay.otFormatted && (
-            <Text style={styles.otNote}>Overtime: +{selectedDay.otFormatted}</Text>
-          )}
-
-          <TouchableOpacity
-            style={styles.requestBtn}
-            onPress={() => onRequestCorrection(selectedDay.date)}
-          >
-            <Text style={styles.requestBtnText}>Request Correction for this Date</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        );
+      })()}
     </ScrollView>
   );
 };
@@ -238,9 +261,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 10,
     borderRadius: 10,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  monthTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   navArrow: {
     fontSize: 20,
@@ -248,21 +276,12 @@ const styles = StyleSheet.create({
     color: '#0066CC',
     paddingHorizontal: 12,
   },
-  monthTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
   legend: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    backgroundColor: '#FFFFFF',
-    padding: 10,
-    borderRadius: 10,
+    gap: 8,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    paddingHorizontal: 4,
   },
   legendItem: {
     flexDirection: 'row',
@@ -270,73 +289,87 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: 4,
   },
   legendText: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: '#64748B',
     fontWeight: '600',
   },
   daysHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    justifyContent: 'space-around',
+    paddingVertical: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    marginBottom: 6,
   },
   dayHeaderText: {
-    fontSize: 9.5,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
     color: '#64748B',
-    width: 40,
+    width: '14%',
     textAlign: 'center',
   },
   calendarGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 4,
-    marginBottom: 16,
-  },
-  dayCell: {
-    width: 40,
-    height: 44,
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 4,
+    padding: 6,
+  },
+  dayCell: {
+    width: '14.28%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 2,
   },
   dayCellSelected: {
-    borderColor: '#0066CC',
     backgroundColor: '#EFF6FF',
-    borderWidth: 2,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
   },
-  dayCellPresent: { backgroundColor: '#ECFDF5' },
-  dayCellAbsent: { backgroundColor: '#FEF2F2' },
+  dayCellPresent: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 8,
+  },
+  dayCellAbsent: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+  },
+  dayCellSunday: {
+    backgroundColor: '#FAF5FF',
+    borderRadius: 8,
+  },
   dayNum: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#0F172A',
   },
   statusDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     marginTop: 2,
   },
   detailCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    elevation: 2,
+    marginTop: 14,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   detailDate: {
     fontSize: 14,
@@ -353,29 +386,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   holidayText: {
-    fontSize: 11.5,
-    color: '#0284C7',
-    marginTop: 4,
-    fontWeight: '600',
+    fontSize: 12,
+    color: '#0066CC',
+    fontWeight: '700',
+    marginTop: 6,
   },
   timeRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginVertical: 10,
+    gap: 10,
+    marginTop: 12,
   },
   timeBox: {
     flex: 1,
     backgroundColor: '#F8FAFC',
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   timeBoxLabel: {
-    fontSize: 9.5,
+    fontSize: 10,
     color: '#64748B',
-    textTransform: 'uppercase',
-    fontWeight: '700',
   },
   timeBoxVal: {
     fontSize: 13,
@@ -384,32 +415,29 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   durationNote: {
-    fontSize: 12,
-    color: '#0066CC',
+    fontSize: 11,
     fontWeight: '700',
-    marginBottom: 2,
+    color: '#10B981',
+    marginTop: 8,
   },
   otNote: {
-    fontSize: 12,
-    color: '#8B5CF6',
+    fontSize: 11,
     fontWeight: '700',
-    marginBottom: 6,
+    color: '#8B5CF6',
+    marginTop: 2,
   },
   requestBtn: {
-    marginTop: 8,
-    backgroundColor: '#0F172A',
-    paddingVertical: 10,
+    backgroundColor: '#EFF6FF',
+    paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
   requestBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
-    fontWeight: '800',
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0066CC',
   },
 });

@@ -21,6 +21,7 @@ interface AttendanceScreenProps {
   onOpenMachines?: () => void;
   onOpenAdminCalendar?: () => void;
   onOpenStock?: () => void;
+  onOpenEmployees?: () => void;
   userName?: string;
   userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
 }
@@ -35,27 +36,32 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenMachines,
   onOpenAdminCalendar,
   onOpenStock,
-  userName = 'Arun Kumar',
-  userRole = 'ADMIN',
+  onOpenEmployees,
+  userName = 'Employee',
+  userRole = 'EMPLOYEE',
 }) => {
   const [statusData, setStatusData] = useState<TodayAttendanceStatus | null>(null);
   const [dashboardData, setDashboardData] = useState<any | null>(null);
   const [officeQR, setOfficeQR] = useState<any | null>(null);
+  const [calendarDays, setCalendarDays] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentMonthName, setCurrentMonthName] = useState<string>('August 2026');
 
   const fetchStatus = async () => {
     try {
       setIsLoading(true);
-      const [statusRes, dashRes, qrRes] = await Promise.all([
+      const d = new Date();
+      const [statusRes, dashRes, qrRes, calRes] = await Promise.all([
         mobileApi.getTodayStatus(),
         userRole === 'ADMIN' ? mobileApi.getTodayDashboard() : Promise.resolve(null),
         userRole === 'ADMIN' ? mobileApi.getTodayQR() : Promise.resolve(null),
+        mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
       ]);
 
-      if (statusRes.success) setStatusData(statusRes.data);
+      if (statusRes && statusRes.success) setStatusData(statusRes.data);
       if (dashRes && dashRes.success) setDashboardData(dashRes.data);
       if (qrRes && qrRes.success) setOfficeQR(qrRes.data);
+      if (calRes && calRes.success) setCalendarDays(calRes.data.days);
     } catch (err) {
       console.error('Failed to load status', err);
     } finally {
@@ -75,50 +81,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const isCompanyLeave = statusData?.displayStatus === 'COMPANY_LEAVE';
   const hasActiveRequest = Boolean(statusData && (statusData as any).activeRequest);
 
-  const checkInTimeDisplay = statusData?.attendance?.checkInFormatted || '09:04 AM';
-  const durationDisplay = statusData?.attendance?.durationFormatted || '03h 27m';
+  const checkInTimeDisplay = statusData?.attendance?.checkInFormatted || '—';
+  const durationDisplay = statusData?.attendance?.durationFormatted || '00h 00m';
   const otDisplay = statusData?.attendance?.otMinutes
     ? `${Math.floor(statusData.attendance.otMinutes / 60)}h ${statusData.attendance.otMinutes % 60}m`
     : '00h 00m';
-
-  // Sample calendar days matching Image 1
-  const calendarDays = [
-    { day: 28, isPrevMonth: true, type: 'OFF' },
-    { day: 29, isPrevMonth: true, type: 'OFF' },
-    { day: 30, isPrevMonth: true, type: 'OFF' },
-    { day: 31, isPrevMonth: true, type: 'OFF' },
-    { day: 1, type: 'PRESENT' },
-    { day: 2, type: 'PRESENT' },
-    { day: 3, type: 'OFF' },
-    { day: 4, type: 'ABSENT' },
-    { day: 5, type: 'PRESENT' },
-    { day: 6, type: 'PRESENT' },
-    { day: 7, type: 'HALF' },
-    { day: 8, type: 'PRESENT' },
-    { day: 9, type: 'ABSENT' },
-    { day: 10, type: 'OFF' },
-    { day: 11, type: 'ABSENT' },
-    { day: 12, type: 'PRESENT' },
-    { day: 13, type: 'PRESENT' },
-    { day: 14, type: 'ABSENT' },
-    { day: 15, type: 'PRESENT' },
-    { day: 16, type: 'PRESENT' },
-    { day: 17, type: 'OFF' },
-    { day: 18, type: 'ABSENT' },
-    { day: 19, type: 'NOT_MARKED' },
-    { day: 20, isToday: true, type: 'PRESENT' },
-    { day: 21, type: 'NOT_MARKED' },
-    { day: 22, type: 'PRESENT' },
-    { day: 23, type: 'HALF' },
-    { day: 24, type: 'NOT_MARKED' },
-    { day: 25, type: 'ABSENT' },
-    { day: 26, type: 'PRESENT' },
-    { day: 27, type: 'PRESENT' },
-    { day: 28, type: 'NOT_MARKED' },
-    { day: 29, type: 'PRESENT' },
-    { day: 30, type: 'PRESENT' },
-    { day: 31, type: 'NOT_MARKED' },
-  ];
 
   return (
     <ScrollView
@@ -164,7 +131,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             {userRole === 'ADMIN' && (
               <View style={styles.bellBadge}>
                 <Text style={styles.bellBadgeText}>
-                  {dashboardData?.summary?.pending ?? 3}
+                  {dashboardData?.summary?.pending ?? 0}
                 </Text>
               </View>
             )}
@@ -190,22 +157,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           {/* 1. TODAY'S ATTENDANCE STATS CARDS (Rule 3) */}
           <View style={styles.adminStatsGrid}>
             <View style={[styles.adminStatCard, { borderLeftColor: '#10B981', borderLeftWidth: 4 }]}>
-              <Text style={styles.adminStatNum}>{dashboardData?.summary?.present ?? 8}</Text>
+              <Text style={styles.adminStatNum}>{dashboardData?.summary?.present ?? 0}</Text>
               <Text style={styles.adminStatLabel}>PRESENT</Text>
             </View>
 
             <View style={[styles.adminStatCard, { borderLeftColor: '#EF4444', borderLeftWidth: 4 }]}>
-              <Text style={[styles.adminStatNum, { color: '#EF4444' }]}>{dashboardData?.summary?.absent ?? 2}</Text>
+              <Text style={[styles.adminStatNum, { color: '#EF4444' }]}>{dashboardData?.summary?.absent ?? 0}</Text>
               <Text style={styles.adminStatLabel}>ABSENT</Text>
             </View>
 
             <View style={[styles.adminStatCard, { borderLeftColor: '#F59E0B', borderLeftWidth: 4 }]}>
-              <Text style={[styles.adminStatNum, { color: '#D97706' }]}>{dashboardData?.summary?.notMarked ?? 4}</Text>
+              <Text style={[styles.adminStatNum, { color: '#D97706' }]}>{dashboardData?.summary?.notMarked ?? 0}</Text>
               <Text style={styles.adminStatLabel}>NOT MARKED</Text>
             </View>
 
             <View style={[styles.adminStatCard, { borderLeftColor: '#0284C7', borderLeftWidth: 4 }]}>
-              <Text style={[styles.adminStatNum, { color: '#0284C7' }]}>{dashboardData?.summary?.currentlyWorking ?? 6}</Text>
+              <Text style={[styles.adminStatNum, { color: '#0284C7' }]}>{dashboardData?.summary?.currentlyWorking ?? 0}</Text>
               <Text style={styles.adminStatLabel}>WORKING</Text>
             </View>
           </View>
@@ -246,29 +213,30 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             <View style={styles.rowBetween}>
               <Text style={styles.sectionHeaderTitle}>Today's Employees</Text>
               <Text style={styles.employeeCountText}>
-                {dashboardData?.employees?.length || 4} Total
+                {dashboardData?.employees?.length || 0} Total
               </Text>
             </View>
 
             <View style={styles.employeeList}>
-              {(dashboardData?.employees || [
-                { id: '1', name: 'Arun Kumar', role: 'Technician', statusBadge: '✓ Present (09:04 AM — Working)', status: 'PRESENT' },
-                { id: '2', name: 'Priya Sharma', role: 'Sales', statusBadge: '✓ Present (09:12 AM — Working)', status: 'PRESENT' },
-                { id: '3', name: 'Suresh Patel', role: 'Manager', statusBadge: '✓ Present (08:55 AM — Working)', status: 'PRESENT' },
-                { id: '4', name: 'Ramesh Tech', role: 'Technician', statusBadge: '× Absent', status: 'ABSENT' },
-              ]).map((emp: any) => (
-                <View key={emp.id} style={styles.empRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.empName}>{emp.name}</Text>
-                    <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
-                  </View>
-                  <View style={[styles.empBadge, emp.status === 'PRESENT' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
-                    <Text style={[styles.empBadgeText, emp.status === 'PRESENT' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
-                      {emp.statusBadge || emp.status}
-                    </Text>
-                  </View>
+              {!dashboardData?.employees || dashboardData.employees.length === 0 ? (
+                <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#64748B' }}>No attendance records recorded yet today.</Text>
                 </View>
-              ))}
+              ) : (
+                dashboardData.employees.map((emp: any) => (
+                  <View key={emp.id} style={styles.empRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.empName}>{emp.name}</Text>
+                      <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
+                    </View>
+                    <View style={[styles.empBadge, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
+                      <Text style={[styles.empBadgeText, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
+                        {emp.statusBadge || emp.status}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )}
             </View>
           </View>
 
@@ -278,6 +246,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </View>
 
           <View style={styles.quickActionsGrid}>
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenEmployees}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#F3E8FF' }]}>
+                <Text style={{ fontSize: 20 }}>👥</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Employees</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.actionCard} onPress={onOpenApprovals}>
               <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
                 <Text style={{ fontSize: 20 }}>📝</Text>
@@ -402,7 +377,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   </View>
                   <View>
                     <Text style={styles.statLabel}>Work Schedule</Text>
-                    <Text style={[styles.statVal, { color: '#D97706', fontSize: 10.5 }]}>9:00 AM - 6:00 PM</Text>
+                    <Text style={[styles.statVal, { color: '#D97706', fontSize: 10.5 }]}>
+                      {statusData?.schedule ? `${statusData.schedule.startTime} - ${statusData.schedule.endTime}` : '09:00 - 18:00'}
+                    </Text>
                   </View>
                 </View>
                 <View style={[styles.accentBar, { backgroundColor: '#F59E0B' }]} />
@@ -501,34 +478,52 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
         <View style={styles.gridContainer}>
           {calendarDays.map((item, index) => {
-            const isToday = item.isToday;
-            const isPresent = item.type === 'PRESENT';
-            const isAbsent = item.type === 'ABSENT';
-            const isHalf = item.type === 'HALF';
+            const todayStr = new Date().toISOString().substring(0, 10);
+            const isToday = item.date === todayStr;
+            const isPresent = item.colorCode === 'GREEN';
+            const isAbsent = item.colorCode === 'RED';
+            const isHalf = item.colorCode === 'YELLOW';
+            const isHoliday = item.isCompanyLeave;
+            const isSunday = new Date(item.date).getDay() === 0;
+
+            const symbol = isToday
+              ? ''
+              : isHoliday
+              ? 'HOL'
+              : isPresent
+              ? '✓'
+              : isAbsent
+              ? '✕'
+              : isHalf
+              ? '½'
+              : isSunday
+              ? 'OFF'
+              : '–';
 
             return (
               <TouchableOpacity
-                key={index}
+                key={item.date || index}
                 style={[
                   styles.dayBox,
                   isToday && styles.dayBoxToday,
                   isPresent && !isToday && styles.dayBoxPresent,
                   isAbsent && styles.dayBoxAbsent,
                   isHalf && styles.dayBoxHalf,
+                  isSunday && !isPresent && !isAbsent && { backgroundColor: '#FAF5FF' },
                 ]}
                 onPress={onOpenCalendar}
               >
                 <Text
                   style={[
                     styles.dayNumText,
+                    isSunday && !isPresent && !isAbsent && { color: '#8B5CF6', fontWeight: '700' },
                     isToday && styles.dayNumToday,
                     isPresent && !isToday && styles.dayNumPresent,
                     isAbsent && styles.dayNumAbsent,
                     isHalf && styles.dayNumHalf,
-                    item.isPrevMonth && { color: '#CBD5E1' },
                   ]}
                 >
-                  {item.day} {isToday ? '' : isPresent ? '✓' : isAbsent ? '✕' : isHalf ? '½' : '–'}
+                  {item.dayNumber} {symbol}
                 </Text>
                 {isToday && <Text style={styles.todaySubText}>Today</Text>}
               </TouchableOpacity>
@@ -550,6 +545,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           <View style={styles.legendPill}>
             <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
             <Text style={styles.legendLabel}>Absent (×)</Text>
+          </View>
+
+          <View style={styles.legendPill}>
+            <View style={[styles.legendDot, { backgroundColor: '#8B5CF6' }]} />
+            <Text style={styles.legendLabel}>Sunday (OFF)</Text>
           </View>
 
           <View style={styles.legendPill}>

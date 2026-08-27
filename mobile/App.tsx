@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   StatusBar,
 } from 'react-native';
+import { LoginScreen } from './src/screens/LoginScreen';
 import { AttendanceScreen } from './src/screens/AttendanceScreen';
 import { QRScannerScreen } from './src/screens/QRScannerScreen';
 import { AttendanceRequestScreen } from './src/screens/AttendanceRequestScreen';
@@ -18,14 +19,16 @@ import { StockScreen } from './src/screens/StockScreen';
 import { QuotationListScreen } from './src/screens/QuotationListScreen';
 import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
+import { AdminEmployeesScreen } from './src/screens/AdminEmployeesScreen';
 import { AppDrawer } from './src/components/AppDrawer';
-import { setActiveEmployeeId } from './src/services/api';
+import { setActiveEmployeeId, setAuthToken } from './src/services/api';
 import { Quotation } from './src/types';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<'HOME' | 'ATTENDANCE' | 'STOCK' | 'QUOTATIONS'>('HOME');
   const [activeModal, setActiveModal] = useState<
-    'NONE' | 'SCANNER' | 'REQUEST' | 'CALENDAR' | 'ADMIN_CALENDAR' | 'ADMIN_MACHINES' | 'ADMIN_APPROVALS' | 'STOCK' | 'NEW_QUOTE' | 'PREVIEW_QUOTE'
+    'NONE' | 'SCANNER' | 'REQUEST' | 'CALENDAR' | 'ADMIN_CALENDAR' | 'ADMIN_MACHINES' | 'ADMIN_APPROVALS' | 'ADMIN_EMPLOYEES' | 'STOCK' | 'NEW_QUOTE' | 'PREVIEW_QUOTE'
   >('NONE');
 
   const [drawerVisible, setDrawerVisible] = useState<boolean>(false);
@@ -35,15 +38,38 @@ export default function App() {
   const [activeUserRole, setActiveUserRole] = useState<'ADMIN' | 'SALES' | 'EMPLOYEE'>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
 
-  const handleSwitchUser = (role: 'ADMIN' | 'SALES' | 'EMPLOYEE', name: string) => {
-    const empId = role === 'ADMIN' ? 'usr-admin-1' : role === 'SALES' ? 'usr-sales-1' : 'usr-tech-1';
-    setActiveEmployeeId(empId);
-    setActiveUserRole(role);
-    setActiveUserName(name);
+  const handleLoginSuccess = (user: any, token: string) => {
+    setAuthToken(token);
+    setActiveEmployeeId(user.id);
+    setActiveUserName(user.name);
+    const roleMap: Record<string, 'ADMIN' | 'SALES' | 'EMPLOYEE'> = {
+      ADMIN: 'ADMIN',
+      IT_ADMIN: 'ADMIN',
+      MANAGER: 'ADMIN',
+      SALES: 'SALES',
+      TECHNICIAN: 'EMPLOYEE',
+      ACCOUNTANT: 'EMPLOYEE',
+    };
+    setActiveUserRole(roleMap[user.role] || 'EMPLOYEE');
+    setIsAuthenticated(true);
+    setCurrentTab('HOME');
+  };
+
+  const handleLogout = () => {
+    setAuthToken(null);
+    setActiveEmployeeId('');
+    setActiveUserName('');
+    setActiveUserRole('EMPLOYEE');
+    setIsAuthenticated(false);
+    setDrawerVisible(false);
+    setSelectedQuotation(null);
+    setActiveModal('NONE');
+    setCurrentTab('HOME');
   };
 
   const handleDrawerNavigate = (screenId: string) => {
     if (screenId === 'HOME') setCurrentTab('HOME');
+    else if (screenId === 'ADMIN_EMPLOYEES') setActiveModal('ADMIN_EMPLOYEES');
     else if (screenId === 'ADMIN_CALENDAR') setActiveModal('ADMIN_CALENDAR');
     else if (screenId === 'ADMIN_APPROVALS') setActiveModal('ADMIN_APPROVALS');
     else if (screenId === 'ADMIN_MACHINES') setActiveModal('ADMIN_MACHINES');
@@ -57,42 +83,18 @@ export default function App() {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+        <LoginScreen onLoginSuccess={handleLoginSuccess} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
-
-      {/* Role / Persona Quick Switcher Bar for Testing */}
-      <View style={styles.personaBar}>
-        <Text style={styles.personaLabel}>Role:</Text>
-        <View style={styles.personaRow}>
-          <TouchableOpacity
-            style={[styles.personaBtn, activeUserRole === 'ADMIN' && styles.personaBtnActive]}
-            onPress={() => handleSwitchUser('ADMIN', 'Arun Kumar')}
-          >
-            <Text style={[styles.personaText, activeUserRole === 'ADMIN' && styles.personaTextActive]}>
-              Admin
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.personaBtn, activeUserRole === 'SALES' && styles.personaBtnActive]}
-            onPress={() => handleSwitchUser('SALES', 'Priya Sharma')}
-          >
-            <Text style={[styles.personaText, activeUserRole === 'SALES' && styles.personaTextActive]}>
-              Sales
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.personaBtn, activeUserRole === 'EMPLOYEE' && styles.personaBtnActive]}
-            onPress={() => handleSwitchUser('EMPLOYEE', 'Ramesh Tech')}
-          >
-            <Text style={[styles.personaText, activeUserRole === 'EMPLOYEE' && styles.personaTextActive]}>
-              Employee
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
 
       {/* Main Tab Content */}
       <View style={styles.mainContent}>
@@ -113,6 +115,7 @@ export default function App() {
             onOpenMachines={() => setActiveModal('ADMIN_MACHINES')}
             onOpenAdminCalendar={() => setActiveModal('ADMIN_CALENDAR')}
             onOpenStock={() => setCurrentTab('STOCK')}
+            onOpenEmployees={() => setActiveModal('ADMIN_EMPLOYEES')}
           />
         ) : currentTab === 'ATTENDANCE' ? (
           <AttendanceCalendarScreen
@@ -204,7 +207,7 @@ export default function App() {
             </Text>
           </TouchableOpacity>
 
-          {/* 5. Quotations */}
+          {/* 5. Quotations / Requests */}
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => {
@@ -226,14 +229,14 @@ export default function App() {
         </View>
       </View>
 
-      {/* Hamburger Drawer Navigation (Rule 5, 6) */}
+      {/* Hamburger Drawer Navigation */}
       <AppDrawer
         visible={drawerVisible}
         onClose={() => setDrawerVisible(false)}
         userRole={activeUserRole}
         userName={activeUserName}
         onNavigate={handleDrawerNavigate}
-        onSwitchRole={handleSwitchUser}
+        onLogout={handleLogout}
       />
 
       {/* Modals & Overlays */}
@@ -292,6 +295,12 @@ export default function App() {
         </View>
       )}
 
+      {activeModal === 'ADMIN_EMPLOYEES' && (
+        <View style={StyleSheet.absoluteFillObject}>
+          <AdminEmployeesScreen onClose={() => setActiveModal('NONE')} />
+        </View>
+      )}
+
       {activeModal === 'NEW_QUOTE' && (
         <View style={StyleSheet.absoluteFillObject}>
           <QuotationCreateScreen
@@ -321,41 +330,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-  },
-  personaBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    backgroundColor: '#0F172A',
-  },
-  personaLabel: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '700',
-  },
-  personaRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  personaBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 99,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  personaBtnActive: {
-    backgroundColor: '#10B981',
-  },
-  personaText: {
-    fontSize: 10.5,
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  personaTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
   },
   mainContent: {
     flex: 1,

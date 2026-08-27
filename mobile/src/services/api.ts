@@ -1,13 +1,24 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
-// Automatically detect host machine IP when running on Expo Go via Wi-Fi, simulator, or browser
+// --------------------------------------------------------------------------
+// PRODUCTION CLOUD API URL (Paste your Railway / Render / Live URL here)
+// Example: export const PRODUCTION_API_URL = 'https://ecdial-backend.up.railway.app/api';
+// Leave as empty string '' to auto-detect local computer Wi-Fi IP for testing.
+// --------------------------------------------------------------------------
+export const PRODUCTION_API_URL: string = '';
+
 function getApiBaseUrl(): string {
+  // 1. If a production cloud URL is specified, always use it
+  if (PRODUCTION_API_URL && PRODUCTION_API_URL.trim().length > 0) {
+    return PRODUCTION_API_URL.trim();
+  }
+
   if (Platform.OS === 'web') {
     return 'http://localhost:4000/api';
   }
 
-  // Extract host IP from Expo debugger host (e.g. 192.168.151.50:8081 -> 192.168.151.50:4000)
+  // 2. Extract host IP from Expo debugger host (e.g. 192.168.151.50:8081 -> 192.168.151.50:4000)
   const hostUri =
     Constants.expoConfig?.hostUri ||
     Constants.manifest2?.extra?.expoGo?.debuggerHost ||
@@ -23,7 +34,16 @@ function getApiBaseUrl(): string {
   return 'http://192.168.151.50:4000/api';
 }
 
-let activeEmployeeId = 'usr-admin-1'; // Default active persona
+let activeToken: string | null = null;
+let activeEmployeeId = 'usr-admin-1';
+
+export function setAuthToken(token: string | null) {
+  activeToken = token;
+}
+
+export function getAuthToken() {
+  return activeToken;
+}
 
 export function setActiveEmployeeId(id: string) {
   activeEmployeeId = id;
@@ -36,37 +56,48 @@ export function getActiveEmployeeId() {
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
     'x-employee-id': activeEmployeeId,
     ...(options.headers as Record<string, string> || {}),
   };
 
+  let response: Response;
   try {
     const url = `${getApiBaseUrl()}${endpoint}`;
-    const response = await fetch(url, {
+    response = await fetch(url, {
       ...options,
       headers,
     });
-
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      const error: any = new Error(data?.message || 'Network request failed');
-      error.errorType = data?.errorType;
-      throw error;
-    }
-
-    return data;
-  } catch (err: any) {
-    if (!err.errorType) {
-      const netError: any = new Error('Unable to connect to Ecdial. Please check your connection and try again.');
-      netError.errorType = 'NETWORK_ERROR';
-      throw netError;
-    }
-    throw err;
+  } catch (netErr: any) {
+    const netError: any = new Error('Unable to connect to Ecdial backend. Please verify your phone is on the same Wi-Fi network.');
+    netError.errorType = 'NETWORK_ERROR';
+    throw netError;
   }
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const error: any = new Error(data?.message || `Request failed (${response.status})`);
+    error.errorType = data?.errorType || 'API_ERROR';
+    throw error;
+  }
+
+  return data;
 }
 
 export const mobileApi = {
+  // Authentication & Employee Lifecycle
+  login: (payload: { email?: string; employeeCode?: string; password: string }) =>
+    request<any>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+  getMe: () => request<any>('/auth/me'),
+  listEmployees: () => request<any>('/auth/employees'),
+  createEmployee: (payload: any) =>
+    request<any>('/auth/employees', { method: 'POST', body: JSON.stringify(payload) }),
+  updateEmployee: (id: string, payload: any) =>
+    request<any>(`/auth/employees/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  toggleEmployeeStatus: (id: string) =>
+    request<any>(`/auth/employees/${id}/toggle-status`, { method: 'PATCH' }),
+
   // Attendance
   getTodayQR: () => request<any>('/attendance/qr/today'),
   getTodayStatus: (empId?: string) => request<any>(`/attendance/status/today${empId ? `?employeeId=${empId}` : ''}`),
@@ -97,6 +128,18 @@ export const mobileApi = {
     request<any>(`/attendance/approvals/${id}`, {
       method: 'POST',
       body: JSON.stringify({ action, remarks, approvedCheckInTime: checkInTime, approvedCheckOutTime: checkOutTime }),
+    }),
+  directResolveAttendance: (payload: {
+    employeeId: string;
+    date: string;
+    status: string;
+    checkInTime?: string;
+    checkOutTime?: string;
+    remarks?: string;
+  }) =>
+    request<any>('/attendance/direct-resolve', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   listHolidays: () => request<any>('/attendance/holidays'),
   createHoliday: (payload: { date: string; name: string; description?: string }) =>
@@ -129,6 +172,7 @@ export const mobileApi = {
     if (status) params.append('status', status);
     return request<any>(`/quotations?${params.toString()}`);
   },
+  getQuotation: (id: string) => request<any>(`/quotations/${id}`),
   getQuotationById: (id: string) => request<any>(`/quotations/${id}`),
   updateQuotation: (id: string, payload: any) =>
     request<any>(`/quotations/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
