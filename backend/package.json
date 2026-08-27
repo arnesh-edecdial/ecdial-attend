@@ -11,10 +11,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
-    "user:create": "tsx prisma/create_user.ts",
-    "user:list": "tsx prisma/list_users.ts",
-    "test": "tsx test/index.test.ts && tsx test/e2e_lifecycle.test.ts",
-    "test:e2e": "tsx test/e2e_lifecycle.test.ts"
+    "user:create": "tsx prisma/create_user.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

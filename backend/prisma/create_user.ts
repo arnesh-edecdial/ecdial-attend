@@ -152,13 +152,12 @@ async function main() {
   }, null, 2));
 }
 
-if (require.main === module) {
-  main()
-    .catch((e) => {
-      console.error('❌ Error creating user:', e);
-      process.exit(1);
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
-}
+main()
+  .catch((e) => {
+    console.error('❌ Error creating user:', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+
