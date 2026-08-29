@@ -24,7 +24,11 @@
       "permissions": [
         "CAMERA",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
@@ -40,6 +44,11 @@
           "locationAlwaysAndWhenInUsePermission": "Allow ECDIAL to verify office attendance location"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5063e54b-2c5c-4f3a-aebf-6402851b16ce"
+      }
+    }
   }
 }

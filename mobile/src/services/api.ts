@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
 // Example: export const PRODUCTION_API_URL = 'https://ecdial-backend.up.railway.app/api';
 // Leave as empty string '' to auto-detect local computer Wi-Fi IP for testing.
 // --------------------------------------------------------------------------
-export const PRODUCTION_API_URL: string = '';
+export const PRODUCTION_API_URL: string = 'https://ecdial-attend-production.up.railway.app/api';
 
 function getApiBaseUrl(): string {
   // 1. If a production cloud URL is specified, always use it
