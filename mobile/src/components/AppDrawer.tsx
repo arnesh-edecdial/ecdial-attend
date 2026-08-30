@@ -6,8 +6,8 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 interface AppDrawerProps {
   visible: boolean;
@@ -36,6 +36,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'STOCK', label: 'Stock & Inventory', icon: '📦' },
         { id: 'ADMIN_MACHINES', label: 'Machine Models', icon: '❄️' },
         { id: 'QUOTATIONS', label: 'All Quotations', icon: '📄' },
+        { id: 'LOCATION_CALIBRATION', label: 'Location & Geofence Calibration', icon: '📍' },
       ];
     }
     if (userRole === 'SALES') {
@@ -67,7 +68,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
-        <SafeAreaView style={styles.drawerContainer}>
+        <SafeAreaView style={styles.drawerContainer} edges={['top', 'left', 'bottom']}>
           {/* User Profile Header */}
           <View style={styles.profileHeader}>
             <View style={styles.avatarCircle}>

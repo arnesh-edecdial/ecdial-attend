@@ -302,14 +302,14 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
 
               <Text style={styles.inputLabel}>Role *</Text>
               <View style={styles.rolePickerRow}>
-                {['TECHNICIAN', 'SALES', 'MANAGER', 'ADMIN'].map((r) => (
+                {['TECHNICIAN', 'SALES', 'MANAGER', 'CRM', 'SERVICE_MANAGER', 'HR', 'ACCOUNTANT', 'ADMIN'].map((r) => (
                   <TouchableOpacity
                     key={r}
                     style={[styles.roleChip, role === r && styles.roleChipActive]}
                     onPress={() => setRole(r)}
                   >
                     <Text style={[styles.roleChipText, role === r && styles.roleChipTextActive]}>
-                      {r}
+                      {r.replace('_', ' ')}
                     </Text>
                   </TouchableOpacity>
                 ))}

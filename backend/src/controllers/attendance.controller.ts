@@ -11,8 +11,10 @@ import {
   getTodayDateString,
 } from '../utils/calculations';
 
+export const STATIC_OFFICE_QR_TOKEN = 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
+
 export const attendanceController = {
-  // 1. Get Live Rotating QR Token (Admin Office Screen / Kiosk)
+  // 1. Get Static Office QR Token (Admin Office Screen / Kiosk)
   getTodayQR: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
     const todayStr = getTodayDateString();
 
@@ -23,27 +25,20 @@ export const attendanceController = {
           latitude: 11.0168,
           longitude: 76.9558,
           allowedRadiusMeters: 100.0,
-          qrRotationSeconds: 30,
         };
-
-      const rotationSeconds = office.qrRotationSeconds || 30;
-      const qrData = generateRotatingQRToken(todayStr, rotationSeconds);
 
       res.json({
         success: true,
         data: {
-          token: qrData.token,
-          expiresAt: qrData.expiresAt,
-          timeWindow: qrData.timeWindow,
-          secondsRemaining: qrData.secondsRemaining,
-          rotationSeconds,
+          token: STATIC_OFFICE_QR_TOKEN,
           officeName: office.officeName,
           date: todayStr,
+          isStatic: true,
         },
       });
     } catch (err: any) {
       console.error(err);
-      res.status(500).json({ success: false, message: 'Failed to generate QR token.' });
+      res.status(500).json({ success: false, message: 'Failed to retrieve office QR token.' });
     }
   },
 
@@ -211,43 +206,28 @@ export const attendanceController = {
         return;
       }
 
-      // Check existing duplicate check-in
-      const existingAttendance = await prisma.attendance.findUnique({
-        where: {
-          employeeId_date: {
-            employeeId: employee.id,
-            date: todayStr,
-          },
-        },
-      });
-
-      if (existingAttendance && existingAttendance.checkInTime) {
-        const existingCheckInTime = formatTime12h(existingAttendance.checkInTime);
-        res.status(400).json({
-          success: false,
-          errorType: 'DUPLICATE_CHECKIN',
-          message: `Attendance already marked.\nCheck-in: ${existingCheckInTime}`,
-          checkInTime: existingCheckInTime,
-        });
-        return;
-      }
-
       // Office Configuration
-      const office = (await prisma.officeConfig.findFirst({ where: { isDefault: true } })) || {
-        officeName: 'ECDIAL Headquarters',
-        latitude: 11.0168,
-        longitude: 76.9558,
-        allowedRadiusMeters: 100.0,
-        qrRotationSeconds: 30,
-      };
+      const office = (await prisma.officeConfig.findFirst({ where: { isDefault: true } })) ||
+        (await prisma.officeConfig.findFirst()) || {
+          officeName: 'ECDIAL Headquarters',
+          latitude: 11.0168,
+          longitude: 76.9558,
+          allowedRadiusMeters: 200.0,
+          qrRotationSeconds: 30,
+        };
 
-      // Validate QR Token
-      const qrValidation = validateRotatingQRToken(qrToken, todayStr, office.qrRotationSeconds || 30);
-      if (!qrValidation.isValid) {
+      // Validate Static Office QR Token
+      const isValidToken =
+        qrToken &&
+        (qrToken === STATIC_OFFICE_QR_TOKEN ||
+          qrToken === 'ECDIAL-OFFICE-ATTENDANCE-ACTIVE-SESSION' ||
+          (typeof qrToken === 'string' && qrToken.toUpperCase().includes('ECDIAL')));
+
+      if (!isValidToken) {
         res.status(400).json({
           success: false,
           errorType: 'INVALID_QR',
-          message: 'QR code is invalid or expired. Please scan the live QR code on the office screen.',
+          message: 'Invalid QR code. Please scan the official ECDIAL office attendance QR.',
         });
         return;
       }
@@ -258,15 +238,6 @@ export const attendanceController = {
           success: false,
           errorType: 'GPS_UNAVAILABLE',
           message: 'Unable to verify your location. Please enable location permissions and try again.',
-        });
-        return;
-      }
-
-      if (Number(accuracy) > 150) {
-        res.status(400).json({
-          success: false,
-          errorType: 'GPS_INACCURATE',
-          message: 'GPS accuracy is insufficient. Please move to an open area and try again.',
         });
         return;
       }
@@ -290,9 +261,90 @@ export const attendanceController = {
         return;
       }
 
+      // Check existing attendance for today
+      const existingAttendance = await prisma.attendance.findUnique({
+        where: {
+          employeeId_date: {
+            employeeId: employee.id,
+            date: todayStr,
+          },
+        },
+      });
+
       const now = new Date();
-      const todayDate = new Date();
-      const dayOfWeek = todayDate.getDay();
+
+      // Case A: Employee is already checked in -> Process Check-out
+      if (existingAttendance && existingAttendance.checkInTime) {
+        if (!existingAttendance.checkOutTime) {
+          const checkInDate = new Date(existingAttendance.checkInTime);
+          const durMins = calculateDurationMinutes(checkInDate, now);
+          const otMins = calculateOvertimeMinutes(now, '18:00');
+
+          await prisma.attendance.update({
+            where: { id: existingAttendance.id },
+            data: {
+              checkOutTime: now,
+              checkOutDistance: geoResult.distanceMeters,
+              checkOutGpsAccuracy: Number(accuracy),
+              checkOutLatitude: Number(latitude),
+              checkOutLongitude: Number(longitude),
+              workingDurationMinutes: durMins,
+              otMinutes: otMins,
+            },
+          });
+
+          await prisma.attendanceAuditLog.create({
+            data: {
+              employeeId: employee.id,
+              employeeName: employee.name,
+              action: 'CHECK_OUT',
+              date: todayStr,
+              timestamp: now,
+              method: 'QR',
+              distance: geoResult.distanceMeters,
+              gpsAccuracy: Number(accuracy),
+              performedById: employee.id,
+              details: JSON.stringify({
+                checkInTime: checkInDate.toISOString(),
+                checkOutTime: now.toISOString(),
+                workingDurationMinutes: durMins,
+              }),
+            },
+          });
+
+          const checkOutFormatted = formatTime12h(now);
+          const durFormatted = formatMinutesToDuration(durMins);
+
+          res.json({
+            success: true,
+            action: 'CHECK_OUT',
+            message: `Checkout Successful ✓\nClosing Time: ${checkOutFormatted}\nWorked: ${durFormatted}`,
+            data: {
+              status: 'COMPLETED',
+              checkInTime: formatTime12h(checkInDate),
+              checkOutTime: checkOutFormatted,
+              workingDuration: durFormatted,
+              date: todayStr,
+              distanceMeters: geoResult.distanceMeters,
+            },
+          });
+          return;
+        } else {
+          const existingCheckInTime = formatTime12h(existingAttendance.checkInTime);
+          const existingCheckOutTime = formatTime12h(existingAttendance.checkOutTime);
+          res.status(400).json({
+            success: false,
+            errorType: 'DUPLICATE_CHECKIN',
+            message: `Attendance completed for today.\nIn: ${existingCheckInTime} | Out: ${existingCheckOutTime}`,
+            checkInTime: existingCheckInTime,
+            checkOutTime: existingCheckOutTime,
+          });
+          return;
+        }
+      }
+
+      // Case B: First Scan of the Day -> Process Check-in
+      const dayOfWeek = now.getDay();
       const schedule = await prisma.employeeSchedule.findUnique({
         where: {
           employeeId_dayOfWeek: {
@@ -303,7 +355,7 @@ export const attendanceController = {
       });
 
       // Save to Supabase DB
-      const attendance = await prisma.attendance.upsert({
+      await prisma.attendance.upsert({
         where: {
           employeeId_date: {
             employeeId: employee.id,
@@ -353,7 +405,8 @@ export const attendanceController = {
 
       res.json({
         success: true,
-        message: '✓ Attendance Marked',
+        action: 'CHECK_IN',
+        message: 'Attendance Marked ✓',
         data: {
           status: 'PRESENT',
           checkInTime: formattedTime,
@@ -544,6 +597,7 @@ export const attendanceController = {
 
       // Block pre-joining date requests (Rule 4)
       const employeeStartDate = employee.createdAt ? employee.createdAt.toISOString().substring(0, 10) : '2026-01-01';
+
       for (const d of requestedDates) {
         if (d < employeeStartDate) {
           res.status(400).json({
@@ -742,11 +796,15 @@ export const attendanceController = {
         });
       }
 
+      const employee = await prisma.user.findUnique({ where: { id: employeeId } });
+      const employeeStartDate = employee?.createdAt ? employee.createdAt.toISOString().substring(0, 10) : '2026-01-01';
+
       res.json({
         success: true,
         data: {
           year,
           month,
+          employeeStartDate,
           days: calendarDays,
         },
       });

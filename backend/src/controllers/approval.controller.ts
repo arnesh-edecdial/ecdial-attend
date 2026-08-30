@@ -153,14 +153,25 @@ export const approvalController = {
         return;
       }
 
+      const isEdited =
+        (approvedCheckInTime && approvedCheckInTime !== request.checkInTime) ||
+        (approvedCheckOutTime !== undefined && approvedCheckOutTime !== request.checkOutTime);
+
+      const inTimeStr = approvedCheckInTime || request.checkInTime || '09:00';
+      const outTimeStr = approvedCheckOutTime !== undefined ? approvedCheckOutTime : (request.checkOutTime || null);
+
       const finalStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      const reviewNote = isEdited
+        ? `[EDITED_BY_ADMIN In:${inTimeStr} Out:${outTimeStr || 'None'}] ${remarks || ''}`.trim()
+        : (remarks || null);
+
       await prisma.attendanceRequest.update({
         where: { id },
         data: {
           status: finalStatus,
           reviewedById: reviewerId,
           reviewedAt: new Date(),
-          reviewRemarks: remarks || null,
+          reviewRemarks: reviewNote,
         },
       });
 
@@ -171,9 +182,6 @@ export const approvalController = {
         } catch {
           parsedDates = [request.dates];
         }
-
-        const inTimeStr = approvedCheckInTime || request.checkInTime || '09:00';
-        const outTimeStr = approvedCheckOutTime !== undefined ? approvedCheckOutTime : (request.checkOutTime || null);
 
         for (const dateStr of parsedDates) {
           const inDate = new Date(`${dateStr}T${inTimeStr}:00`);
@@ -197,7 +205,9 @@ export const approvalController = {
               checkOutTime: outDate,
               workingDurationMinutes: durMins || null,
               status: 'PRESENT',
-              notes: `Approved via Attendance Request (${request.reason})`,
+              notes: isEdited
+                ? `Approved with updated time by Admin (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
+                : `Approved via Attendance Request (${request.reason})`,
             },
             create: {
               employeeId: request.employeeId,
@@ -207,32 +217,101 @@ export const approvalController = {
               checkInMethod: 'MANUAL_APPROVAL',
               workingDurationMinutes: durMins || null,
               status: 'PRESENT',
-              notes: `Approved via Attendance Request (${request.reason})`,
+              notes: isEdited
+                ? `Approved with updated time by Admin (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
+                : `Approved via Attendance Request (${request.reason})`,
             },
           });
         }
       }
 
       // Log Audit
+      const auditAction =
+        action === 'APPROVE'
+          ? isEdited
+            ? 'REQUEST_EDITED_AND_APPROVED'
+            : 'REQUEST_APPROVED'
+          : 'REQUEST_REJECTED';
+
       await prisma.attendanceAuditLog.create({
         data: {
           employeeId: request.employeeId,
           employeeName: request.employee.name,
-          action: action === 'APPROVE' ? 'REQUEST_APPROVED' : 'REQUEST_REJECTED',
+          action: auditAction,
           date: new Date().toISOString().substring(0, 10),
           method: 'MANUAL_APPROVAL',
           performedById: reviewerId,
-          details: JSON.stringify({ requestId: id, action, remarks, reviewerName }),
+          details: JSON.stringify({
+            requestId: id,
+            action,
+            isEdited,
+            requestedCheckIn: request.checkInTime,
+            requestedCheckOut: request.checkOutTime,
+            approvedCheckIn: inTimeStr,
+            approvedCheckOut: outTimeStr,
+            remarks,
+            reviewerName,
+          }),
+        },
+      });
+
+      const responseMessage = isEdited
+        ? 'Attendance request approved with updated time.'
+        : `Attendance request ${action === 'APPROVE' ? 'Approved' : 'Processed'} successfully.`;
+
+      res.json({
+        success: true,
+        message: responseMessage,
+      });
+    } catch (err: any) {
+      console.error('[Process Approval Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to process approval.' });
+    }
+  },
+
+  // 3. Delete Attendance Request (Admin Delete)
+  deleteRequest: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const reviewerId = req.user?.id;
+    const reviewerName = req.user?.name || 'Admin';
+
+    try {
+      const request = await prisma.attendanceRequest.findUnique({
+        where: { id },
+        include: { employee: true },
+      });
+
+      if (!request) {
+        res.status(404).json({ success: false, message: 'Attendance request not found.' });
+        return;
+      }
+
+      await prisma.attendanceRequest.delete({ where: { id } });
+
+      await prisma.attendanceAuditLog.create({
+        data: {
+          employeeId: request.employeeId,
+          employeeName: request.employee.name,
+          action: 'REQUEST_DELETED',
+          date: new Date().toISOString().substring(0, 10),
+          method: 'MANUAL_DELETION',
+          performedById: reviewerId,
+          details: JSON.stringify({
+            requestId: id,
+            dates: request.dates,
+            reason: request.reason,
+            reviewerName,
+          }),
         },
       });
 
       res.json({
         success: true,
-        message: `Attendance request ${action === 'APPROVE' ? 'Approved' : 'Rejected'} successfully.`,
+        message: 'Attendance request deleted successfully.',
       });
     } catch (err: any) {
-      console.error('[Process Approval Error]', err);
-      res.status(500).json({ success: false, message: 'Failed to process approval.' });
+      console.error('[Delete Request Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to delete attendance request.' });
     }
   },
 

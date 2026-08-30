@@ -83,6 +83,8 @@ export const authController = {
         { expiresIn: '30d' }
       );
 
+      const firstLoginAt = user.createdAt ? new Date(user.createdAt).toISOString().substring(0, 10) : new Date().toISOString().substring(0, 10);
+
       res.json({
         success: true,
         data: {
@@ -96,6 +98,7 @@ export const authController = {
             phone: user.phone,
             department: user.department,
             isActive: user.isActive,
+            firstLoginAt,
           },
         },
       });

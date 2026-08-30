@@ -74,9 +74,22 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   const fetchCalendar = async () => {
     try {
       setIsLoadingCalendar(true);
-      const res = await mobileApi.getCalendar(undefined, year, month);
-      if (res.success && res.data.days) {
-        setCalendarDays(res.data.days);
+      const [calRes, meRes] = await Promise.all([
+        mobileApi.getCalendar(undefined, year, month),
+        mobileApi.getMe().catch(() => null),
+      ]);
+
+      if (calRes && calRes.success && calRes.data) {
+        if (calRes.data.days) setCalendarDays(calRes.data.days);
+        if (calRes.data.employeeStartDate) setEmployeeStartDate(calRes.data.employeeStartDate);
+      }
+
+      if (meRes && meRes.success && meRes.data?.user) {
+        const u = meRes.data.user;
+        const joinDate = u.firstLoginAt
+          ? new Date(u.firstLoginAt).toISOString().substring(0, 10)
+          : (u.createdAt ? new Date(u.createdAt).toISOString().substring(0, 10) : todayStr);
+        setEmployeeStartDate(joinDate);
       }
     } catch (err) {
       console.error('[Calendar Fetch Error]', err);

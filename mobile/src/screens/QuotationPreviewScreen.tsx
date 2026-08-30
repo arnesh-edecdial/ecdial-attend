@@ -8,7 +8,10 @@ import {
   Share,
   ActivityIndicator,
   Alert,
+  Modal,
+  TextInput,
   Platform,
+  Image,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -31,6 +34,11 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [isSharing, setIsSharing] = useState<boolean>(false);
 
+  // Filename Customization Modal State (Requirement 2)
+  const [filenameModalVisible, setFilenameModalVisible] = useState<boolean>(false);
+  const [filenameModalMode, setFilenameModalMode] = useState<'DOWNLOAD' | 'SHARE'>('DOWNLOAD');
+  const [customFilename, setCustomFilename] = useState<string>('');
+
   useEffect(() => {
     setCurrentQuote(quotation);
     if (quotation && (!quotation.items || quotation.items.length === 0)) {
@@ -49,12 +57,27 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   if (!currentQuote) return null;
 
-  const downloadPdfFile = async (): Promise<{ uri: string | null; error?: string }> => {
+  const getDefaultFilename = () => {
+    const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cleanCust = currentQuote.customerName ? currentQuote.customerName.trim().replace(/[^a-zA-Z0-9_-]/g, '_') : '';
+    return cleanCust ? `ECDIAL_${cleanCust}_${safeQuoteNum}` : `ECDIAL_Quotation_${safeQuoteNum}`;
+  };
+
+  const sanitizeFilename = (name: string) => {
+    let clean = (name || '').trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\.pdf$/i, '');
+    clean = clean.replace(/_+/g, '_').replace(/^_|_$/g, '');
+    if (!clean || clean.toLowerCase() === 'undefined' || clean.toLowerCase() === 'null') {
+      return getDefaultFilename();
+    }
+    return clean;
+  };
+
+  const downloadPdfFile = async (rawFilename?: string): Promise<{ uri: string | null; error?: string; cleanName: string }> => {
+    const cleanName = sanitizeFilename(rawFilename || getDefaultFilename());
     try {
       const pdfUrl = mobileApi.getPdfUrl(currentQuote.id);
       const docDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-      const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const localFileUri = `${docDir}Quotation_${safeQuoteNum}.pdf`;
+      const localFileUri = `${docDir}${cleanName}.pdf`;
 
       const token = getAuthToken();
       const empId = getActiveEmployeeId();
@@ -67,86 +90,100 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
       if (result && result.status === 200 && result.uri) {
         const info = await FileSystem.getInfoAsync(result.uri);
         if (info.exists && typeof (info as any).size === 'number' && (info as any).size > 100) {
-          return { uri: result.uri };
+          return { uri: result.uri, cleanName };
         }
       }
 
       if (result && result.status === 404) {
-        return { uri: null, error: 'Quotation not found on the server (404). Please ensure the quotation is saved to the live backend.' };
+        return { uri: null, cleanName, error: 'Quotation not found on the server (404). Please ensure the quotation is saved to the live backend.' };
       }
       if (result && result.status === 401) {
-        return { uri: null, error: 'Authentication expired (401). Please log in again.' };
+        return { uri: null, cleanName, error: 'Authentication expired (401). Please log in again.' };
       }
 
-      return { uri: null, error: `Server returned HTTP ${result?.status || 'error'}` };
+      return { uri: null, cleanName, error: `Server returned HTTP ${result?.status || 'error'}` };
     } catch (err: any) {
       console.error('[Download PDF Error]', err);
-      return { uri: null, error: err.message || 'Network request failed' };
+      return { uri: null, cleanName, error: err.message || 'Network request failed' };
     }
   };
 
-  const handleDownloadPdf = async () => {
-    setIsDownloading(true);
-    try {
-      const { uri: localUri, error } = await downloadPdfFile();
-      if (localUri) {
-        Alert.alert(
-          '✓ PDF Generated Successfully',
-          `Quotation_${currentQuote.quotationNumber}.pdf is ready on your device.`,
-          [
-            {
-              text: 'Open / Save File',
-              onPress: async () => {
-                if (await Sharing.isAvailableAsync()) {
-                  await Sharing.shareAsync(localUri, {
-                    mimeType: 'application/pdf',
-                    dialogTitle: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
-                    UTI: 'com.adobe.pdf',
-                  });
-                }
+  const handleOpenDownloadModal = () => {
+    setCustomFilename(getDefaultFilename());
+    setFilenameModalMode('DOWNLOAD');
+    setFilenameModalVisible(true);
+  };
+
+  const handleOpenShareModal = () => {
+    setCustomFilename(getDefaultFilename());
+    setFilenameModalMode('SHARE');
+    setFilenameModalVisible(true);
+  };
+
+  const handleConfirmFilenameAction = async () => {
+    const rawName = customFilename.trim();
+    const cleanName = sanitizeFilename(rawName);
+    setFilenameModalVisible(false);
+
+    if (filenameModalMode === 'DOWNLOAD') {
+      setIsDownloading(true);
+      try {
+        const { uri: localUri, error } = await downloadPdfFile(cleanName);
+        if (localUri) {
+          Alert.alert(
+            '✓ Quotation downloaded successfully',
+            `${cleanName}.pdf is saved on your device.`,
+            [
+              {
+                text: 'Open / View File',
+                onPress: async () => {
+                  if (await Sharing.isAvailableAsync()) {
+                    await Sharing.shareAsync(localUri, {
+                      mimeType: 'application/pdf',
+                      dialogTitle: `${cleanName}.pdf`,
+                      UTI: 'com.adobe.pdf',
+                    });
+                  }
+                },
               },
-            },
-            { text: 'OK', style: 'cancel' },
-          ]
-        );
-      } else {
-        Alert.alert('Download Failed', error || 'Unable to generate quotation PDF. Please check server connection.');
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        } else {
+          Alert.alert('Download Failed', error || 'Unable to download quotation. Please check server connection.');
+        }
+      } catch (err: any) {
+        Alert.alert('Error', err.message || 'Unable to download quotation PDF.');
+      } finally {
+        setIsDownloading(false);
       }
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Unable to generate quotation PDF.');
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
-  const handleSharePdf = async () => {
-    setIsSharing(true);
-    try {
-      const { uri: localUri, error } = await downloadPdfFile();
-
-      if (localUri && (await Sharing.isAvailableAsync())) {
-        await Sharing.shareAsync(localUri, {
-          mimeType: 'application/pdf',
-          dialogTitle: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
-          UTI: 'com.adobe.pdf',
-        });
-      } else if (localUri) {
-        // Fallback to text summary share if native sharing is unavailable
-        await Share.share({
-          title: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
-          message: `ECDIAL Commercial Offer for ${currentQuote.customerName}\nQuote: ${currentQuote.quotationNumber}\nTotal: ₹${Number(currentQuote.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nDate: ${currentQuote.date}`,
-        });
-      } else {
-        Alert.alert('Share Failed', error || 'Unable to generate quotation PDF for sharing. Please check server connection.');
+    } else {
+      // SHARE mode
+      setIsSharing(true);
+      try {
+        const { uri: localUri, error } = await downloadPdfFile(cleanName);
+        if (localUri && (await Sharing.isAvailableAsync())) {
+          await Sharing.shareAsync(localUri, {
+            mimeType: 'application/pdf',
+            dialogTitle: `${cleanName}.pdf`,
+            UTI: 'com.adobe.pdf',
+          });
+        } else if (localUri) {
+          await Share.share({
+            title: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
+            message: `ECDIAL Commercial Offer for ${currentQuote.customerName || 'Customer'}\nQuote: ${currentQuote.quotationNumber}\nTotal: ₹${Number(currentQuote.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nDate: ${currentQuote.date}`,
+          });
+        } else {
+          Alert.alert('Share Failed', error || 'Unable to generate quotation PDF for sharing. Please check server connection.');
+        }
+      } catch (err: any) {
+        console.error('[Share Error]', err);
+        if (err.message && !err.message.includes('dismissed') && !err.message.includes('cancel')) {
+          Alert.alert('Share Error', err.message || 'Sharing error');
+        }
+      } finally {
+        setIsSharing(false);
       }
-    } catch (err: any) {
-      console.error('[Share Error]', err);
-      // User cancelling share sheet is normal, avoid alert if cancelled
-      if (err.message && !err.message.includes('dismissed') && !err.message.includes('cancel')) {
-        alert(err.message || 'Sharing error');
-      }
-    } finally {
-      setIsSharing(false);
     }
   };
 
@@ -216,26 +253,16 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
         {/* Official Printable Sheet (Preserving Daikin ECDIAL Design) */}
         <View style={styles.previewSheet}>
-          {/* Header Brand Bar */}
-          <View style={styles.topHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.brandTitle}>DAIKIN</Text>
-              <Text style={styles.brandSub}>AIR CONDITIONERS</Text>
-              <Text style={styles.brandDealer}>ECDIAL ENGINEERING SOLUTIONS</Text>
-            </View>
-
-            <View style={styles.dealerInfoBox}>
-              <Text style={styles.dealerTitle}>Authorized Sales & Service Dealer</Text>
-              <Text style={styles.dealerText}>Coimbatore, Tamil Nadu</Text>
-              <Text style={styles.dealerText}>+91 98765 43210</Text>
-              <Text style={styles.dealerEmail}>sales@daikincoimbatore.in</Text>
-            </View>
+          {/* 1. FIXED HEADER IMAGE ASSET */}
+          <View style={styles.fixedHeaderContainer}>
+            <Image
+              source={require('../../assets/quotation_header.png')}
+              style={styles.fixedHeaderImg}
+              resizeMode="contain"
+            />
           </View>
 
-          {/* Decorative Divider */}
-          <View style={styles.brandDivider} />
-
-          {/* Customer & Quotation Summary Row */}
+          {/* 2. DYNAMIC CUSTOMER & QUOTATION SUMMARY ROW */}
           <View style={styles.customerSummaryRow}>
             {/* Customer Box (Omitted if no customer name) */}
             {currentQuote.customerName && currentQuote.customerName.trim().length > 0 ? (
@@ -260,7 +287,10 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             <View style={styles.quoteCard}>
               <View style={styles.quoteCardHeader}>
                 <Text style={styles.quoteCardHeaderText}>QUOTATION</Text>
-                <Text style={styles.quoteCardDate}>📅 {currentQuote.date}</Text>
+              </View>
+              <View style={styles.quoteCardMeta}>
+                <Text style={styles.quoteCardDate}>Date: {currentQuote.date}</Text>
+                <Text style={styles.quoteCardNum}>{currentQuote.quotationNumber}</Text>
               </View>
 
               <View style={styles.quoteCardBody}>
@@ -293,7 +323,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             </View>
           </View>
 
-          {/* Section A: Main Unit */}
+          {/* 3. DYNAMIC SECTION A: MAIN UNIT TABLE */}
           <View style={styles.sectionHeader}>
             <View style={styles.sectionBadge}><Text style={styles.sectionBadgeText}>A</Text></View>
             <Text style={styles.sectionTitle}>MAIN UNIT</Text>
@@ -328,7 +358,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             )}
           </View>
 
-          {/* Section B: Low Side */}
+          {/* 4. DYNAMIC SECTION B: LOW SIDE EXTRA MATERIALS */}
           {currentQuote.hasLowSide && lowSideItems.length > 0 && (
             <View style={{ marginTop: 14 }}>
               <View style={styles.sectionHeader}>
@@ -361,23 +391,22 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             </View>
           )}
 
-          {/* Terms & Payment Method */}
-          <View style={styles.termsPaymentCard}>
-            <Text style={styles.boxTitle}>📝 TERMS & CONDITIONS</Text>
-            <Text style={styles.boxBody}>
-              {currentQuote.termsAndConditions || (
-                `1. AC Price is inclusive of 18% taxes. 18% Tax Additional for Lowside.\n2. Electrical, civil, core cutting, scaffolding for customer scope.\n3. Any variation in site quantities will be charged extra.\n4. Payment: ${currentQuote.paymentMethod || '100% Machine with PO'}.\n5. Final bill on actual measured quantities at site.\n6. Quotation valid for 10 days.`
-              )}
-            </Text>
-
-            <View style={styles.shieldBadge}>
-              <Text style={styles.shieldText}>🛡️ Quality Cooling. Trusted Service. Every Time.</Text>
-            </View>
+          {/* 5. FIXED TERMS & CONDITIONS + PAYMENT METHOD IMAGE ASSET */}
+          <View style={styles.fixedTermsContainer}>
+            <Image
+              source={require('../../assets/quotation_terms_payment.png')}
+              style={styles.fixedTermsPaymentImg}
+              resizeMode="contain"
+            />
           </View>
 
-          {/* Footer Banner */}
-          <View style={styles.footerBanner}>
-            <Text style={styles.footerBannerText}>🤝 Thanking you and assure our best service always.</Text>
+          {/* 6. FIXED FOOTER IMAGE ASSET */}
+          <View style={styles.fixedFooterContainer}>
+            <Image
+              source={require('../../assets/quotation_footer.png')}
+              style={styles.fixedFooterImg}
+              resizeMode="contain"
+            />
           </View>
         </View>
       </ScrollView>
@@ -386,8 +415,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
       <View style={styles.stickyFooterBar}>
         <TouchableOpacity
           style={[styles.downloadBtn, isDownloading && { opacity: 0.7 }]}
-          onPress={handleDownloadPdf}
-          disabled={isDownloading}
+          onPress={handleOpenDownloadModal}
+          disabled={isDownloading || isSharing}
         >
           {isDownloading ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
@@ -398,8 +427,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
         <TouchableOpacity
           style={[styles.shareBtn, isSharing && { opacity: 0.7 }]}
-          onPress={handleSharePdf}
-          disabled={isSharing}
+          onPress={handleOpenShareModal}
+          disabled={isDownloading || isSharing}
         >
           {isSharing ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
@@ -408,6 +437,65 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Filename Customization Modal */}
+      <Modal visible={filenameModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {filenameModalMode === 'DOWNLOAD' ? 'SAVE QUOTATION AS' : 'SHARE QUOTATION AS'}
+              </Text>
+              <TouchableOpacity onPress={() => setFilenameModalVisible(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Specify filename for this PDF export. The .pdf extension is added automatically.
+            </Text>
+
+            <Text style={styles.inputLabel}>Filename</Text>
+            <View style={styles.filenameInputContainer}>
+              <TextInput
+                style={styles.filenameInput}
+                value={customFilename}
+                onChangeText={setCustomFilename}
+                placeholder="ECDIAL_Quotation_001"
+                placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <View style={styles.extensionBadge}>
+                <Text style={styles.extensionBadgeText}>.pdf</Text>
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setFilenameModalVisible(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, (isDownloading || isSharing) && { opacity: 0.7 }]}
+                onPress={handleConfirmFilenameAction}
+                disabled={isDownloading || isSharing}
+              >
+                {isDownloading || isSharing ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.modalSubmitText}>
+                    {filenameModalMode === 'DOWNLOAD' ? 'Download' : 'Share'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -480,82 +568,70 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 14,
-    paddingBottom: 24,
+    paddingBottom: 110,
   },
   stickyFooterBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     gap: 10,
-    padding: 12,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.08,
     shadowRadius: 6,
-    elevation: 4,
+    elevation: 8,
   },
   previewSheet: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#CBD5E1',
     shadowColor: '#000',
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 3,
+    overflow: 'hidden',
   },
-  topHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+  fixedHeaderContainer: {
+    width: '100%',
+    aspectRatio: 637 / 119,
+    marginBottom: 12,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  brandTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0066CC',
-    letterSpacing: 1,
+  fixedHeaderImg: {
+    width: '100%',
+    height: '100%',
   },
-  brandSub: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: 1.5,
+  fixedTermsContainer: {
+    width: '100%',
+    aspectRatio: 572 / 176,
+    marginTop: 14,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  brandDealer: {
-    fontSize: 8.5,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
+  fixedTermsPaymentImg: {
+    width: '100%',
+    height: '100%',
   },
-  dealerInfoBox: {
-    alignItems: 'flex-end',
-    flex: 1,
-    paddingLeft: 10,
+  fixedFooterContainer: {
+    width: '100%',
+    aspectRatio: 1024 / 106,
+    marginTop: 12,
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  dealerTitle: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#0A1E3F',
-    textAlign: 'right',
-  },
-  dealerText: {
-    fontSize: 9,
-    color: '#64748B',
-    textAlign: 'right',
-  },
-  dealerEmail: {
-    fontSize: 9,
-    color: '#0066CC',
-    fontWeight: '600',
-    textAlign: 'right',
-  },
-  brandDivider: {
-    height: 2.5,
-    backgroundColor: '#0066CC',
-    marginVertical: 10,
-    borderRadius: 2,
+  fixedFooterImg: {
+    width: '100%',
+    height: '100%',
   },
   customerSummaryRow: {
     flexDirection: 'row',
@@ -572,52 +648,65 @@ const styles = StyleSheet.create({
   },
   toLabel: {
     fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
+    color: '#0072BC',
+    fontWeight: '700',
   },
   customerNameText: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1E2A3C',
     marginTop: 2,
   },
   customerAddressText: {
     fontSize: 10.5,
-    color: '#475569',
+    color: '#5B6B84',
     marginTop: 2,
   },
   customerPhoneText: {
     fontSize: 10,
-    color: '#64748B',
+    color: '#5B6B84',
     marginTop: 2,
   },
   quoteCard: {
-    width: 155,
+    width: 165,
     borderRadius: 8,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#0066CC',
+    borderColor: '#DCE6EF',
   },
   quoteCardHeader: {
-    backgroundColor: '#0066CC',
+    backgroundColor: '#005A96',
     paddingVertical: 5,
     paddingHorizontal: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
   quoteCardHeaderText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 10.5,
     fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  quoteCardMeta: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderColor: '#DCE6EF',
   },
   quoteCardDate: {
-    color: '#FFFFFF',
-    fontSize: 8.5,
-    fontWeight: '700',
+    color: '#5B6B84',
+    fontSize: 8,
+    fontWeight: '600',
+  },
+  quoteCardNum: {
+    color: '#5B6B84',
+    fontSize: 8,
+    fontWeight: '600',
   },
   quoteCardBody: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     padding: 6,
     gap: 3,
   },
@@ -627,30 +716,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   quoteCardLabel: {
-    fontSize: 9.5,
-    color: '#64748B',
+    fontSize: 9,
+    color: '#5B6B84',
   },
   quoteCardVal: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#1E2A3C',
   },
   quoteCardFooter: {
-    backgroundColor: '#0A1E3F',
+    backgroundColor: '#0072BC',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 5,
     paddingHorizontal: 8,
   },
   quoteTotalLabel: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   quoteTotalVal: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '900',
   },
   sectionHeader: {
@@ -660,7 +749,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   sectionBadge: {
-    backgroundColor: '#0066CC',
+    backgroundColor: '#0072BC',
     width: 18,
     height: 18,
     borderRadius: 4,
@@ -673,24 +762,24 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   sectionTitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '900',
-    color: '#0F172A',
+    color: '#005A96',
   },
   sectionLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: '#DCE6EF',
   },
   tableBox: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#DCE6EF',
     borderRadius: 6,
     overflow: 'hidden',
   },
   tableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#0052A3',
+    backgroundColor: '#005A96',
     paddingVertical: 6,
     paddingHorizontal: 6,
     alignItems: 'center',
@@ -755,11 +844,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
   downloadBtn: {
     flex: 1,
     backgroundColor: '#0066CC',
@@ -777,6 +861,111 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   btnTextWhite: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  modalTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  modalClose: {
+    fontSize: 18,
+    color: '#64748B',
+    fontWeight: '800',
+  },
+  modalSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  inputLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  filenameInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  filenameInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  extensionBadge: {
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    borderLeftWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  extensionBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 20,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalSubmitBtn: {
+    flex: 1.5,
+    backgroundColor: '#0066CC',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalSubmitText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',

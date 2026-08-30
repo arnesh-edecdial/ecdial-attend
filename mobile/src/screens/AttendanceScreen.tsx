@@ -6,8 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   RefreshControl,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { mobileApi } from '../services/api';
+import * as Location from 'expo-location';
 import { TodayAttendanceStatus } from '../types';
 import { DynamicQRCode } from '../components/DynamicQRCode';
 
@@ -22,6 +27,7 @@ interface AttendanceScreenProps {
   onOpenAdminCalendar?: () => void;
   onOpenStock?: () => void;
   onOpenEmployees?: () => void;
+  onOpenLocationCalibration?: () => void;
   userName?: string;
   userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
 }
@@ -37,35 +43,106 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenAdminCalendar,
   onOpenStock,
   onOpenEmployees,
+  onOpenLocationCalibration,
   userName = 'Employee',
   userRole = 'EMPLOYEE',
 }) => {
   const [statusData, setStatusData] = useState<TodayAttendanceStatus | null>(null);
   const [dashboardData, setDashboardData] = useState<any | null>(null);
   const [officeQR, setOfficeQR] = useState<any | null>(null);
+  const [officeConfig, setOfficeConfig] = useState<any | null>(null);
   const [calendarDays, setCalendarDays] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isDownloadingQR, setIsDownloadingQR] = useState<boolean>(false);
   const [currentMonthName, setCurrentMonthName] = useState<string>('August 2026');
+
+  // Live Device Coordinates & Geofence Distance
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [liveDistance, setLiveDistance] = useState<number | null>(null);
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371e3;
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+    const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+      Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
 
   const fetchStatus = async () => {
     try {
       setIsLoading(true);
       const d = new Date();
-      const [statusRes, dashRes, qrRes, calRes] = await Promise.all([
+      const [statusRes, dashRes, qrRes, calRes, officeRes] = await Promise.all([
         mobileApi.getTodayStatus(),
         userRole === 'ADMIN' ? mobileApi.getTodayDashboard() : Promise.resolve(null),
         userRole === 'ADMIN' ? mobileApi.getTodayQR() : Promise.resolve(null),
         mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
+        mobileApi.getOfficeConfig().catch(() => null),
       ]);
 
       if (statusRes && statusRes.success) setStatusData(statusRes.data);
       if (dashRes && dashRes.success) setDashboardData(dashRes.data);
       if (qrRes && qrRes.success) setOfficeQR(qrRes.data);
       if (calRes && calRes.success) setCalendarDays(calRes.data.days);
+      if (officeRes && officeRes.success && officeRes.data) setOfficeConfig(officeRes.data);
+
+      // Check device GPS location
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = (await Location.getLastKnownPositionAsync()) ||
+            (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+          if (loc && loc.coords) {
+            setDeviceCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
+          }
+        }
+      } catch (locErr) {
+        console.log('[Attendance GPS Check]', locErr);
+      }
     } catch (err) {
       console.error('Failed to load status', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDownloadOfficeQR = async () => {
+    setIsDownloadingQR(true);
+    try {
+      const qrValue = officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
+      const qrImageUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qrValue)}&size=600&caption=${encodeURIComponent('ECDIAL OFFICE - Attendance QR')}&margin=2`;
+      const docDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+      const localFileUri = `${docDir}ECDIAL_Office_Attendance_QR.png`;
+
+      const result = await FileSystem.downloadAsync(qrImageUrl, localFileUri);
+      if (result && result.status === 200 && result.uri) {
+        const info = await FileSystem.getInfoAsync(result.uri);
+        if (info.exists && typeof (info as any).size === 'number' && (info as any).size > 100) {
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(result.uri, {
+              mimeType: 'image/png',
+              dialogTitle: 'ECDIAL Office Attendance QR',
+              UTI: 'public.png',
+            });
+          } else {
+            Alert.alert('✓ QR Downloaded', 'ECDIAL_Office_Attendance_QR.png saved successfully.');
+          }
+          return;
+        }
+      }
+      Alert.alert('Download Failed', 'Unable to generate QR image. Please try again.');
+    } catch (err: any) {
+      console.error('[Download QR Error]', err);
+      Alert.alert('Error', err.message || 'Failed to download QR image.');
+    } finally {
+      setIsDownloadingQR(false);
     }
   };
 
@@ -75,6 +152,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     const mNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     setCurrentMonthName(`${mNames[d.getMonth()]} ${d.getFullYear()}`);
   }, [userRole]);
+
+  useEffect(() => {
+    if (deviceCoords && (officeConfig || statusData?.office)) {
+      const officeLat = Number(officeConfig?.latitude || 11.0168);
+      const officeLon = Number(officeConfig?.longitude || 76.9558);
+      const dist = calculateDistance(deviceCoords.lat, deviceCoords.lon, officeLat, officeLon);
+      setLiveDistance(dist);
+    }
+  }, [deviceCoords, officeConfig, statusData]);
+
+  const allowedRadius = Number(officeConfig?.allowedRadiusMeters || statusData?.office?.allowedRadiusMeters || 200);
+  const isOutsidePerimeter = liveDistance !== null && liveDistance > allowedRadius;
 
   const isCheckedIn = statusData?.displayStatus === 'CHECKED_IN' || statusData?.displayStatus === 'PRESENT';
   const isCompleted = statusData?.displayStatus === 'COMPLETED';
@@ -177,38 +266,66 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* 2. OFFICE ATTENDANCE QR DISPLAY (Rules 8, 9, 10 — VISIBLE & SCANNABLE) */}
+          {/* 2. STATIC OFFICE ATTENDANCE QR DISPLAY */}
           <View style={styles.adminQrCard}>
             <View style={styles.rowBetween}>
               <View>
                 <Text style={styles.qrCardTitle}>OFFICE ATTENDANCE</Text>
                 <View style={styles.activeQrPill}>
                   <View style={styles.activeDot} />
-                  <Text style={styles.activeQrPillText}>ACTIVE QR CODE</Text>
+                  <Text style={styles.activeQrPillText}>Active Office QR</Text>
                 </View>
               </View>
-              <TouchableOpacity style={styles.regenBtn} onPress={fetchStatus}>
-                <Text style={styles.regenBtnText}>⚡ Regenerate</Text>
+              <TouchableOpacity
+                style={styles.downloadQrBtn}
+                onPress={handleDownloadOfficeQR}
+                disabled={isDownloadingQR}
+              >
+                {isDownloadingQR ? (
+                  <ActivityIndicator color="#0066CC" size="small" />
+                ) : (
+                  <Text style={styles.downloadQrBtnText}>📥 Download QR</Text>
+                )}
               </TouchableOpacity>
             </View>
 
             {/* Rendered Scannable Vector QR Code */}
             <View style={styles.qrVisualContainer}>
               <DynamicQRCode
-                value={officeQR?.token || 'ECDIAL-OFFICE-ATTENDANCE-ACTIVE-SESSION'}
-                size={160}
+                value={officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE'}
+                size={180}
               />
             </View>
 
             <Text style={styles.qrHelperText}>
-              📱 Employees scan this QR code on arrival & departure
+              📱 Employees scan this QR code for attendance
             </Text>
             <Text style={styles.qrOfficeLabel}>
-              {officeQR?.officeName || 'ECDIAL Headquarters'} • Radius: 100m • Rotates 30s
+              {officeConfig?.officeName || officeQR?.officeName || 'ECDIAL Headquarters'} • Official Attendance QR
             </Text>
           </View>
 
-          {/* 3. TODAY'S EMPLOYEE ATTENDANCE LIST (Rule 4, 5) */}
+          {/* 3. LOCATION & GEOFENCE CALIBRATION ACTION CARD */}
+          <TouchableOpacity
+            style={styles.adminCalibCard}
+            onPress={onOpenLocationCalibration}
+            activeOpacity={0.88}
+          >
+            <View style={styles.calibIconWrapper}>
+              <Text style={{ fontSize: 22 }}>📍</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.calibTitle}>Office Geofence & Location</Text>
+              <Text style={styles.calibSubtitle}>
+                Perimeter: {allowedRadius}m • {officeConfig?.officeName || 'ECDIAL Headquarters'}
+              </Text>
+            </View>
+            <View style={styles.calibActionBtn}>
+              <Text style={styles.calibActionText}>Calibrate ›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* 4. TODAY'S EMPLOYEE ATTENDANCE LIST (Rule 4, 5) */}
           <View style={styles.employeeListCard}>
             <View style={styles.rowBetween}>
               <Text style={styles.sectionHeaderTitle}>Today's Employees</Text>
@@ -387,19 +504,82 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
+          {/* LIVE GEOFENCE PERIMETER BADGE */}
+          {liveDistance !== null && !isCompanyLeave && (
+            <View
+              style={[
+                styles.perimeterStatusCard,
+                {
+                  backgroundColor: isOutsidePerimeter ? '#FEF2F2' : '#ECFDF5',
+                  borderColor: isOutsidePerimeter ? '#FECACA' : '#A7F3D0',
+                },
+              ]}
+            >
+              <Text style={{ fontSize: 18 }}>{isOutsidePerimeter ? '⚠️' : '📍'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.perimeterStatusTitle,
+                    { color: isOutsidePerimeter ? '#B91C1C' : '#065F46' },
+                  ]}
+                >
+                  {isOutsidePerimeter
+                    ? `Outside Office Perimeter (${liveDistance}m away)`
+                    : `Within Office Perimeter (${liveDistance}m away)`}
+                </Text>
+                <Text style={styles.perimeterStatusSub}>
+                  {isOutsidePerimeter
+                    ? `You are outside the ${allowedRadius}m allowed perimeter for ${officeConfig?.officeName || statusData?.office?.officeName || 'ECDIAL Office'}. QR scan is disabled.`
+                    : `QR scan is available within the allowed ${allowedRadius}m office boundary.`}
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* MAIN QR SCAN BANNER */}
           {!isCompanyLeave ? (
-            <TouchableOpacity style={styles.scanBanner} onPress={onOpenScanner} activeOpacity={0.88}>
-              <View style={styles.scanIconBox}>
-                <Text style={{ fontSize: 24 }}>🔲</Text>
+            <TouchableOpacity
+              style={[
+                styles.scanBanner,
+                isOutsidePerimeter && styles.scanBannerOutside,
+              ]}
+              onPress={() => {
+                if (isOutsidePerimeter) {
+                  Alert.alert(
+                    '📍 Outside Office Perimeter',
+                    `You are ${liveDistance}m away from the office (${allowedRadius}m allowed).\n\nQR attendance check-in is not permitted from outside the office. Please submit an attendance request instead.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Request Attendance',
+                        onPress: () => onOpenRequest(undefined, isCheckedIn ? 'CLOSING' : 'TODAY'),
+                      },
+                    ]
+                  );
+                } else {
+                  onOpenScanner();
+                }
+              }}
+              activeOpacity={0.88}
+            >
+              <View style={[styles.scanIconBox, isOutsidePerimeter && { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
+                <Text style={{ fontSize: 24 }}>{isOutsidePerimeter ? '🔒' : '🔲'}</Text>
               </View>
 
               <View style={styles.scanBannerText}>
                 <Text style={styles.scanBannerTitle}>
-                  {isCheckedIn ? 'Scan QR to Check Out' : 'Scan QR to Check In'}
+                  {isOutsidePerimeter
+                    ? 'QR Scan Disabled (Outside Office)'
+                    : isCheckedIn
+                    ? 'Scan QR to Check Out'
+                    : 'Scan QR to Check In'}
                 </Text>
                 <Text style={styles.scanBannerSub}>
-                  {isCheckedIn ? 'Scan office QR code to end your day' : 'Scan office QR code to start your day'}
+                  {isOutsidePerimeter
+                    ? `Must be within ${allowedRadius}m to scan QR`
+                    : isCheckedIn
+                    ? 'Scan office QR code to end your day'
+                    : 'Scan office QR code to start your day'}
                 </Text>
               </View>
 
@@ -442,14 +622,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           <TouchableOpacity
             style={[
               styles.requestButtonMain,
+              isOutsidePerimeter && styles.requestButtonProminent,
               hasActiveRequest && styles.requestButtonDisabled,
             ]}
             onPress={() => onOpenRequest(undefined, isCheckedIn ? 'CLOSING' : 'TODAY')}
             disabled={hasActiveRequest}
           >
-            <Text style={styles.requestButtonText}>
+            <Text style={[styles.requestButtonText, isOutsidePerimeter && { color: '#FFFFFF' }]}>
               {hasActiveRequest
                 ? 'UNDER APPROVAL'
+                : isOutsidePerimeter
+                ? '📝 Submit Attendance / Remote Request'
                 : isCheckedIn
                 ? 'Request Closing / Offsite'
                 : 'Request Attendance'}
@@ -645,16 +828,18 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: '800',
   },
-  regenBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  downloadQrBtn: {
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
-  regenBtnText: {
-    color: '#FFFFFF',
+  downloadQrBtnText: {
+    color: '#0066CC',
     fontSize: 11.5,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   qrVisualContainer: {
     marginVertical: 14,
@@ -1120,5 +1305,82 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  adminCalibCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  calibIconWrapper: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  calibTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  calibSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  calibActionBtn: {
+    backgroundColor: '#0066CC',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  calibActionText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  perimeterStatusCard: {
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  perimeterStatusTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  perimeterStatusSub: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 2,
+  },
+  scanBannerOutside: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1,
+  },
+  requestButtonProminent: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+    shadowColor: '#0066CC',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
 });

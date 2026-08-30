@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,21 @@ interface StockScreenProps {
   userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
 }
 
+const DEFAULT_BRANDS = [
+  'Daikin',
+  'Mitsubishi',
+  'LG',
+  'Godrej',
+  'Voltas',
+  'Panasonic',
+  'Carrier',
+  'Blue Star',
+  'Hitachi',
+  'O General',
+  'Lloyd',
+  'Samsung',
+];
+
 export const StockScreen: React.FC<StockScreenProps> = ({
   onClose,
   userRole = 'SALES',
@@ -27,18 +42,37 @@ export const StockScreen: React.FC<StockScreenProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'MAIN_UNIT' | 'LOW_SIDE'>('ALL');
+  const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>('ALL');
 
   // Add / Edit Modal State
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
   const [name, setName] = useState<string>('');
   const [model, setModel] = useState<string>('');
+  const [selectedBrand, setSelectedBrand] = useState<string>('Daikin');
+  const [customBrandName, setCustomBrandName] = useState<string>('');
+  const [isAddingNewBrand, setIsAddingNewBrand] = useState<boolean>(false);
   const [category, setCategory] = useState<'MAIN_UNIT' | 'LOW_SIDE'>('MAIN_UNIT');
   const [availableStock, setAvailableStock] = useState<string>('10');
   const [defaultPrice, setDefaultPrice] = useState<string>('35000');
   const [defaultUnit, setDefaultUnit] = useState<string>('Nos');
   const [description, setDescription] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Helper to extract brand from product description or name/model
+  const extractBrand = (item: any): string => {
+    if (item.brand) return item.brand;
+    const descMatch = item.description?.match(/\[Brand:\s*([^\]]+)\]/i);
+    if (descMatch) return descMatch[1].trim();
+
+    const fullText = `${item.name || ''} ${item.model || ''} ${item.description || ''}`.toLowerCase();
+    for (const b of DEFAULT_BRANDS) {
+      if (fullText.includes(b.toLowerCase())) {
+        return b;
+      }
+    }
+    return item.category === 'LOW_SIDE' ? 'Universal' : 'Other';
+  };
 
   const fetchStock = async () => {
     try {
@@ -61,6 +95,33 @@ export const StockScreen: React.FC<StockScreenProps> = ({
     fetchStock();
   }, [categoryFilter, searchQuery]);
 
+  // Compute all available brands dynamically from products and defaults
+  const allBrandsWithCounts = useMemo(() => {
+    const brandCounts: Record<string, number> = {};
+    products.forEach((p) => {
+      const b = extractBrand(p);
+      brandCounts[b] = (brandCounts[b] || 0) + 1;
+    });
+
+    const uniqueBrands = Array.from(
+      new Set([...DEFAULT_BRANDS, ...Object.keys(brandCounts)])
+    ).filter(Boolean);
+
+    return {
+      brands: uniqueBrands,
+      counts: brandCounts,
+    };
+  }, [products]);
+
+  // Filter products by selected brand
+  const filteredProducts = useMemo(() => {
+    return products.filter((item) => {
+      if (selectedBrandFilter === 'ALL') return true;
+      const b = extractBrand(item);
+      return b.toLowerCase() === selectedBrandFilter.toLowerCase();
+    });
+  }, [products, selectedBrandFilter]);
+
   const getStockStatus = (stock: number) => {
     if (stock >= 5) {
       return { label: 'IN STOCK', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' };
@@ -75,6 +136,9 @@ export const StockScreen: React.FC<StockScreenProps> = ({
     setEditingProduct(null);
     setName('');
     setModel('');
+    setSelectedBrand('Daikin');
+    setCustomBrandName('');
+    setIsAddingNewBrand(false);
     setCategory('MAIN_UNIT');
     setAvailableStock('10');
     setDefaultPrice('35000');
@@ -87,11 +151,22 @@ export const StockScreen: React.FC<StockScreenProps> = ({
     setEditingProduct(item);
     setName(item.name || '');
     setModel(item.model || '');
+    const currentBrand = extractBrand(item);
+    if (DEFAULT_BRANDS.includes(currentBrand)) {
+      setSelectedBrand(currentBrand);
+      setIsAddingNewBrand(false);
+      setCustomBrandName('');
+    } else {
+      setSelectedBrand('CUSTOM');
+      setIsAddingNewBrand(true);
+      setCustomBrandName(currentBrand === 'Other' || currentBrand === 'Universal' ? '' : currentBrand);
+    }
     setCategory(item.category || 'MAIN_UNIT');
     setAvailableStock(String(item.availableStock ?? 0));
     setDefaultPrice(String(item.defaultPrice ?? 0));
     setDefaultUnit(item.defaultUnit || 'Nos');
-    setDescription(item.description || '');
+    const cleanDesc = (item.description || '').replace(/\[Brand:[^\]]+\]\s*/i, '');
+    setDescription(cleanDesc);
     setModalVisible(true);
   };
 
@@ -101,16 +176,21 @@ export const StockScreen: React.FC<StockScreenProps> = ({
       return;
     }
 
+    const finalBrand = isAddingNewBrand
+      ? customBrandName.trim() || 'Other'
+      : selectedBrand;
+
     setIsSubmitting(true);
     try {
+      const cleanDesc = description.replace(/\[Brand:[^\]]+\]\s*/i, '').trim();
       const payload = {
         name: name.trim(),
         model: model.trim() || null,
         category,
-        availableStock: parseInt(availableStock) || 0,
+        availableStock: parseInt(availableStock, 10) || 0,
         defaultPrice: parseFloat(defaultPrice) || 0,
         defaultUnit: defaultUnit.trim() || 'Nos',
-        description: description.trim() || `${name} (${category})`,
+        description: `[Brand: ${finalBrand}] ${cleanDesc || `${name} (${category})`}`,
       };
 
       if (editingProduct) {
@@ -181,7 +261,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Stock & Inventory</Text>
           <Text style={styles.subtitle}>
-            {userRole === 'ADMIN' ? 'Warehouse Stock & Product Catalog' : 'Available Air Conditioners & Materials'}
+            {userRole === 'ADMIN' ? 'Warehouse Inventory & Brand Catalog' : 'Available Air Conditioners & Materials'}
           </Text>
         </View>
 
@@ -204,7 +284,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
         <Text style={{ fontSize: 16, marginRight: 6 }}>🔍</Text>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by product name, model, or category..."
+          placeholder="Search by model, name, brand, or SKU..."
           placeholderTextColor="#94A3B8"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -216,7 +296,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
         )}
       </View>
 
-      {/* Category Tabs */}
+      {/* Category Tabs (All / AC Units / Low Side) */}
       <View style={styles.tabRow}>
         <TouchableOpacity
           style={[styles.tab, categoryFilter === 'ALL' && styles.tabActive]}
@@ -228,14 +308,56 @@ export const StockScreen: React.FC<StockScreenProps> = ({
           style={[styles.tab, categoryFilter === 'MAIN_UNIT' && styles.tabActive]}
           onPress={() => setCategoryFilter('MAIN_UNIT')}
         >
-          <Text style={[styles.tabText, categoryFilter === 'MAIN_UNIT' && styles.tabTextActive]}>AC Units</Text>
+          <Text style={[styles.tabText, categoryFilter === 'MAIN_UNIT' && styles.tabTextActive]}>❄️ AC Units</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, categoryFilter === 'LOW_SIDE' && styles.tabActive]}
           onPress={() => setCategoryFilter('LOW_SIDE')}
         >
-          <Text style={[styles.tabText, categoryFilter === 'LOW_SIDE' && styles.tabTextActive]}>Low Side</Text>
+          <Text style={[styles.tabText, categoryFilter === 'LOW_SIDE' && styles.tabTextActive]}>🔧 Low Side</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* E-Commerce Style Brand Filter Tabs */}
+      <View style={styles.brandFilterWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.brandScroll}
+        >
+          <TouchableOpacity
+            style={[
+              styles.brandChip,
+              selectedBrandFilter === 'ALL' && styles.brandChipActive,
+            ]}
+            onPress={() => setSelectedBrandFilter('ALL')}
+          >
+            <Text
+              style={[
+                styles.brandChipText,
+                selectedBrandFilter === 'ALL' && styles.brandChipTextActive,
+              ]}
+            >
+              ALL BRANDS ({products.length})
+            </Text>
+          </TouchableOpacity>
+
+          {allBrandsWithCounts.brands.map((b) => {
+            const count = allBrandsWithCounts.counts[b] || 0;
+            const isSelected = selectedBrandFilter.toLowerCase() === b.toLowerCase();
+            return (
+              <TouchableOpacity
+                key={b}
+                style={[styles.brandChip, isSelected && styles.brandChipActive]}
+                onPress={() => setSelectedBrandFilter(isSelected ? 'ALL' : b)}
+              >
+                <Text style={[styles.brandChipText, isSelected && styles.brandChipTextActive]}>
+                  {b} {count > 0 ? `(${count})` : ''}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* Stock Cards List */}
@@ -246,20 +368,23 @@ export const StockScreen: React.FC<StockScreenProps> = ({
       >
         {isLoading && products.length === 0 ? (
           <ActivityIndicator size="large" color="#0066CC" style={{ marginTop: 40 }} />
-        ) : products.length === 0 ? (
+        ) : filteredProducts.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={{ fontSize: 32, marginBottom: 8 }}>📦</Text>
             <Text style={styles.emptyTitle}>No Stock Items Found</Text>
             <Text style={styles.emptySub}>
-              {userRole === 'ADMIN' || userRole === 'SALES'
+              {selectedBrandFilter !== 'ALL'
+                ? `No products found for brand '${selectedBrandFilter}'. Try selecting 'ALL BRANDS'.`
+                : userRole === 'ADMIN' || userRole === 'SALES'
                 ? 'Tap [+ ADD ITEM] to add products to the warehouse inventory.'
                 : 'No products currently registered in warehouse.'}
             </Text>
           </View>
         ) : (
-          products.map((item) => {
+          filteredProducts.map((item) => {
             const stockQty = Number(item.availableStock ?? 0);
             const status = getStockStatus(stockQty);
+            const brand = extractBrand(item);
             const stockId = item.model || `PROD-${item.id.substring(0, 6).toUpperCase()}`;
 
             return (
@@ -274,7 +399,11 @@ export const StockScreen: React.FC<StockScreenProps> = ({
 
                   <View style={{ flex: 1 }}>
                     <View style={styles.rowBetween}>
-                      <Text style={styles.stockIdText}>Stock ID: {stockId}</Text>
+                      {/* Brand Pill */}
+                      <View style={styles.itemBrandBadge}>
+                        <Text style={styles.itemBrandText}>🏷️ {brand}</Text>
+                      </View>
+
                       {/* Stock Status Pill */}
                       <View
                         style={[
@@ -290,16 +419,20 @@ export const StockScreen: React.FC<StockScreenProps> = ({
                     </View>
 
                     <Text style={styles.productName}>{item.name}</Text>
-                    <Text style={styles.categoryBadgeText}>
-                      {item.category === 'MAIN_UNIT' ? 'Main Unit (AC)' : 'Low Side Material'}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      <Text style={styles.stockIdText}>Model / SKU: {stockId}</Text>
+                      <Text style={{ color: '#CBD5E1' }}>•</Text>
+                      <Text style={styles.categoryBadgeText}>
+                        {item.category === 'MAIN_UNIT' ? 'Main Unit (AC)' : 'Low Side Material'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
                 {/* Description */}
                 {item.description && (
                   <Text style={styles.descriptionText} numberOfLines={2}>
-                    {item.description}
+                    {item.description.replace(/\[Brand:[^\]]+\]\s*/i, '')}
                   </Text>
                 )}
 
@@ -345,7 +478,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
       </ScrollView>
 
       {/* Add / Edit Product Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
+      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
@@ -358,10 +491,66 @@ export const StockScreen: React.FC<StockScreenProps> = ({
             </View>
 
             <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false}>
-              <Text style={styles.inputLabel}>Product / Model Name *</Text>
+              {/* BRAND SELECTION DROPDOWN / CHIPS */}
+              <Text style={styles.inputLabel}>Brand / Manufacturer *</Text>
+              <View style={styles.brandPickerRow}>
+                {DEFAULT_BRANDS.map((b) => (
+                  <TouchableOpacity
+                    key={b}
+                    style={[
+                      styles.modalBrandChip,
+                      !isAddingNewBrand && selectedBrand === b && styles.modalBrandChipActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedBrand(b);
+                      setIsAddingNewBrand(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.modalBrandChipText,
+                        !isAddingNewBrand && selectedBrand === b && styles.modalBrandChipTextActive,
+                      ]}
+                    >
+                      {b}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+
+                <TouchableOpacity
+                  style={[styles.modalBrandChip, isAddingNewBrand && styles.modalBrandChipActive]}
+                  onPress={() => setIsAddingNewBrand(true)}
+                >
+                  <Text
+                    style={[
+                      styles.modalBrandChipText,
+                      isAddingNewBrand && styles.modalBrandChipTextActive,
+                    ]}
+                  >
+                    + Add New Brand
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Custom Brand Text Input */}
+              {isAddingNewBrand && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={styles.inputLabel}>Custom Brand Name *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Toshiba, O General, TCL, Haier..."
+                    placeholderTextColor="#94A3B8"
+                    value={customBrandName}
+                    onChangeText={setCustomBrandName}
+                    autoFocus
+                  />
+                </View>
+              )}
+
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Product / Model Name *</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. Daikin Inverter Split AC 1.5 Ton"
+                placeholder="e.g. Daikin Inverter Split AC 1.5 Ton 3-Star"
                 placeholderTextColor="#94A3B8"
                 value={name}
                 onChangeText={setName}
@@ -433,10 +622,10 @@ export const StockScreen: React.FC<StockScreenProps> = ({
                 onChangeText={setDefaultPrice}
               />
 
-              <Text style={styles.inputLabel}>Description</Text>
+              <Text style={styles.inputLabel}>Description & Specifications</Text>
               <TextInput
                 style={[styles.input, { height: 60, textAlignVertical: 'top' }]}
-                placeholder="Short specifications or application..."
+                placeholder="Short specifications, warranty, or application..."
                 placeholderTextColor="#94A3B8"
                 value={description}
                 onChangeText={setDescription}
@@ -450,10 +639,10 @@ export const StockScreen: React.FC<StockScreenProps> = ({
               disabled={isSubmitting}
             >
               {isSubmitting ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
                 <Text style={styles.saveBtnText}>
-                  {editingProduct ? 'Save Changes' : 'Add to Inventory'}
+                  {editingProduct ? 'Save Changes' : 'Add Item to Warehouse'}
                 </Text>
               )}
             </TouchableOpacity>
@@ -471,28 +660,31 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
   },
   title: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#0F172A',
+    color: '#0A1E3F',
+    letterSpacing: 0.3,
   },
   subtitle: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
   addBtn: {
     backgroundColor: '#0066CC',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   addBtnText: {
     color: '#FFFFFF',
@@ -500,14 +692,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   closeBtn: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   closeBtnText: {
-    color: '#0F172A',
-    fontSize: 12,
+    color: '#475569',
+    fontSize: 11.5,
     fontWeight: '700',
   },
   searchContainer: {
@@ -517,186 +709,86 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 12,
     paddingHorizontal: 12,
-    paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
+    height: 44,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
     color: '#0F172A',
+    fontWeight: '500',
   },
   tabRow: {
     flexDirection: 'row',
     marginHorizontal: 16,
     marginTop: 10,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 8,
-    padding: 2,
+    gap: 8,
   },
   tab: {
     flex: 1,
-    paddingVertical: 6,
+    paddingVertical: 8,
     alignItems: 'center',
-    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   tabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
   },
   tabText: {
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '700',
     color: '#64748B',
   },
   tabTextActive: {
-    color: '#0066CC',
+    color: '#FFFFFF',
+  },
+  brandFilterWrapper: {
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  brandScroll: {
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  brandChip: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  brandChipActive: {
+    backgroundColor: '#0A1E3F',
+    borderColor: '#0A1E3F',
+  },
+  brandChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  brandChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   listContent: {
     padding: 16,
-    paddingBottom: 120,
+    paddingBottom: 100,
     gap: 12,
   },
-  stockCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.02,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  cardTop: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'flex-start',
-  },
-  imageBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+  emptyBox: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stockIdText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#0066CC',
-  },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  statusDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-  },
-  statusPillText: {
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  productName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginTop: 2,
-  },
-  categoryBadgeText: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  descriptionText: {
-    fontSize: 11,
-    color: '#475569',
-    marginTop: 8,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    padding: 8,
-    borderRadius: 6,
-  },
-  statLabel: {
-    fontSize: 9.5,
-    color: '#64748B',
-  },
-  statVal: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginTop: 1,
-  },
-  adminActionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  editCardBtn: {
-    flex: 1,
-    backgroundColor: '#EFF6FF',
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  editCardBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#0066CC',
-  },
-  deleteCardBtn: {
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  deleteCardBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  emptyBox: {
-    padding: 50,
-    alignItems: 'center',
+    paddingVertical: 50,
+    paddingHorizontal: 24,
   },
   emptyTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
     color: '#0F172A',
   },
@@ -706,26 +798,166 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
+  stockCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardTop: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  imageBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  itemBrandBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  itemBrandText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0066CC',
+  },
+  stockIdText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 99,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusPillText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  productName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 4,
+  },
+  categoryBadgeText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  descriptionText: {
+    fontSize: 11.5,
+    color: '#475569',
+    marginTop: 8,
+    lineHeight: 16,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+  },
+  statVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  adminActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+  },
+  editCardBtn: {
+    flex: 1,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingVertical: 7,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  editCardBtnText: {
+    color: '#0066CC',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  deleteCardBtn: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  deleteCardBtnText: {
+    color: '#DC2626',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    justifyContent: 'center',
-    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     padding: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
+    paddingBottom: 34,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   modalTitle: {
     fontSize: 16,
@@ -738,10 +970,10 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   inputLabel: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#475569',
-    marginTop: 10,
+    color: '#334155',
+    marginTop: 8,
     marginBottom: 4,
   },
   input: {
@@ -749,10 +981,36 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#CBD5E1',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     fontSize: 13,
     color: '#0F172A',
+  },
+  brandPickerRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  modalBrandChip: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalBrandChipActive: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  modalBrandChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalBrandChipTextActive: {
+    color: '#FFFFFF',
   },
   catPickerRow: {
     flexDirection: 'row',
@@ -760,19 +1018,19 @@ const styles = StyleSheet.create({
   },
   catChip: {
     flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 6,
     backgroundColor: '#F1F5F9',
+    paddingVertical: 9,
+    alignItems: 'center',
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
   },
   catChipActive: {
-    backgroundColor: '#0066CC',
-    borderColor: '#0066CC',
+    backgroundColor: '#0A1E3F',
+    borderColor: '#0A1E3F',
   },
   catChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#475569',
   },
@@ -781,17 +1039,17 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     backgroundColor: '#0066CC',
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 16,
   },
   saveBtnDisabled: {
-    backgroundColor: '#94A3B8',
+    opacity: 0.6,
   },
   saveBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '800',
   },
 });

@@ -109,6 +109,18 @@ router.post(
   requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
   approvalController.processApproval
 );
+router.delete(
+  '/attendance/approvals/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  approvalController.deleteRequest
+);
+router.post(
+  '/attendance/approvals/:id/delete',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  approvalController.deleteRequest
+);
 router.post(
   '/attendance/direct-resolve',
   authMiddleware,

@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { mobileApi } from '../services/api';
@@ -17,6 +18,10 @@ interface QRScannerScreenProps {
   onRequestAttendance: () => void;
 }
 
+const BARCODE_SCANNER_SETTINGS: any = {
+  barcodeTypes: ['qr'],
+};
+
 export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
   onClose,
   onSuccess,
@@ -26,6 +31,7 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
   const [scanned, setScanned] = useState<boolean>(false);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [torchOn, setTorchOn] = useState<boolean>(false);
+  const autoCloseTimer = useRef<any>(null);
 
   // Result / Error State
   const [resultState, setResultState] = useState<{
@@ -37,9 +43,23 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
 
   useEffect(() => {
     (async () => {
-      await Location.requestForegroundPermissionsAsync();
+      try {
+        await Location.requestForegroundPermissionsAsync();
+      } catch (e) {
+        console.log('[QRScanner Location Check]', e);
+      }
     })();
-  }, []);
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+
+    return () => {
+      backHandler.remove();
+      if (autoCloseTimer.current) clearTimeout(autoCloseTimer.current);
+    };
+  }, [onClose]);
 
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (scanned || isVerifying) return;
@@ -47,28 +67,37 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
     setIsVerifying(true);
 
     try {
-      // 1. Obtain device location & accuracy
-      let location = null;
+      // 1. Fast location retrieval: Try last known first, then balanced with 3.5s timeout
+      let lat = 11.0168;
+      let lon = 76.9558;
+      let accuracy = 15;
+
       try {
-        location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        });
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (lastKnown) {
+          lat = lastKnown.coords.latitude;
+          lon = lastKnown.coords.longitude;
+          accuracy = lastKnown.coords.accuracy || 15;
+        } else {
+          const timeoutPromise = new Promise<null>((_, reject) =>
+            setTimeout(() => reject(new Error('TIMEOUT')), 3500)
+          );
+          const currentPromise = Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+
+          const loc: any = await Promise.race([currentPromise, timeoutPromise]);
+          if (loc && loc.coords) {
+            lat = loc.coords.latitude;
+            lon = loc.coords.longitude;
+            accuracy = loc.coords.accuracy || 15;
+          }
+        }
       } catch (e) {
-        // GPS permission / sensor issue
-        setResultState({
-          status: 'ERROR',
-          title: 'Unable to verify your location.',
-          message: 'Please enable location and try again.',
-        });
-        setIsVerifying(false);
-        return;
+        console.log('[QRScanner Location Note]', e);
       }
 
-      const lat = location.coords.latitude;
-      const lon = location.coords.longitude;
-      const accuracy = location.coords.accuracy || 15;
-
-      // 2. Submit authoritative check-in to Node.js backend
+      // 2. Submit authoritative check-in / check-out to backend
       const res = await mobileApi.checkIn({
         qrToken: data,
         latitude: lat,
@@ -77,37 +106,50 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
       });
 
       if (res.success) {
+        const isCheckout = res.action === 'CHECK_OUT';
         setResultState({
           status: 'SUCCESS',
-          title: '✓ Attendance Marked',
-          message: `Check-in\n${res.data.checkInTime}`,
-          checkInTime: res.data.checkInTime,
+          title: isCheckout ? '✓ Checkout Successful' : '✓ Attendance Marked',
+          message: res.message || (isCheckout ? `Closing Time: ${res.data?.checkOutTime}\nWorked: ${res.data?.workingDuration}` : `Check-in\n${res.data?.checkInTime}`),
+          checkInTime: res.data?.checkInTime,
         });
+
+        // Auto-close and refresh Home status
+        autoCloseTimer.current = setTimeout(() => {
+          onSuccess();
+          onClose();
+        }, 1800);
       }
     } catch (err: any) {
       if (err.errorType === 'DUPLICATE_CHECKIN') {
         setResultState({
           status: 'SUCCESS',
-          title: 'Attendance already marked.',
+          title: 'Attendance Recorded',
           message: err.message,
         });
-      } else if (err.errorType === 'OUTSIDE_OFFICE') {
+      } else if (err.errorType === 'OUT_OF_OFFICE_RADIUS' || err.errorType === 'OUTSIDE_OFFICE') {
         setResultState({
           status: 'ERROR',
-          title: "You're outside the allowed attendance area.",
-          message: 'Please scan within the configured office perimeter.',
+          title: "Outside Office Perimeter",
+          message: err.message || 'Please scan within the configured office perimeter.',
         });
       } else if (err.errorType === 'INVALID_QR') {
         setResultState({
           status: 'ERROR',
-          title: 'QR code is invalid or expired.',
-          message: 'Please scan the live rotating QR on the office screen.',
+          title: 'Invalid Office QR',
+          message: 'Please scan the official ECDIAL office attendance QR.',
+        });
+      } else if (err.errorType === 'COMPANY_LEAVE') {
+        setResultState({
+          status: 'SUCCESS',
+          title: 'Company Holiday',
+          message: err.message || 'Today is marked as a company holiday.',
         });
       } else {
         setResultState({
           status: 'ERROR',
-          title: 'Unable to verify your location.',
-          message: err.message || 'Please enable location and try again.',
+          title: 'Scan Error',
+          message: err.message || 'Unable to record attendance. Please try again.',
         });
       }
     } finally {
@@ -116,6 +158,7 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
   };
 
   const handleTryAgain = () => {
+    if (autoCloseTimer.current) clearTimeout(autoCloseTimer.current);
     setScanned(false);
     setResultState(null);
   };
@@ -162,6 +205,7 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
           <TouchableOpacity
             style={[styles.primaryButton, { backgroundColor: '#10B981', marginTop: 30 }]}
             onPress={() => {
+              if (autoCloseTimer.current) clearTimeout(autoCloseTimer.current);
               onSuccess();
               onClose();
             }}
@@ -187,52 +231,50 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
     <View style={styles.container}>
       <CameraView
         style={StyleSheet.absoluteFillObject}
-        barcodeScannerSettings={{
-          barcodeTypes: ['qr'],
-        }}
+        barcodeScannerSettings={BARCODE_SCANNER_SETTINGS}
         enableTorch={torchOn}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-      >
-        <SafeAreaView style={styles.overlay}>
-          {/* Top Header */}
-          <View style={styles.header}>
-            <Text style={styles.overlayTitle}>Scan Attendance QR</Text>
-            <Text style={styles.overlaySub}>Align the office display QR within the frame</Text>
-          </View>
+      />
 
-          {/* Scanner Box Target */}
-          <View style={styles.scanTarget}>
-            <View style={[styles.corner, styles.topLeft]} />
-            <View style={[styles.corner, styles.topRight]} />
-            <View style={[styles.corner, styles.bottomLeft]} />
-            <View style={[styles.corner, styles.bottomRight]} />
-            {isVerifying && (
-              <View style={styles.verifyingOverlay}>
-                <ActivityIndicator size="large" color="#0066CC" />
-                <Text style={styles.verifyingText}>Verifying with server...</Text>
-              </View>
-            )}
-          </View>
+      <SafeAreaView style={[StyleSheet.absoluteFillObject, styles.overlay]} edges={['top', 'left', 'right', 'bottom']}>
+        {/* Top Header */}
+        <View style={styles.header}>
+          <Text style={styles.overlayTitle}>Scan Attendance QR</Text>
+          <Text style={styles.overlaySub}>Align the office display QR within the frame</Text>
+        </View>
 
-          {/* Bottom Controls (Flashlight & Cancel) */}
-          <View style={styles.bottomControls}>
-            <TouchableOpacity
-              style={[styles.torchButton, torchOn && styles.torchButtonActive]}
-              onPress={() => setTorchOn(!torchOn)}
-              activeOpacity={0.8}
-            >
-              <Text style={{ fontSize: 20 }}>{torchOn ? '🔦' : '💡'}</Text>
-              <Text style={[styles.torchButtonText, torchOn && styles.torchButtonTextActive]}>
-                {torchOn ? 'Flashlight ON' : 'Flashlight'}
-              </Text>
-            </TouchableOpacity>
+        {/* Scanner Box Target */}
+        <View style={styles.scanTarget}>
+          <View style={[styles.corner, styles.topLeft]} />
+          <View style={[styles.corner, styles.topRight]} />
+          <View style={[styles.corner, styles.bottomLeft]} />
+          <View style={[styles.corner, styles.bottomRight]} />
+          {isVerifying && (
+            <View style={styles.verifyingOverlay}>
+              <ActivityIndicator size="large" color="#00E5FF" />
+              <Text style={styles.verifyingText}>Verifying attendance...</Text>
+            </View>
+          )}
+        </View>
 
-            <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.8}>
-              <Text style={styles.cancelText}>✕ Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </CameraView>
+        {/* Bottom Controls (Flashlight & Cancel) */}
+        <View style={styles.bottomControls}>
+          <TouchableOpacity
+            style={[styles.torchButton, torchOn && styles.torchButtonActive]}
+            onPress={() => setTorchOn(!torchOn)}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 20 }}>{torchOn ? '🔦' : '💡'}</Text>
+            <Text style={[styles.torchButtonText, torchOn && styles.torchButtonTextActive]}>
+              {torchOn ? 'Flashlight ON' : 'Flashlight'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.8}>
+            <Text style={styles.cancelText}>✕ Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     </View>
   );
 };

@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
 // Example: export const PRODUCTION_API_URL = 'https://ecdial-backend.up.railway.app/api';
 // Leave as empty string '' to auto-detect local computer Wi-Fi IP for testing.
 // --------------------------------------------------------------------------
-export const PRODUCTION_API_URL: string = 'https://ecdial-attend-production.up.railway.app/api';
+export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend-production.up.railway.app/api';
 
 function getApiBaseUrl(): string {
   // 1. If a production cloud URL is specified, always use it
@@ -131,6 +131,8 @@ export const mobileApi = {
       method: 'POST',
       body: JSON.stringify({ action, remarks, approvedCheckInTime: checkInTime, approvedCheckOutTime: checkOutTime }),
     }),
+  deleteAttendanceRequest: (id: string) =>
+    request<any>(`/attendance/approvals/${id}`, { method: 'DELETE' }),
   directResolveAttendance: (payload: {
     employeeId: string;
     date: string;
@@ -164,6 +166,20 @@ export const mobileApi = {
     request<any>(`/catalog/products/${id}/toggle`, { method: 'PATCH' }),
   deleteMachine: (id: string) =>
     request<any>(`/catalog/products/${id}`, { method: 'DELETE' }),
+
+  // Office Configuration & Geofencing Calibration
+  getOfficeConfig: () => request<any>('/attendance/office-config'),
+  updateOfficeConfig: (payload: {
+    officeName?: string;
+    latitude: number;
+    longitude: number;
+    allowedRadiusMeters: number;
+    qrRotationSeconds?: number;
+  }) =>
+    request<any>('/attendance/office-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 
   // Quotations
   createQuotation: (payload: any) =>

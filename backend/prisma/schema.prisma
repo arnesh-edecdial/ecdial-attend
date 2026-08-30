@@ -14,6 +14,9 @@ enum Role {
   ACCOUNTANT
   ADMIN
   IT_ADMIN
+  CRM
+  SERVICE_MANAGER
+  HR
 }
 
 model User {

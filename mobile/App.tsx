@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   StatusBar,
   BackHandler,
+  Platform,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { AttendanceScreen } from './src/screens/AttendanceScreen';
 import { QRScannerScreen } from './src/screens/QRScannerScreen';
@@ -21,17 +22,18 @@ import { QuotationListScreen } from './src/screens/QuotationListScreen';
 import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
 import { AdminEmployeesScreen } from './src/screens/AdminEmployeesScreen';
+import { AdminLocationCalibrationScreen } from './src/screens/AdminLocationCalibrationScreen';
 import { AppDrawer } from './src/components/AppDrawer';
 import { setActiveEmployeeId, setAuthToken } from './src/services/api';
 import { Quotation } from './src/types';
 
-export default function App() {
+function MainApp() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
     'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS'
   >('HOME');
   const [activeModal, setActiveModal] = useState<
-    'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE'
+    'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION'
   >('NONE');
 
   const [drawerVisible, setDrawerVisible] = useState<boolean>(false);
@@ -40,6 +42,7 @@ export default function App() {
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
   const [activeUserRole, setActiveUserRole] = useState<'ADMIN' | 'SALES' | 'EMPLOYEE'>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
+  const [refreshKey, setRefreshKey] = useState<number>(0);
 
   // Android Hardware Back Button Handling
   useEffect(() => {
@@ -75,6 +78,9 @@ export default function App() {
       ADMIN: 'ADMIN',
       IT_ADMIN: 'ADMIN',
       MANAGER: 'ADMIN',
+      SERVICE_MANAGER: 'ADMIN',
+      HR: 'ADMIN',
+      CRM: 'SALES',
       SALES: 'SALES',
       TECHNICIAN: 'EMPLOYEE',
       ACCOUNTANT: 'EMPLOYEE',
@@ -97,37 +103,51 @@ export default function App() {
   };
 
   const handleDrawerNavigate = (screenId: string) => {
-    if (screenId === 'HOME') setCurrentTab('HOME');
-    else if (screenId === 'ADMIN_EMPLOYEES' || screenId === 'EMPLOYEES') setCurrentTab('EMPLOYEES');
-    else if (screenId === 'ADMIN_CALENDAR' || screenId === 'CALENDAR') setCurrentTab('CALENDAR');
-    else if (screenId === 'ADMIN_APPROVALS' || screenId === 'APPROVALS') setCurrentTab('APPROVALS');
-    else if (screenId === 'ADMIN_MACHINES' || screenId === 'MACHINES') setCurrentTab('MACHINES');
-    else if (screenId === 'STOCK') setCurrentTab('STOCK');
-    else if (screenId === 'QUOTATIONS') setCurrentTab('QUOTATIONS');
-    else if (screenId === 'NEW_QUOTE') setActiveModal('NEW_QUOTE');
-    else if (screenId === 'REQUEST') {
+    setDrawerVisible(false);
+    if (screenId === 'LOGOUT') {
+      handleLogout();
+    } else if (screenId === 'CALENDAR' || screenId === 'ADMIN_CALENDAR') {
+      setCurrentTab('CALENDAR');
+    } else if (screenId === 'APPROVALS' || screenId === 'ADMIN_APPROVALS') {
+      setCurrentTab('APPROVALS');
+    } else if (screenId === 'EMPLOYEES' || screenId === 'ADMIN_EMPLOYEES') {
+      setCurrentTab('EMPLOYEES');
+    } else if (screenId === 'MACHINES' || screenId === 'ADMIN_MACHINES') {
+      setCurrentTab('MACHINES');
+    } else if (screenId === 'STOCK') {
+      setCurrentTab('STOCK');
+    } else if (screenId === 'QUOTATIONS') {
+      setCurrentTab('QUOTATIONS');
+    } else if (screenId === 'LOCATION_CALIBRATION') {
+      setActiveModal('LOCATION_CALIBRATION');
+    } else if (screenId === 'NEW_QUOTE') {
+      setActiveModal('NEW_QUOTE');
+    } else if (screenId === 'REQUEST') {
       setRequestInitialMode('TODAY');
       setActiveModal('REQUEST');
+    } else {
+      setCurrentTab('HOME');
     }
   };
 
   if (!isAuthenticated) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <SafeAreaView style={[styles.container, { backgroundColor: '#0F172A' }]} edges={['top', 'left', 'right', 'bottom']}>
+        <StatusBar barStyle="light-content" backgroundColor="#0F172A" translucent={false} />
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
 
       {/* Main Tab Content */}
       <View style={styles.mainContent}>
         {currentTab === 'HOME' ? (
           <AttendanceScreen
+            key={`home-${refreshKey}`}
             userName={activeUserName}
             userRole={activeUserRole}
             onOpenDrawer={() => setDrawerVisible(true)}
@@ -144,6 +164,7 @@ export default function App() {
             onOpenAdminCalendar={() => setCurrentTab('CALENDAR')}
             onOpenStock={() => setCurrentTab('STOCK')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
+            onOpenLocationCalibration={() => setActiveModal('LOCATION_CALIBRATION')}
           />
         ) : currentTab === 'CALENDAR' ? (
           activeUserRole === 'ADMIN' ? (
@@ -274,7 +295,10 @@ export default function App() {
         <View style={StyleSheet.absoluteFillObject}>
           <QRScannerScreen
             onClose={() => setActiveModal('NONE')}
-            onSuccess={() => setActiveModal('NONE')}
+            onSuccess={() => {
+              setRefreshKey((k) => k + 1);
+              setActiveModal('NONE');
+            }}
             onRequestAttendance={() => {
               setRequestInitialMode('TODAY');
               setActiveModal('REQUEST');
@@ -287,7 +311,10 @@ export default function App() {
         <View style={StyleSheet.absoluteFillObject}>
           <AttendanceRequestScreen
             onClose={() => setActiveModal('NONE')}
-            onSuccess={() => setActiveModal('NONE')}
+            onSuccess={() => {
+              setRefreshKey((k) => k + 1);
+              setActiveModal('NONE');
+            }}
             initialDate={requestInitialDate}
             initialMode={requestInitialMode}
           />
@@ -315,7 +342,24 @@ export default function App() {
           />
         </View>
       )}
+
+      {activeModal === 'LOCATION_CALIBRATION' && (
+        <View style={StyleSheet.absoluteFillObject}>
+          <AdminLocationCalibrationScreen
+            onClose={() => setActiveModal('NONE')}
+            onSaved={() => setRefreshKey((k) => k + 1)}
+          />
+        </View>
+      )}
     </SafeAreaView>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <MainApp />
+    </SafeAreaProvider>
   );
 }
 

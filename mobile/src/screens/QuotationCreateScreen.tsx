@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,21 @@ interface QuotationCreateScreenProps {
   onSuccess: (quotation: any) => void;
 }
 
+const DEFAULT_BRANDS = [
+  'Daikin',
+  'Mitsubishi',
+  'LG',
+  'Godrej',
+  'Voltas',
+  'Panasonic',
+  'Carrier',
+  'Blue Star',
+  'Hitachi',
+  'O General',
+  'Lloyd',
+  'Samsung',
+];
+
 export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   onClose,
   onSuccess,
@@ -26,6 +41,8 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
   const [activeItemIndexForPicker, setActiveItemIndexForPicker] = useState<number>(0);
+  const [catalogueSearchQuery, setCatalogueSearchQuery] = useState<string>('');
+  const [catalogueBrandFilter, setCatalogueBrandFilter] = useState<string>('ALL');
 
   // 1. Customer Details (Initialized empty for real data entry)
   const [customerName, setCustomerName] = useState<string>('');
@@ -121,6 +138,45 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       }
     })();
   }, []);
+
+  const extractBrand = (item: any): string => {
+    if (item.brand) return item.brand;
+    const descMatch = item.description?.match(/\[Brand:\s*([^\]]+)\]/i);
+    if (descMatch) return descMatch[1].trim();
+
+    const fullText = `${item.name || ''} ${item.model || ''} ${item.description || ''}`.toLowerCase();
+    for (const b of DEFAULT_BRANDS) {
+      if (fullText.includes(b.toLowerCase())) {
+        return b;
+      }
+    }
+    return 'Other';
+  };
+
+  const allCatalogueBrands = useMemo(() => {
+    const brandsSet = new Set<string>();
+    machinesList.forEach((m) => {
+      brandsSet.add(extractBrand(m));
+    });
+    return ['ALL', ...Array.from(brandsSet).filter(Boolean)];
+  }, [machinesList]);
+
+  const filteredMachines = useMemo(() => {
+    return machinesList.filter((m) => {
+      // Brand filter
+      if (catalogueBrandFilter !== 'ALL') {
+        const b = extractBrand(m);
+        if (b.toLowerCase() !== catalogueBrandFilter.toLowerCase()) return false;
+      }
+      // Search query filter
+      if (catalogueSearchQuery.trim().length > 0) {
+        const q = catalogueSearchQuery.toLowerCase().trim();
+        const combined = `${m.name || ''} ${m.model || ''} ${m.description || ''} ${extractBrand(m)}`.toLowerCase();
+        if (!combined.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [machinesList, catalogueBrandFilter, catalogueSearchQuery]);
 
   const addMainItem = () => {
     setMainItems([
@@ -509,50 +565,103 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Select Machine Model</Text>
-                <Text style={styles.modalSubtitle}>Tap any machine to add into quotation</Text>
+                <Text style={styles.modalSubtitle}>Filter by brand or search to add into quotation</Text>
               </View>
               <TouchableOpacity onPress={() => setCatalogueModalVisible(false)}>
                 <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '800' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 14, gap: 10 }}>
-              {machinesList.map((m) => {
-                const isSelected = selectedMachineId === m.id;
-                return (
-                  <TouchableOpacity
-                    key={m.id}
-                    style={[styles.modalMachineCard, isSelected && styles.modalMachineCardSelected]}
-                    onPress={() => handleSelectMachineModel(m, activeItemIndexForPicker)}
-                    activeOpacity={0.75}
-                  >
-                    <View style={styles.rowBetween}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.modalMachineName}>{m.name}</Text>
-                        <Text style={styles.modalMachineDetails}>
-                          Model: {m.model || 'Standard'} • Capacity: {m.capacity || '1.5 Ton'}
-                        </Text>
-                      </View>
-                      {isSelected ? (
-                        <View style={styles.selectedBadge}>
-                          <Text style={styles.selectedBadgeText}>✓ SELECTED</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.selectBadge}>
-                          <Text style={styles.selectBadgeText}>TAP TO SELECT</Text>
-                        </View>
-                      )}
-                    </View>
+            {/* Modal Search Bar */}
+            <View style={styles.modalSearchBox}>
+              <Text style={{ fontSize: 15 }}>🔍</Text>
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search by brand, model (e.g. Daikin, FTKM)..."
+                placeholderTextColor="#94A3B8"
+                value={catalogueSearchQuery}
+                onChangeText={setCatalogueSearchQuery}
+              />
+              {catalogueSearchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setCatalogueSearchQuery('')}>
+                  <Text style={{ fontSize: 13, color: '#94A3B8', fontWeight: '700' }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-                    <View style={[styles.rowBetween, { marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderColor: '#F1F5F9' }]}>
-                      <Text style={styles.modalMachinePrice}>
-                        Price: ₹{Number(m.defaultPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {/* Modal Brand Filter Chips */}
+            <View style={styles.modalBrandFilterRow}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12 }}>
+                {allCatalogueBrands.map((brand) => {
+                  const isActive = catalogueBrandFilter.toLowerCase() === brand.toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={brand}
+                      style={[styles.modalFilterChip, isActive && styles.modalFilterChipActive]}
+                      onPress={() => setCatalogueBrandFilter(brand)}
+                    >
+                      <Text style={[styles.modalFilterChipText, isActive && styles.modalFilterChipTextActive]}>
+                        {brand === 'ALL' ? 'All Brands' : brand}
                       </Text>
-                      <Text style={styles.modalMachineStock}>Available: {m.availableStock || 10} Units</Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 14, gap: 10 }}>
+              {filteredMachines.length === 0 ? (
+                <View style={{ padding: 24, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 24, marginBottom: 6 }}>🔍</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>No matching machines found</Text>
+                  <Text style={{ fontSize: 11.5, color: '#64748B', textAlign: 'center', marginTop: 2 }}>
+                    Try clearing the search or choosing 'All Brands'.
+                  </Text>
+                </View>
+              ) : (
+                filteredMachines.map((m) => {
+                  const isSelected = selectedMachineId === m.id;
+                  const brand = extractBrand(m);
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[styles.modalMachineCard, isSelected && styles.modalMachineCardSelected]}
+                      onPress={() => handleSelectMachineModel(m, activeItemIndexForPicker)}
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.rowBetween}>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View style={styles.modalCardBrandTag}>
+                              <Text style={styles.modalCardBrandTagText}>{brand}</Text>
+                            </View>
+                            <Text style={styles.modalMachineName} numberOfLines={1}>{m.name}</Text>
+                          </View>
+                          <Text style={styles.modalMachineDetails}>
+                            Model: {m.model || 'Standard'} • Capacity: {m.capacity || '1.5 Ton'}
+                          </Text>
+                        </View>
+                        {isSelected ? (
+                          <View style={styles.selectedBadge}>
+                            <Text style={styles.selectedBadgeText}>✓ SELECTED</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.selectBadge}>
+                            <Text style={styles.selectBadgeText}>TAP TO SELECT</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={[styles.rowBetween, { marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderColor: '#F1F5F9' }]}>
+                        <Text style={styles.modalMachinePrice}>
+                          Price: ₹{Number(m.defaultPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </Text>
+                        <Text style={styles.modalMachineStock}>Available: {m.availableStock || 10} Units</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
             </ScrollView>
           </View>
         </View>
@@ -837,5 +946,63 @@ const styles = StyleSheet.create({
   modalMachineStock: {
     fontSize: 11,
     color: '#64748B',
+  },
+  modalSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    marginHorizontal: 12,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    height: 40,
+  },
+  modalSearchInput: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#0F172A',
+    marginLeft: 6,
+  },
+  modalBrandFilterRow: {
+    marginTop: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  modalFilterChip: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalFilterChipActive: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  modalFilterChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalFilterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  modalCardBrandTag: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  modalCardBrandTagText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#0066CC',
   },
 });
