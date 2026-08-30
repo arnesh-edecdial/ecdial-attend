@@ -186,14 +186,14 @@ export const StockScreen: React.FC<StockScreenProps> = ({
         </View>
 
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          {userRole === 'ADMIN' && (
+          {(userRole === 'ADMIN' || userRole === 'SALES') && (
             <TouchableOpacity style={styles.addBtn} onPress={handleOpenAddModal}>
               <Text style={styles.addBtnText}>+ ADD ITEM</Text>
             </TouchableOpacity>
           )}
           {onClose && (
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeBtnText}>Back</Text>
+              <Text style={styles.closeBtnText}>Close</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -251,7 +251,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
             <Text style={{ fontSize: 32, marginBottom: 8 }}>📦</Text>
             <Text style={styles.emptyTitle}>No Stock Items Found</Text>
             <Text style={styles.emptySub}>
-              {userRole === 'ADMIN'
+              {userRole === 'ADMIN' || userRole === 'SALES'
                 ? 'Tap [+ ADD ITEM] to add products to the warehouse inventory.'
                 : 'No products currently registered in warehouse.'}
             </Text>
@@ -320,8 +320,8 @@ export const StockScreen: React.FC<StockScreenProps> = ({
                   </View>
                 </View>
 
-                {/* Admin Management Actions */}
-                {userRole === 'ADMIN' && (
+                {/* Management Actions for Admin & Sales */}
+                {(userRole === 'ADMIN' || userRole === 'SALES') && (
                   <View style={styles.adminActionRow}>
                     <TouchableOpacity
                       style={styles.editCardBtn}
@@ -558,7 +558,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 12,
   },
   stockCard: {

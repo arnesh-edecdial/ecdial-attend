@@ -36,6 +36,12 @@ router.patch(
   requireRole(['ADMIN', 'IT_ADMIN']),
   authController.toggleEmployeeStatus
 );
+router.delete(
+  '/auth/employees/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'IT_ADMIN']),
+  authController.deleteEmployee
+);
 
 // ==========================================
 // 2. ATTENDANCE MANAGEMENT ROUTES
@@ -126,25 +132,25 @@ router.get('/catalog/products', authMiddleware, catalogController.listProducts);
 router.post(
   '/catalog/products',
   authMiddleware,
-  requireRole(['ADMIN', 'MANAGER']),
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES']),
   catalogController.createProduct
 );
 router.put(
   '/catalog/products/:id',
   authMiddleware,
-  requireRole(['ADMIN', 'MANAGER']),
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES']),
   catalogController.updateProduct
 );
 router.patch(
   '/catalog/products/:id/toggle',
   authMiddleware,
-  requireRole(['ADMIN', 'MANAGER']),
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES']),
   catalogController.toggleProductStatus
 );
 router.delete(
   '/catalog/products/:id',
   authMiddleware,
-  requireRole(['ADMIN', 'MANAGER']),
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES']),
   catalogController.deleteProduct
 );
 
@@ -162,6 +168,7 @@ router.get('/quotations', authMiddleware, quotationController.listQuotations);
 router.get('/quotations/:id', authMiddleware, quotationController.getQuotationById);
 router.put('/quotations/:id', authMiddleware, quotationController.updateQuotation);
 router.patch('/quotations/:id/status', authMiddleware, quotationController.updateStatus);
+router.delete('/quotations/:id', authMiddleware, quotationController.deleteQuotation);
 router.get('/quotations/:id/pdf', authMiddleware, quotationController.downloadPdf);
 
 export default router;

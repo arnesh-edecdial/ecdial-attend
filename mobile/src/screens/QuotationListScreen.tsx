@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { Quotation } from '../types';
@@ -57,6 +58,33 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
       }).catch(console.error);
     }
   }, [creatorFilter, userRole]);
+
+  const handleDeleteQuotation = (quote: any) => {
+    Alert.alert(
+      'Delete quotation?',
+      `Are you sure you want to delete quotation ${quote.quotationNumber}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await mobileApi.deleteQuotation(quote.id);
+              if (res.success) {
+                Alert.alert('Success', 'Quotation deleted successfully.');
+                fetchQuotations();
+              } else {
+                Alert.alert('Error', res.message || 'Failed to delete quotation.');
+              }
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to delete quotation.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -134,15 +162,26 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
             <TouchableOpacity key={q.id} style={styles.quoteCard} onPress={() => onSelectQuotation(q)}>
               <View style={styles.rowBetween}>
                 <Text style={styles.quoteNum}>{q.quotationNumber}</Text>
-                <View style={[styles.badge, { backgroundColor: q.status === 'FINAL' ? '#ECFDF5' : '#FEF3C7' }]}>
-                  <Text style={[styles.badgeText, { color: q.status === 'FINAL' ? '#059669' : '#D97706' }]}>
-                    {q.status}
-                  </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={[styles.badge, { backgroundColor: q.status === 'FINAL' ? '#ECFDF5' : '#FEF3C7' }]}>
+                    <Text style={[styles.badgeText, { color: q.status === 'FINAL' ? '#059669' : '#D97706' }]}>
+                      {q.status}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.cardDeleteBtn}
+                    onPress={() => handleDeleteQuotation(q)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 13, color: '#EF4444' }}>🗑️</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
-              <Text style={styles.customerName}>{q.customerName}</Text>
-              <Text style={styles.customerAddress} numberOfLines={1}>📍 {q.customerAddress}</Text>
+              <Text style={styles.customerName}>{q.customerName || 'Standard Quotation Offer'}</Text>
+              {q.customerAddress && q.customerAddress.trim().length > 0 ? (
+                <Text style={styles.customerAddress} numberOfLines={1}>📍 {q.customerAddress}</Text>
+              ) : null}
 
               {userRole === 'ADMIN' && q.createdByName && (
                 <Text style={styles.creatorNameText}>👤 Prepared by: {q.createdByName}</Text>
@@ -238,7 +277,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 12,
   },
   quoteCard: {
@@ -261,6 +300,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#0066CC',
+  },
+  cardDeleteBtn: {
+    padding: 4,
+    borderRadius: 6,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   badge: {
     paddingHorizontal: 8,

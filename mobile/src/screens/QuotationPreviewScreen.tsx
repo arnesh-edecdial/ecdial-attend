@@ -13,7 +13,7 @@ import {
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Quotation } from '../types';
-import { mobileApi } from '../services/api';
+import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 
 interface QuotationPreviewScreenProps {
   quotation: Quotation | null;
@@ -49,39 +49,71 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   if (!currentQuote) return null;
 
-  const downloadPdfFile = async (): Promise<string | null> => {
+  const downloadPdfFile = async (): Promise<{ uri: string | null; error?: string }> => {
     try {
       const pdfUrl = mobileApi.getPdfUrl(currentQuote.id);
       const docDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-      const localFileUri = `${docDir}Quotation_${currentQuote.quotationNumber}.pdf`;
+      const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const localFileUri = `${docDir}Quotation_${safeQuoteNum}.pdf`;
 
-      // Download file using supported Expo legacy filesystem API
-      const result = await FileSystem.downloadAsync(pdfUrl, localFileUri);
-      if (result && result.uri) {
-        // Verify that the file genuinely exists on disk
+      const token = getAuthToken();
+      const empId = getActiveEmployeeId();
+      const headers: Record<string, string> = {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(empId ? { 'x-employee-id': empId } : {}),
+      };
+
+      const result = await FileSystem.downloadAsync(pdfUrl, localFileUri, { headers });
+      if (result && result.status === 200 && result.uri) {
         const info = await FileSystem.getInfoAsync(result.uri);
-        if (info.exists) {
-          return result.uri;
+        if (info.exists && typeof (info as any).size === 'number' && (info as any).size > 100) {
+          return { uri: result.uri };
         }
       }
-      return null;
+
+      if (result && result.status === 404) {
+        return { uri: null, error: 'Quotation not found on the server (404). Please ensure the quotation is saved to the live backend.' };
+      }
+      if (result && result.status === 401) {
+        return { uri: null, error: 'Authentication expired (401). Please log in again.' };
+      }
+
+      return { uri: null, error: `Server returned HTTP ${result?.status || 'error'}` };
     } catch (err: any) {
       console.error('[Download PDF Error]', err);
-      return null;
+      return { uri: null, error: err.message || 'Network request failed' };
     }
   };
 
   const handleDownloadPdf = async () => {
     setIsDownloading(true);
     try {
-      const localUri = await downloadPdfFile();
+      const { uri: localUri, error } = await downloadPdfFile();
       if (localUri) {
-        alert(`✓ PDF Generated & Saved successfully!\nFile: Quotation_${currentQuote.quotationNumber}.pdf`);
+        Alert.alert(
+          '✓ PDF Generated Successfully',
+          `Quotation_${currentQuote.quotationNumber}.pdf is ready on your device.`,
+          [
+            {
+              text: 'Open / Save File',
+              onPress: async () => {
+                if (await Sharing.isAvailableAsync()) {
+                  await Sharing.shareAsync(localUri, {
+                    mimeType: 'application/pdf',
+                    dialogTitle: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
+                    UTI: 'com.adobe.pdf',
+                  });
+                }
+              },
+            },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
       } else {
-        alert('Failed to generate PDF. Please ensure backend server is accessible.');
+        Alert.alert('Download Failed', error || 'Unable to generate quotation PDF. Please check server connection.');
       }
     } catch (err: any) {
-      alert(err.message || 'Download failed');
+      Alert.alert('Error', err.message || 'Unable to generate quotation PDF.');
     } finally {
       setIsDownloading(false);
     }
@@ -90,7 +122,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
   const handleSharePdf = async () => {
     setIsSharing(true);
     try {
-      const localUri = await downloadPdfFile();
+      const { uri: localUri, error } = await downloadPdfFile();
 
       if (localUri && (await Sharing.isAvailableAsync())) {
         await Sharing.shareAsync(localUri, {
@@ -98,19 +130,51 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
           dialogTitle: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
           UTI: 'com.adobe.pdf',
         });
-      } else {
-        // Fallback to text summary share
+      } else if (localUri) {
+        // Fallback to text summary share if native sharing is unavailable
         await Share.share({
           title: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
           message: `ECDIAL Commercial Offer for ${currentQuote.customerName}\nQuote: ${currentQuote.quotationNumber}\nTotal: ₹${Number(currentQuote.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nDate: ${currentQuote.date}`,
         });
+      } else {
+        Alert.alert('Share Failed', error || 'Unable to generate quotation PDF for sharing. Please check server connection.');
       }
     } catch (err: any) {
       console.error('[Share Error]', err);
-      alert(err.message || 'Sharing error');
+      // User cancelling share sheet is normal, avoid alert if cancelled
+      if (err.message && !err.message.includes('dismissed') && !err.message.includes('cancel')) {
+        alert(err.message || 'Sharing error');
+      }
     } finally {
       setIsSharing(false);
     }
+  };
+
+  const handleDeleteQuotation = () => {
+    Alert.alert(
+      'Delete quotation?',
+      `Are you sure you want to delete quotation ${currentQuote.quotationNumber}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await mobileApi.deleteQuotation(currentQuote.id);
+              if (res.success) {
+                Alert.alert('Success', 'Quotation deleted successfully.');
+                onClose();
+              } else {
+                Alert.alert('Error', res.message || 'Failed to delete quotation.');
+              }
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to delete quotation.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const mainItems = currentQuote.items?.filter((i) => i.section === 'MAIN_UNIT') || [];
@@ -124,15 +188,20 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
           <Text style={styles.title}>Quotation Offer</Text>
           <Text style={styles.subtitle}>{currentQuote.quotationNumber} • {currentQuote.date}</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {onEdit && (
             <TouchableOpacity style={styles.editBtn} onPress={onEdit}>
               <Text style={styles.editBtnText}>✏️ Edit</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnText}>Back</Text>
+          <TouchableOpacity style={styles.deleteHeaderBtn} onPress={handleDeleteQuotation}>
+            <Text style={styles.deleteHeaderBtnText}>🗑️ Delete</Text>
           </TouchableOpacity>
+          {onClose && (
+            <TouchableOpacity style={styles.closeIconBtn} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.closeIconText}>✕</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -168,18 +237,24 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
           {/* Customer & Quotation Summary Row */}
           <View style={styles.customerSummaryRow}>
-            {/* Customer Box */}
-            <View style={styles.toBox}>
-              <Text style={styles.toLabel}>To,</Text>
-              <Text style={styles.customerNameText}>{currentQuote.customerName}</Text>
-              <Text style={styles.customerAddressText}>📍 {currentQuote.customerAddress}</Text>
-              {currentQuote.customerPhone && (
-                <Text style={styles.customerPhoneText}>Phone: {currentQuote.customerPhone}</Text>
-              )}
-              {currentQuote.customerEmail && (
-                <Text style={styles.customerPhoneText}>Email: {currentQuote.customerEmail}</Text>
-              )}
-            </View>
+            {/* Customer Box (Omitted if no customer name) */}
+            {currentQuote.customerName && currentQuote.customerName.trim().length > 0 ? (
+              <View style={styles.toBox}>
+                <Text style={styles.toLabel}>To,</Text>
+                <Text style={styles.customerNameText}>{currentQuote.customerName}</Text>
+                {currentQuote.customerAddress && currentQuote.customerAddress.trim().length > 0 ? (
+                  <Text style={styles.customerAddressText}>📍 {currentQuote.customerAddress}</Text>
+                ) : null}
+                {currentQuote.customerPhone ? (
+                  <Text style={styles.customerPhoneText}>Phone: {currentQuote.customerPhone}</Text>
+                ) : null}
+                {currentQuote.customerEmail ? (
+                  <Text style={styles.customerPhoneText}>Email: {currentQuote.customerEmail}</Text>
+                ) : null}
+              </View>
+            ) : (
+              <View style={[styles.toBox, { backgroundColor: 'transparent', borderColor: 'transparent' }]} />
+            )}
 
             {/* Quotation Details Card */}
             <View style={styles.quoteCard}>
@@ -305,34 +380,34 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             <Text style={styles.footerBannerText}>🤝 Thanking you and assure our best service always.</Text>
           </View>
         </View>
-
-        {/* Action Buttons: Download & Share */}
-        <View style={styles.actionButtonsRow}>
-          <TouchableOpacity
-            style={[styles.downloadBtn, isDownloading && { opacity: 0.7 }]}
-            onPress={handleDownloadPdf}
-            disabled={isDownloading}
-          >
-            {isDownloading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Text style={styles.btnTextWhite}>📥 Download PDF</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shareBtn, isSharing && { opacity: 0.7 }]}
-            onPress={handleSharePdf}
-            disabled={isSharing}
-          >
-            {isSharing ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Text style={styles.btnTextWhite}>📤 Share PDF</Text>
-            )}
-          </TouchableOpacity>
-        </View>
       </ScrollView>
+
+      {/* Fixed Sticky Action Bar at Bottom */}
+      <View style={styles.stickyFooterBar}>
+        <TouchableOpacity
+          style={[styles.downloadBtn, isDownloading && { opacity: 0.7 }]}
+          onPress={handleDownloadPdf}
+          disabled={isDownloading}
+        >
+          {isDownloading ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <Text style={styles.btnTextWhite}>📥 Download PDF</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.shareBtn, isSharing && { opacity: 0.7 }]}
+          onPress={handleSharePdf}
+          disabled={isSharing}
+        >
+          {isSharing ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <Text style={styles.btnTextWhite}>📤 Share PDF</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -374,23 +449,51 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  closeBtn: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 12,
+  deleteHeaderBtn: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
-  closeBtnText: {
-    color: '#0F172A',
+  deleteHeaderBtnText: {
+    color: '#DC2626',
     fontSize: 12,
     fontWeight: '700',
+  },
+  closeIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeIconText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
   },
   scrollArea: {
     flex: 1,
   },
   scrollContent: {
     padding: 14,
-    paddingBottom: 100,
+    paddingBottom: 24,
+  },
+  stickyFooterBar: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 4,
   },
   previewSheet: {
     backgroundColor: '#FFFFFF',

@@ -13,7 +13,7 @@ import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 
 interface AdminCalendarScreenProps {
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClose }) => {
@@ -114,9 +114,11 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
           <Text style={styles.title}>Company Calendar</Text>
           <Text style={styles.subtitle}>Attendance overview & Company Leave control</Text>
         </View>
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-          <Text style={styles.closeBtnText}>Back</Text>
-        </TouchableOpacity>
+        {onClose && (
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Text style={styles.closeBtnText}>Close</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Month Navigation */}
@@ -133,7 +135,7 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
       {/* Days Header */}
       <View style={styles.daysHeader}>
         {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
-          <Text key={i} style={styles.dayHeaderText}>{d}</Text>
+          <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#8B5CF6' }]}>{d}</Text>
         ))}
       </View>
 
@@ -142,8 +144,14 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
         <ActivityIndicator size="large" color="#0066CC" style={{ marginVertical: 30 }} />
       ) : (
         <View style={styles.calendarGrid}>
+          {/* Leading Blank Cells for Weekday Alignment */}
+          {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
+            <View key={`blank-${i}`} style={styles.dayCellBlank} />
+          ))}
+
           {days.map((day) => {
             const isSelected = selectedDay?.date === day.date;
+            const isSunday = new Date(day.date).getDay() === 0;
             const isCompanyLeave = (day as any).isCompanyLeave || day.holidayName;
             const isPresent = day.colorCode === 'GREEN';
             const isAbsent = day.colorCode === 'RED';
@@ -156,6 +164,7 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                   styles.dayCell,
                   isSelected && styles.dayCellSelected,
                   isCompanyLeave && styles.dayCellHoliday,
+                  isSunday && !isCompanyLeave && styles.dayCellSunday,
                   isPresent && !isSelected && styles.dayCellPresent,
                   isAbsent && !isSelected && styles.dayCellAbsent,
                   isHalf && !isSelected && styles.dayCellHalf,
@@ -163,11 +172,11 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                 onPress={() => handleSelectDay(day)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.dayNum, isSelected && { color: '#0066CC', fontWeight: '900' }]}>
+                <Text style={[styles.dayNum, isSunday && { color: '#8B5CF6' }, isSelected && { color: '#0066CC', fontWeight: '900' }]}>
                   {day.dayNumber}
                 </Text>
-                <Text style={[styles.daySymbol, isCompanyLeave && { color: '#0284C7', fontWeight: '800' }]}>
-                  {isCompanyLeave ? 'HOL' : isPresent ? '✓' : isAbsent ? '×' : isHalf ? '½' : '—'}
+                <Text style={[styles.daySymbol, isSunday && !isCompanyLeave && { color: '#8B5CF6' }, isCompanyLeave && { color: '#0284C7', fontWeight: '800' }]}>
+                  {isCompanyLeave ? 'HOL' : isSunday ? 'OFF' : isPresent ? '✓' : isAbsent ? '×' : isHalf ? '½' : '—'}
                 </Text>
               </TouchableOpacity>
             );
@@ -419,13 +428,13 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   title: {
     fontSize: 18,
@@ -452,8 +461,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    padding: 12,
-    borderRadius: 12,
+    padding: 10,
+    borderRadius: 10,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -471,33 +480,42 @@ const styles = StyleSheet.create({
   },
   daysHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    marginBottom: 6,
   },
   dayHeaderText: {
     fontSize: 9.5,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#64748B',
-    width: 40,
+    width: '14.28%',
     textAlign: 'center',
   },
   calendarGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 6,
     marginBottom: 16,
   },
+  dayCellBlank: {
+    width: '14.28%',
+    height: 44,
+  },
   dayCell: {
-    width: 40,
+    width: '14.28%',
     height: 44,
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 4,
+    borderColor: '#F1F5F9',
   },
   dayCellSelected: {
     borderColor: '#0066CC',
@@ -508,6 +526,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E0F2FE',
     borderColor: '#0284C7',
   },
+  dayCellSunday: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
   dayCellPresent: { backgroundColor: '#ECFDF5' },
   dayCellAbsent: { backgroundColor: '#FEF2F2' },
   dayCellHalf: { backgroundColor: '#FFFBEB' },
@@ -517,9 +539,9 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   daySymbol: {
-    fontSize: 9,
+    fontSize: 8.5,
     color: '#64748B',
-    marginTop: 2,
+    marginTop: 1,
   },
   detailCard: {
     backgroundColor: '#FFFFFF',

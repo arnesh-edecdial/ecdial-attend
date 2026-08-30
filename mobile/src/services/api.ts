@@ -97,6 +97,8 @@ export const mobileApi = {
     request<any>(`/auth/employees/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   toggleEmployeeStatus: (id: string) =>
     request<any>(`/auth/employees/${id}/toggle-status`, { method: 'PATCH' }),
+  deleteEmployee: (id: string) =>
+    request<any>(`/auth/employees/${id}`, { method: 'DELETE' }),
 
   // Attendance
   getTodayQR: () => request<any>('/attendance/qr/today'),
@@ -176,5 +178,7 @@ export const mobileApi = {
   getQuotationById: (id: string) => request<any>(`/quotations/${id}`),
   updateQuotation: (id: string, payload: any) =>
     request<any>(`/quotations/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteQuotation: (id: string) =>
+    request<any>(`/quotations/${id}`, { method: 'DELETE' }),
   getPdfUrl: (id: string) => `${getApiBaseUrl()}/quotations/${id}/pdf`,
 };

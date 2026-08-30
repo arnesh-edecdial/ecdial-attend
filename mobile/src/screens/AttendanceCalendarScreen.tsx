@@ -11,7 +11,7 @@ import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 
 interface AttendanceCalendarScreenProps {
-  onClose: () => void;
+  onClose?: () => void;
   onRequestCorrection: (date: string) => void;
   employeeId?: string;
 }
@@ -47,7 +47,10 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
     fetchCalendar();
   }, [year, month, employeeId]);
 
-  const getColorDot = (code: string, isSunday?: boolean) => {
+  const getColorDot = (code: string, isSunday?: boolean, isHoliday?: boolean) => {
+    if (isHoliday) {
+      return '#0284C7'; // Distinct cyan/sky blue for Company Holiday / Leave
+    }
     if (isSunday && (code === 'GREY' || !code)) {
       return '#8B5CF6'; // Distinct subtle purple for Sunday weekly off
     }
@@ -77,9 +80,11 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
           <Text style={styles.title}>{monthNames[month - 1]} {year}</Text>
           <Text style={styles.subtitle}>Monthly Attendance Summary</Text>
         </View>
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-          <Text style={styles.closeBtnText}>Back</Text>
-        </TouchableOpacity>
+        {onClose && (
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Text style={styles.closeBtnText}>Close</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Month Navigation */}
@@ -112,8 +117,8 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
           <Text style={styles.legendText}>Sunday/Off</Text>
         </View>
         <View style={styles.legendItem}>
-          <View style={[styles.dot, { backgroundColor: '#94A3B8' }]} />
-          <Text style={styles.legendText}>No Record</Text>
+          <View style={[styles.dot, { backgroundColor: '#0284C7' }]} />
+          <Text style={styles.legendText}>Holiday</Text>
         </View>
       </View>
 
@@ -130,10 +135,16 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
         <ActivityIndicator size="large" color="#0066CC" style={{ marginVertical: 30 }} />
       ) : (
         <View style={styles.calendarGrid}>
+          {/* Leading Blank Cells to Align First Day of Month under Correct Weekday (Sun=0..Sat=6) */}
+          {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
+            <View key={`blank-${i}`} style={styles.dayCell} />
+          ))}
+
           {days.map((day) => {
             const isSelected = selectedDay?.date === day.date;
             const isSunday = new Date(day.date).getDay() === 0;
-            const dotColor = getColorDot(day.colorCode, isSunday);
+            const isHoliday = !!day.holidayName || !!(day as any).isCompanyLeave;
+            const dotColor = getColorDot(day.colorCode, isSunday, isHoliday);
 
             return (
               <TouchableOpacity
@@ -141,9 +152,10 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
                 style={[
                   styles.dayCell,
                   isSelected && styles.dayCellSelected,
-                  day.colorCode === 'GREEN' && styles.dayCellPresent,
-                  day.colorCode === 'RED' && styles.dayCellAbsent,
-                  isSunday && day.colorCode === 'GREY' && styles.dayCellSunday,
+                  isHoliday && styles.dayCellHoliday,
+                  day.colorCode === 'GREEN' && !isHoliday && styles.dayCellPresent,
+                  day.colorCode === 'RED' && !isHoliday && styles.dayCellAbsent,
+                  isSunday && day.colorCode === 'GREY' && !isHoliday && styles.dayCellSunday,
                 ]}
                 onPress={() => setSelectedDay(day)}
                 activeOpacity={0.7}
@@ -151,7 +163,8 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
                 <Text
                   style={[
                     styles.dayNum,
-                    isSunday && { color: '#8B5CF6', fontWeight: '700' },
+                    isHoliday && { color: '#0284C7', fontWeight: '800' },
+                    isSunday && !isHoliday && { color: '#8B5CF6', fontWeight: '700' },
                     isSelected && { color: '#0066CC', fontWeight: '900' },
                   ]}
                 >
@@ -226,7 +239,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
   },
   header: {
     flexDirection: 'row',
@@ -300,8 +313,8 @@ const styles = StyleSheet.create({
   },
   daysHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
     paddingVertical: 6,
+    paddingHorizontal: 6,
     backgroundColor: '#F1F5F9',
     borderRadius: 8,
     marginBottom: 6,
@@ -310,7 +323,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#64748B',
-    width: '14%',
+    width: '14.28%',
     textAlign: 'center',
   },
   calendarGrid: {
@@ -345,6 +358,12 @@ const styles = StyleSheet.create({
   },
   dayCellSunday: {
     backgroundColor: '#FAF5FF',
+    borderRadius: 8,
+  },
+  dayCellHoliday: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+    borderWidth: 1,
     borderRadius: 8,
   },
   dayNum: {

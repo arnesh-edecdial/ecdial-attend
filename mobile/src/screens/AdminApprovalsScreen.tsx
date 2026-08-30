@@ -11,7 +11,7 @@ import {
 import { mobileApi } from '../services/api';
 
 interface AdminApprovalsScreenProps {
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onClose }) => {
@@ -59,9 +59,11 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
           <Text style={styles.title}>Pending Approvals</Text>
           <Text style={styles.subtitle}>1-Click Admin Decision Queue ({queue.length} pending)</Text>
         </View>
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-          <Text style={styles.closeBtnText}>Back</Text>
-        </TouchableOpacity>
+        {onClose && (
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <Text style={styles.closeBtnText}>Close</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.listContent}>
@@ -155,7 +157,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 12,
   },
   card: {

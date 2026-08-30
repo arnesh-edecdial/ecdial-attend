@@ -457,107 +457,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </TouchableOpacity>
         </View>
       )}
-
-      {/* 5. MONTHLY ATTENDANCE CALENDAR */}
-      <View style={styles.calendarCard}>
-        <View style={styles.calendarHeaderRow}>
-          <Text style={styles.calendarTitle}>Attendance Calendar</Text>
-          <View style={styles.monthSelector}>
-            <Text style={styles.monthText}>{currentMonthName}</Text>
-            <TouchableOpacity style={styles.arrowBtn} onPress={onOpenCalendar}>
-              <Text style={styles.arrowText}>›</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.weekdayRow}>
-          {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((day, idx) => (
-            <Text key={idx} style={styles.weekdayText}>{day}</Text>
-          ))}
-        </View>
-
-        <View style={styles.gridContainer}>
-          {calendarDays.map((item, index) => {
-            const todayStr = new Date().toISOString().substring(0, 10);
-            const isToday = item.date === todayStr;
-            const isPresent = item.colorCode === 'GREEN';
-            const isAbsent = item.colorCode === 'RED';
-            const isHalf = item.colorCode === 'YELLOW';
-            const isHoliday = item.isCompanyLeave;
-            const isSunday = new Date(item.date).getDay() === 0;
-
-            const symbol = isToday
-              ? ''
-              : isHoliday
-              ? 'HOL'
-              : isPresent
-              ? '✓'
-              : isAbsent
-              ? '✕'
-              : isHalf
-              ? '½'
-              : isSunday
-              ? 'OFF'
-              : '–';
-
-            return (
-              <TouchableOpacity
-                key={item.date || index}
-                style={[
-                  styles.dayBox,
-                  isToday && styles.dayBoxToday,
-                  isPresent && !isToday && styles.dayBoxPresent,
-                  isAbsent && styles.dayBoxAbsent,
-                  isHalf && styles.dayBoxHalf,
-                  isSunday && !isPresent && !isAbsent && { backgroundColor: '#FAF5FF' },
-                ]}
-                onPress={onOpenCalendar}
-              >
-                <Text
-                  style={[
-                    styles.dayNumText,
-                    isSunday && !isPresent && !isAbsent && { color: '#8B5CF6', fontWeight: '700' },
-                    isToday && styles.dayNumToday,
-                    isPresent && !isToday && styles.dayNumPresent,
-                    isAbsent && styles.dayNumAbsent,
-                    isHalf && styles.dayNumHalf,
-                  ]}
-                >
-                  {item.dayNumber} {symbol}
-                </Text>
-                {isToday && <Text style={styles.todaySubText}>Today</Text>}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <View style={styles.legendRow}>
-          <View style={styles.legendPill}>
-            <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
-            <Text style={styles.legendLabel}>Present (✓)</Text>
-          </View>
-
-          <View style={styles.legendPill}>
-            <View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} />
-            <Text style={styles.legendLabel}>Half (½)</Text>
-          </View>
-
-          <View style={styles.legendPill}>
-            <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-            <Text style={styles.legendLabel}>Absent (×)</Text>
-          </View>
-
-          <View style={styles.legendPill}>
-            <View style={[styles.legendDot, { backgroundColor: '#8B5CF6' }]} />
-            <Text style={styles.legendLabel}>Sunday (OFF)</Text>
-          </View>
-
-          <View style={styles.legendPill}>
-            <View style={[styles.legendDot, { backgroundColor: '#94A3B8' }]} />
-            <Text style={styles.legendLabel}>Holiday (HOL)</Text>
-          </View>
-        </View>
-      </View>
     </ScrollView>
   );
 };
@@ -570,7 +469,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 110,
+    paddingBottom: 120,
   },
   topHeader: {
     flexDirection: 'row',
@@ -581,8 +480,9 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
     flex: 1,
+    marginRight: 6,
   },
   menuIcon: {
     width: 38,
@@ -608,18 +508,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   greetingText: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#475569',
     fontWeight: '600',
   },
   userNameText: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
     color: '#0F172A',
     marginTop: -2,
   },
   subGreeting: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748B',
   },
   headerRight: {

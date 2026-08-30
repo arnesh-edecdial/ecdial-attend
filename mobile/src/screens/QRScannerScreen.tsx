@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -24,6 +25,7 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState<boolean>(false);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
+  const [torchOn, setTorchOn] = useState<boolean>(false);
 
   // Result / Error State
   const [resultState, setResultState] = useState<{
@@ -188,9 +190,11 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
         barcodeScannerSettings={{
           barcodeTypes: ['qr'],
         }}
+        enableTorch={torchOn}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
       >
-        <View style={styles.overlay}>
+        <SafeAreaView style={styles.overlay}>
+          {/* Top Header */}
           <View style={styles.header}>
             <Text style={styles.overlayTitle}>Scan Attendance QR</Text>
             <Text style={styles.overlaySub}>Align the office display QR within the frame</Text>
@@ -210,10 +214,24 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
             )}
           </View>
 
-          <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
+          {/* Bottom Controls (Flashlight & Cancel) */}
+          <View style={styles.bottomControls}>
+            <TouchableOpacity
+              style={[styles.torchButton, torchOn && styles.torchButtonActive]}
+              onPress={() => setTorchOn(!torchOn)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 20 }}>{torchOn ? '🔦' : '💡'}</Text>
+              <Text style={[styles.torchButtonText, torchOn && styles.torchButtonTextActive]}>
+                {torchOn ? 'Flashlight ON' : 'Flashlight'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose} activeOpacity={0.8}>
+              <Text style={styles.cancelText}>✕ Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
       </CameraView>
     </View>
   );
@@ -300,16 +318,47 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 10,
   },
-  cancelButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 28,
+  bottomControls: {
+    alignItems: 'center',
+    gap: 16,
+    width: '100%',
+    paddingBottom: 24,
+  },
+  torchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 99,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  torchButtonActive: {
+    backgroundColor: '#0066CC',
+    borderColor: '#38BDF8',
+  },
+  torchButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  torchButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   cancelText: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   resultCircle: {
     width: 80,

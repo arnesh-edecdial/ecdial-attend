@@ -13,7 +13,7 @@ import {
 import { mobileApi } from '../services/api';
 
 interface AdminMachinesScreenProps {
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const AdminMachinesScreen: React.FC<AdminMachinesScreenProps> = ({ onClose }) => {
@@ -125,9 +125,11 @@ export const AdminMachinesScreen: React.FC<AdminMachinesScreenProps> = ({ onClos
           <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
             <Text style={styles.addBtnText}>+ ADD</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnText}>Back</Text>
-          </TouchableOpacity>
+          {onClose && (
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnText}>Close</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -266,7 +268,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 10,
   },
   machineCard: {

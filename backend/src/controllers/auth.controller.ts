@@ -348,4 +348,56 @@ export const authController = {
       res.status(500).json({ success: false, message: 'Failed to toggle employee status.' });
     }
   },
+
+  // 7. Admin Safe Delete Employee (Rule 21)
+  deleteEmployee: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id },
+        include: {
+          _count: {
+            select: {
+              attendances: true,
+              quotations: true,
+              attendanceRequests: true,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Employee not found.' });
+        return;
+      }
+
+      // If user has historical records, preserve DB integrity and soft deactivate
+      if (user._count.attendances > 0 || user._count.quotations > 0 || user._count.attendanceRequests > 0) {
+        await prisma.user.update({
+          where: { id },
+          data: { isActive: false },
+        });
+        res.json({
+          success: true,
+          message: `Employee '${user.name}' has historical records and has been safely deactivated instead of deleted.`,
+          data: { id, isActive: false },
+        });
+        return;
+      }
+
+      // If truly clean new record:
+      await prisma.$transaction([
+        prisma.employeeSchedule.deleteMany({ where: { employeeId: id } }),
+        prisma.user.delete({ where: { id } }),
+      ]);
+
+      res.json({
+        success: true,
+        message: `Employee '${user.name}' deleted successfully.`,
+      });
+    } catch (err: any) {
+      console.error('[Delete Employee Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to delete employee.' });
+    }
+  },
 };

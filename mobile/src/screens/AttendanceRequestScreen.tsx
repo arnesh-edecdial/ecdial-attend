@@ -324,6 +324,11 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
             <ActivityIndicator color="#0066CC" style={{ marginVertical: 20 }} />
           ) : (
             <View style={styles.calendarGrid}>
+              {/* Leading Blank Cells for Weekday Alignment */}
+              {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
+                <View key={`blank-${i}`} style={styles.dayCell} />
+              ))}
+
               {calendarDays.map((day) => {
                 const isSelected = multiSelectMode
                   ? selectedDates.includes(day.date)
@@ -358,9 +363,9 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
                       style={[
                         styles.dayNumText,
                         isToday && { fontWeight: '900', color: '#0066CC' },
-                        isSunday && { color: '#8B5CF6' },
-                        isFuture && { color: '#CBD5E1' },
-                        isSelected && { color: '#0066CC', fontWeight: '900' },
+                        isSunday && !isPresent && !isAbsent && { color: '#8B5CF6' },
+                        isSelected && { fontWeight: '900', color: '#0066CC' },
+                        (isFuture || isPreJoining) && { color: '#94A3B8' },
                       ]}
                     >
                       {day.dayNumber}
@@ -371,15 +376,16 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
                       style={[
                         styles.statusDot,
                         {
-                          backgroundColor: isPresent
-                            ? '#10B981'
-                            : isAbsent
-                            ? '#EF4444'
-                            : isHalf
-                            ? '#F59E0B'
-                            : isSunday
-                            ? '#8B5CF6'
-                            : '#CBD5E1',
+                          backgroundColor:
+                            isSunday && !isPresent && !isAbsent
+                              ? '#8B5CF6'
+                              : isPresent
+                              ? '#10B981'
+                              : isAbsent
+                              ? '#EF4444'
+                              : isHalf
+                              ? '#F59E0B'
+                              : '#E2E8F0',
                         },
                       ]}
                     />
@@ -843,7 +849,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 14,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 12,
   },
   warningBanner: {
@@ -899,7 +905,6 @@ const styles = StyleSheet.create({
   },
   weekHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
     backgroundColor: '#F1F5F9',
     paddingVertical: 6,
     borderRadius: 6,
@@ -909,7 +914,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#64748B',
-    width: '14%',
+    width: '14.28%',
     textAlign: 'center',
   },
   calendarGrid: {

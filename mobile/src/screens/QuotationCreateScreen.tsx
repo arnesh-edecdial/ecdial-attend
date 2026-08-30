@@ -27,10 +27,10 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
   const [activeItemIndexForPicker, setActiveItemIndexForPicker] = useState<number>(0);
 
-  // 1. Customer matching Image 2
-  const [customerName, setCustomerName] = useState<string>('Mr. Senthilnathan');
-  const [customerAddress, setCustomerAddress] = useState<string>('Coimbatore, Tamil Nadu');
-  const [customerPhone, setCustomerPhone] = useState<string>('+91 98765 43210');
+  // 1. Customer Details (Initialized empty for real data entry)
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerAddress, setCustomerAddress] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
 
   // 2. Section A: Main Units matching Image 2
   const [mainItems, setMainItems] = useState<QuotationItem[]>([
@@ -211,15 +211,6 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const grandTotal = Math.round((subtotal + cgst + sgst + Number.EPSILON) * 100) / 100;
 
   const handleSave = async (status: 'DRAFT' | 'FINAL') => {
-    if (!customerName.trim()) {
-      alert('Please enter Customer Name');
-      return;
-    }
-    if (!customerAddress.trim()) {
-      alert('Please enter Customer Address');
-      return;
-    }
-
     setIsLoading(true);
     const allItems = [
       ...mainItems.map((i, idx) => ({ ...i, section: 'MAIN_UNIT', itemOrder: idx + 1 })),
@@ -228,9 +219,9 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
 
     try {
       const res = await mobileApi.createQuotation({
-        customerName,
-        customerAddress,
-        customerPhone,
+        customerName: customerName.trim(),
+        customerAddress: customerAddress.trim(),
+        customerPhone: customerPhone.trim(),
         hasLowSide,
         items: allItems,
         cgstPercent: 9,
@@ -259,29 +250,29 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       <View style={styles.card}>
         <Text style={styles.cardLabel}>CUSTOMER INFORMATION (To,)</Text>
 
-        <Text style={styles.fieldLabel}>Customer Name *</Text>
+        <Text style={styles.fieldLabel}>Customer Name (Optional)</Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. Mr. Senthilnathan"
+          placeholder="Customer Name"
           placeholderTextColor="#94A3B8"
           value={customerName}
           onChangeText={setCustomerName}
         />
 
-        <Text style={styles.fieldLabel}>Customer Address / Location *</Text>
+        <Text style={styles.fieldLabel}>Customer Address / Location (Optional)</Text>
         <TextInput
           style={[styles.input, { height: 54, textAlignVertical: 'top' }]}
-          placeholder="e.g. Coimbatore, Tamil Nadu"
+          placeholder="Customer Address / Location"
           placeholderTextColor="#94A3B8"
           value={customerAddress}
           onChangeText={setCustomerAddress}
           multiline
         />
 
-        <Text style={styles.fieldLabel}>Phone (Optional)</Text>
+        <Text style={styles.fieldLabel}>Phone Number (Optional)</Text>
         <TextInput
           style={styles.input}
-          placeholder="+91 98765 43210"
+          placeholder="Phone Number (e.g. +91 98765 43210)"
           placeholderTextColor="#94A3B8"
           value={customerPhone}
           onChangeText={setCustomerPhone}
@@ -577,7 +568,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 100,
+    paddingBottom: 130,
   },
   header: {
     marginBottom: 14,

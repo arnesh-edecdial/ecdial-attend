@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   View,
@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   StatusBar,
+  BackHandler,
 } from 'react-native';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { AttendanceScreen } from './src/screens/AttendanceScreen';
@@ -26,9 +27,11 @@ import { Quotation } from './src/types';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [currentTab, setCurrentTab] = useState<'HOME' | 'ATTENDANCE' | 'STOCK' | 'QUOTATIONS'>('HOME');
+  const [currentTab, setCurrentTab] = useState<
+    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS'
+  >('HOME');
   const [activeModal, setActiveModal] = useState<
-    'NONE' | 'SCANNER' | 'REQUEST' | 'CALENDAR' | 'ADMIN_CALENDAR' | 'ADMIN_MACHINES' | 'ADMIN_APPROVALS' | 'ADMIN_EMPLOYEES' | 'STOCK' | 'NEW_QUOTE' | 'PREVIEW_QUOTE'
+    'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE'
   >('NONE');
 
   const [drawerVisible, setDrawerVisible] = useState<boolean>(false);
@@ -37,6 +40,32 @@ export default function App() {
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
   const [activeUserRole, setActiveUserRole] = useState<'ADMIN' | 'SALES' | 'EMPLOYEE'>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
+
+  // Android Hardware Back Button Handling
+  useEffect(() => {
+    const onBackPress = () => {
+      if (!isAuthenticated) {
+        return false;
+      }
+      if (drawerVisible) {
+        setDrawerVisible(false);
+        return true;
+      }
+      if (activeModal !== 'NONE') {
+        setActiveModal('NONE');
+        return true;
+      }
+      if (currentTab !== 'HOME') {
+        setCurrentTab('HOME');
+        return true;
+      }
+      // At root HOME: allow default Android app exit
+      return false;
+    };
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => subscription.remove();
+  }, [isAuthenticated, drawerVisible, activeModal, currentTab]);
 
   const handleLoginSuccess = (user: any, token: string) => {
     setAuthToken(token);
@@ -69,14 +98,13 @@ export default function App() {
 
   const handleDrawerNavigate = (screenId: string) => {
     if (screenId === 'HOME') setCurrentTab('HOME');
-    else if (screenId === 'ADMIN_EMPLOYEES') setActiveModal('ADMIN_EMPLOYEES');
-    else if (screenId === 'ADMIN_CALENDAR') setActiveModal('ADMIN_CALENDAR');
-    else if (screenId === 'ADMIN_APPROVALS') setActiveModal('ADMIN_APPROVALS');
-    else if (screenId === 'ADMIN_MACHINES') setActiveModal('ADMIN_MACHINES');
+    else if (screenId === 'ADMIN_EMPLOYEES' || screenId === 'EMPLOYEES') setCurrentTab('EMPLOYEES');
+    else if (screenId === 'ADMIN_CALENDAR' || screenId === 'CALENDAR') setCurrentTab('CALENDAR');
+    else if (screenId === 'ADMIN_APPROVALS' || screenId === 'APPROVALS') setCurrentTab('APPROVALS');
+    else if (screenId === 'ADMIN_MACHINES' || screenId === 'MACHINES') setCurrentTab('MACHINES');
     else if (screenId === 'STOCK') setCurrentTab('STOCK');
     else if (screenId === 'QUOTATIONS') setCurrentTab('QUOTATIONS');
     else if (screenId === 'NEW_QUOTE') setActiveModal('NEW_QUOTE');
-    else if (screenId === 'CALENDAR') setCurrentTab('ATTENDANCE');
     else if (screenId === 'REQUEST') {
       setRequestInitialMode('TODAY');
       setActiveModal('REQUEST');
@@ -109,28 +137,34 @@ export default function App() {
               setRequestInitialMode(mode || 'TODAY');
               setActiveModal('REQUEST');
             }}
-            onOpenCalendar={() => setActiveModal('CALENDAR')}
+            onOpenCalendar={() => setCurrentTab('CALENDAR')}
             onOpenQuotations={() => setCurrentTab('QUOTATIONS')}
-            onOpenApprovals={() => setActiveModal('ADMIN_APPROVALS')}
-            onOpenMachines={() => setActiveModal('ADMIN_MACHINES')}
-            onOpenAdminCalendar={() => setActiveModal('ADMIN_CALENDAR')}
+            onOpenApprovals={() => setCurrentTab('APPROVALS')}
+            onOpenMachines={() => setCurrentTab('MACHINES')}
+            onOpenAdminCalendar={() => setCurrentTab('CALENDAR')}
             onOpenStock={() => setCurrentTab('STOCK')}
-            onOpenEmployees={() => setActiveModal('ADMIN_EMPLOYEES')}
+            onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
           />
-        ) : currentTab === 'ATTENDANCE' ? (
-          <AttendanceCalendarScreen
-            onClose={() => setCurrentTab('HOME')}
-            onRequestCorrection={(date) => {
-              setRequestInitialDate(date);
-              setRequestInitialMode('MISSED');
-              setActiveModal('REQUEST');
-            }}
-          />
+        ) : currentTab === 'CALENDAR' ? (
+          activeUserRole === 'ADMIN' ? (
+            <AdminCalendarScreen />
+          ) : (
+            <AttendanceCalendarScreen
+              onRequestCorrection={(date) => {
+                setRequestInitialDate(date);
+                setRequestInitialMode('MISSED');
+                setActiveModal('REQUEST');
+              }}
+            />
+          )
+        ) : currentTab === 'APPROVALS' ? (
+          <AdminApprovalsScreen />
+        ) : currentTab === 'EMPLOYEES' ? (
+          <AdminEmployeesScreen />
+        ) : currentTab === 'MACHINES' ? (
+          <AdminMachinesScreen />
         ) : currentTab === 'STOCK' ? (
-          <StockScreen
-            userRole={activeUserRole}
-            onClose={() => setCurrentTab('HOME')}
-          />
+          <StockScreen userRole={activeUserRole} />
         ) : (
           <QuotationListScreen
             userRole={activeUserRole}
@@ -143,91 +177,87 @@ export default function App() {
         )}
       </View>
 
-      {/* Role-Aware Bottom Navigation Bar */}
-      <View style={styles.bottomNavContainer}>
-        <View style={styles.bottomNavBar}>
-          {/* 1. Home */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => setCurrentTab('HOME')}
-          >
-            <Text style={{ fontSize: 20 }}>🏠</Text>
-            <Text style={[styles.navLabel, currentTab === 'HOME' && styles.navLabelActive]}>
-              Home
-            </Text>
-          </TouchableOpacity>
-
-          {/* 2. Attendance / Calendar */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => {
-              if (activeUserRole === 'ADMIN') {
-                setActiveModal('ADMIN_CALENDAR');
-              } else {
-                setCurrentTab('ATTENDANCE');
-              }
-            }}
-          >
-            <Text style={{ fontSize: 20 }}>📅</Text>
-            <Text style={[styles.navLabel, currentTab === 'ATTENDANCE' && styles.navLabelActive]}>
-              {activeUserRole === 'ADMIN' ? 'Calendar' : 'Attendance'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* 3. Center Elevated Action Button (Scan for Employee/Sales; Requests for Admin) */}
-          <View style={styles.centerBtnWrapper}>
+      {/* Role-Aware Bottom Navigation Bar (Always visible across all tabs; hidden only on Scanner modal) */}
+      {activeModal === 'NONE' && (
+        <View style={styles.bottomNavContainer}>
+          <View style={styles.bottomNavBar}>
+            {/* 1. Home */}
             <TouchableOpacity
-              style={[
-                styles.centerGlowButton,
-                activeUserRole === 'ADMIN' && { backgroundColor: '#0066CC' },
-              ]}
+              style={styles.navItem}
+              onPress={() => setCurrentTab('HOME')}
+            >
+              <Text style={{ fontSize: 20 }}>🏠</Text>
+              <Text style={[styles.navLabel, currentTab === 'HOME' && styles.navLabelActive]}>
+                Home
+              </Text>
+            </TouchableOpacity>
+
+            {/* 2. Attendance / Calendar */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => setCurrentTab('CALENDAR')}
+            >
+              <Text style={{ fontSize: 20 }}>📅</Text>
+              <Text style={[styles.navLabel, currentTab === 'CALENDAR' && styles.navLabelActive]}>
+                {activeUserRole === 'ADMIN' ? 'Calendar' : 'Attendance'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* 3. Center Elevated Action Button (Scan for Employee/Sales; Requests for Admin) */}
+            <View style={styles.centerBtnWrapper}>
+              <TouchableOpacity
+                style={[
+                  styles.centerGlowButton,
+                  activeUserRole === 'ADMIN' && { backgroundColor: '#0066CC' },
+                ]}
+                onPress={() => {
+                  if (activeUserRole === 'ADMIN') {
+                    setCurrentTab('APPROVALS');
+                  } else {
+                    setActiveModal('SCANNER');
+                  }
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ fontSize: 26, color: '#FFFFFF' }}>
+                  {activeUserRole === 'ADMIN' ? '📝' : '🔲'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 4. Stock & Inventory */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => setCurrentTab('STOCK')}
+            >
+              <Text style={{ fontSize: 20 }}>📦</Text>
+              <Text style={[styles.navLabel, currentTab === 'STOCK' && styles.navLabelActive]}>
+                Stock
+              </Text>
+            </TouchableOpacity>
+
+            {/* 5. Quotations / Requests */}
+            <TouchableOpacity
+              style={styles.navItem}
               onPress={() => {
-                if (activeUserRole === 'ADMIN') {
-                  setActiveModal('ADMIN_APPROVALS');
+                if (activeUserRole === 'EMPLOYEE') {
+                  setRequestInitialMode('TODAY');
+                  setActiveModal('REQUEST');
                 } else {
-                  setActiveModal('SCANNER');
+                  setCurrentTab('QUOTATIONS');
                 }
               }}
-              activeOpacity={0.85}
             >
-              <Text style={{ fontSize: 26, color: '#FFFFFF' }}>
-                {activeUserRole === 'ADMIN' ? '📝' : '🔲'}
+              <Text style={{ fontSize: 20 }}>
+                {activeUserRole === 'EMPLOYEE' ? '📝' : '📄'}
+              </Text>
+              <Text style={[styles.navLabel, currentTab === 'QUOTATIONS' && styles.navLabelActive]}>
+                {activeUserRole === 'EMPLOYEE' ? 'Requests' : 'Quotations'}
               </Text>
             </TouchableOpacity>
           </View>
-
-          {/* 4. Stock & Inventory */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => setCurrentTab('STOCK')}
-          >
-            <Text style={{ fontSize: 20 }}>📦</Text>
-            <Text style={[styles.navLabel, currentTab === 'STOCK' && styles.navLabelActive]}>
-              Stock
-            </Text>
-          </TouchableOpacity>
-
-          {/* 5. Quotations / Requests */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => {
-              if (activeUserRole === 'EMPLOYEE') {
-                setRequestInitialMode('TODAY');
-                setActiveModal('REQUEST');
-              } else {
-                setCurrentTab('QUOTATIONS');
-              }
-            }}
-          >
-            <Text style={{ fontSize: 20 }}>
-              {activeUserRole === 'EMPLOYEE' ? '📝' : '📄'}
-            </Text>
-            <Text style={[styles.navLabel, currentTab === 'QUOTATIONS' && styles.navLabelActive]}>
-              {activeUserRole === 'EMPLOYEE' ? 'Requests' : 'Quotations'}
-            </Text>
-          </TouchableOpacity>
         </View>
-      </View>
+      )}
 
       {/* Hamburger Drawer Navigation */}
       <AppDrawer
@@ -261,43 +291,6 @@ export default function App() {
             initialDate={requestInitialDate}
             initialMode={requestInitialMode}
           />
-        </View>
-      )}
-
-      {activeModal === 'CALENDAR' && (
-        <View style={StyleSheet.absoluteFillObject}>
-          <AttendanceCalendarScreen
-            onClose={() => setActiveModal('NONE')}
-            onRequestCorrection={(date) => {
-              setRequestInitialDate(date);
-              setRequestInitialMode('MISSED');
-              setActiveModal('REQUEST');
-            }}
-          />
-        </View>
-      )}
-
-      {activeModal === 'ADMIN_CALENDAR' && (
-        <View style={StyleSheet.absoluteFillObject}>
-          <AdminCalendarScreen onClose={() => setActiveModal('NONE')} />
-        </View>
-      )}
-
-      {activeModal === 'ADMIN_MACHINES' && (
-        <View style={StyleSheet.absoluteFillObject}>
-          <AdminMachinesScreen onClose={() => setActiveModal('NONE')} />
-        </View>
-      )}
-
-      {activeModal === 'ADMIN_APPROVALS' && (
-        <View style={StyleSheet.absoluteFillObject}>
-          <AdminApprovalsScreen onClose={() => setActiveModal('NONE')} />
-        </View>
-      )}
-
-      {activeModal === 'ADMIN_EMPLOYEES' && (
-        <View style={StyleSheet.absoluteFillObject}>
-          <AdminEmployeesScreen onClose={() => setActiveModal('NONE')} />
         </View>
       )}
 

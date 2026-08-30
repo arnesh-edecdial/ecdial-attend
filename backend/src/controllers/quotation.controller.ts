@@ -90,16 +90,6 @@ export const quotationController = {
       notes,
     } = req.body;
 
-    if (!customerName || !customerName.trim()) {
-      res.status(400).json({ success: false, message: 'Customer Name is required.' });
-      return;
-    }
-
-    if (!customerAddress || !customerAddress.trim()) {
-      res.status(400).json({ success: false, message: 'Customer Address is required.' });
-      return;
-    }
-
     try {
       const todayStr = getTodayDateString();
       const quotationNumber = await generateNextQuotationNumber();
@@ -493,6 +483,38 @@ export const quotationController = {
     } catch (err: any) {
       console.error('[PDF Generation Error]', err);
       res.status(500).json({ success: false, message: 'Failed to generate PDF.' });
+    }
+  },
+
+  // 9. Delete Quotation (Rule 19)
+  deleteQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    try {
+      const existing = await prisma.quotation.findUnique({ where: { id } });
+      if (!existing) {
+        res.status(404).json({ success: false, message: 'Quotation not found.' });
+        return;
+      }
+
+      // Permissions: ADMIN, MANAGER, IT_ADMIN, SALES or the salesman who created it
+      const allowedRoles = ['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES'];
+      if (!allowedRoles.includes(req.user?.role || '') && existing.createdById !== req.user?.id) {
+        res.status(403).json({ success: false, message: 'You do not have permission to delete this quotation.' });
+        return;
+      }
+
+      await prisma.$transaction([
+        prisma.quotationItem.deleteMany({ where: { quotationId: id } }),
+        prisma.quotation.delete({ where: { id } }),
+      ]);
+
+      res.json({
+        success: true,
+        message: 'Quotation deleted successfully.',
+      });
+    } catch (err: any) {
+      console.error('[Delete Quotation Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to delete quotation.' });
     }
   },
 };

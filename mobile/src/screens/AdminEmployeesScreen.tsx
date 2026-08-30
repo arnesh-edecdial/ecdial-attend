@@ -15,7 +15,7 @@ import {
 import { mobileApi } from '../services/api';
 
 interface AdminEmployeesScreenProps {
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onClose }) => {
@@ -113,6 +113,33 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
     }
   };
 
+  const handleDeleteEmployee = (emp: any) => {
+    Alert.alert(
+      'Delete Employee?',
+      `Are you sure you want to delete or deactivate ${emp.name}? If the employee has attendance records or quotations, they will be safely deactivated to preserve historical integrity.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await mobileApi.deleteEmployee(emp.id);
+              if (res.success) {
+                Alert.alert('Success', res.message || 'Employee processed successfully.');
+                fetchEmployees();
+              } else {
+                Alert.alert('Error', res.message || 'Failed to delete employee.');
+              }
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to delete employee.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const filteredEmployees = employees.filter((emp) => {
     const q = searchQuery.toLowerCase();
     return (
@@ -138,9 +165,11 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
           <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
             <Text style={styles.addBtnText}>+ ADD</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnText}>Back</Text>
-          </TouchableOpacity>
+          {onClose && (
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnText}>Close</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -193,17 +222,26 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
                   </Text>
                 </View>
 
-                {/* Status Toggle Switch */}
-                <View style={{ alignItems: 'center' }}>
-                  <Switch
-                    value={emp.isActive}
-                    onValueChange={() => handleToggleStatus(emp)}
-                    trackColor={{ false: '#CBD5E1', true: '#BFDBFE' }}
-                    thumbColor={emp.isActive ? '#0066CC' : '#94A3B8'}
-                  />
-                  <Text style={{ fontSize: 9, color: '#64748B', marginTop: 2 }}>
-                    {emp.isActive ? 'Enabled' : 'Disabled'}
-                  </Text>
+                {/* Status Toggle Switch & Delete */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={{ alignItems: 'center' }}>
+                    <Switch
+                      value={emp.isActive}
+                      onValueChange={() => handleToggleStatus(emp)}
+                      trackColor={{ false: '#CBD5E1', true: '#BFDBFE' }}
+                      thumbColor={emp.isActive ? '#0066CC' : '#94A3B8'}
+                    />
+                    <Text style={{ fontSize: 9, color: '#64748B', marginTop: 2 }}>
+                      {emp.isActive ? 'Enabled' : 'Disabled'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.empDeleteBtn}
+                    onPress={() => handleDeleteEmployee(emp)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 14 }}>🗑️</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -411,7 +449,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 110,
+    paddingBottom: 120,
     gap: 12,
   },
   empCard: {
@@ -429,6 +467,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     borderColor: '#CBD5E1',
     opacity: 0.8,
+  },
+  empDeleteBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   rowBetween: {
     flexDirection: 'row',

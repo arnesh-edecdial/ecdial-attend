@@ -4,11 +4,11 @@ export interface PDFQuotationData {
   quotationNumber: string;
   revisionNumber?: number;
   date: string;
-  customerName: string;
-  customerAddress: string;
+  customerName?: string | null;
+  customerAddress?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
-  createdByName: string;
+  createdByName?: string;
   createdByEmail?: string;
   hasLowSide: boolean;
   mainUnitTotal: number;
@@ -19,8 +19,8 @@ export interface PDFQuotationData {
   sgstPercent: number;
   sgstAmount: number;
   grandTotal: number;
-  termsAndConditions: string;
-  paymentMethod: string;
+  termsAndConditions?: string;
+  paymentMethod?: string;
   mainItems: Array<{
     description: string;
     quantity: number;
@@ -37,14 +37,25 @@ export interface PDFQuotationData {
   }>;
 }
 
+function sanitizePdfText(str: string | null | undefined): string {
+  if (!str) return '';
+  return str
+    .replace(/\u20B9/g, 'Rs. ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+    .replace(/[^\x20-\x7E\r\n\t]/g, '')
+    .trim();
+}
+
 export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
+      // Standard A4 dimensions: 595.28 x 841.89 pt
       const doc = new PDFDocument({
         size: 'A4',
-        margin: 28,
+        margin: 0,
+        autoFirstPage: true,
         info: {
-          Title: `Quotation_${data.quotationNumber}`,
+          Title: `Quotation_${sanitizePdfText(data.quotationNumber) || 'Offer'}`,
           Author: 'ECDIAL - Authorized Sales & Service Dealer',
         },
       });
@@ -54,172 +65,180 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       doc.on('end', () => resolve(Buffer.concat(buffers)));
       doc.on('error', (err) => reject(err));
 
-      const primaryNavy = '#0A1E3F';
-      const brandCyan = '#0066CC';
-      const accentBlue = '#0052A3';
-      const tableHeaderBg = '#0052A3';
-      const lightBg = '#F8FAFC';
-      const borderGray = '#D1D9E6';
+      const primaryNavy = '#0B1E3F';
+      const brandCyan = '#0084D6';
+      const accentBlue = '#005CA9';
+      const darkHeaderBg = '#004A8F';
+      const borderGray = '#CBD5E1';
       const textDark = '#1E293B';
-      const textMuted = '#475569';
+      const textMuted = '#64748B';
 
-      const pageWidth = doc.page.width;
-      const leftMargin = 28;
-      const rightMargin = pageWidth - 28;
-      const contentWidth = rightMargin - leftMargin;
+      const leftMargin = 32;
+      const rightMargin = 563;
+      const contentWidth = rightMargin - leftMargin; // 531 pt
 
-      // 1. TOP HEADER BANNER (Matching Image 2 with Daikin / ECDIAL Branding)
+      // 1. TOP RIGHT DECORATIVE WAVES (Matching Image 2)
       doc.save();
-      // Draw top header curved accent
-      doc.rect(leftMargin, 20, contentWidth, 68).fill('#FFFFFF');
-
-      // Left Logo Branding
-      doc.fillColor(brandCyan).fontSize(24).font('Helvetica-Bold')
-        .text('DAIKIN', leftMargin + 8, 28);
-      doc.fillColor(primaryNavy).fontSize(8.5).font('Helvetica-Bold')
-        .text('A I R   C O N D I T I O N E R S', leftMargin + 8, 54);
-      doc.fontSize(7.5).font('Helvetica')
-        .text('ECDIAL ENGINEERING SOLUTIONS', leftMargin + 8, 66);
-
-      // Blue decorative wave shapes on top
-      doc.path('M 260 20 L 380 20 L 320 88 L 230 88 Z').fill(accentBlue);
-      doc.path('M 310 20 L 400 20 L 350 88 L 290 88 Z').fill(brandCyan);
-
-      // Right Dealer Info Box
-      const rightHeaderX = rightMargin - 180;
-      doc.fillColor(primaryNavy).fontSize(9).font('Helvetica-Bold')
-        .text('Authorized Sales & Service Dealer', rightHeaderX, 28, { width: 175, align: 'right' });
-      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
-        .text('Coimbatore, Tamil Nadu', rightHeaderX, 42, { width: 175, align: 'right' })
-        .text('+91 98765 43210', rightHeaderX, 54, { width: 175, align: 'right' })
-        .text('sales@daikincoimbatore.in', rightHeaderX, 66, { width: 175, align: 'right' });
+      doc.path('M 400 0 C 460 30, 520 20, 595 105 L 595 0 Z').fill('#0084D6');
+      doc.path('M 440 0 C 490 20, 545 15, 595 70 L 595 0 Z').fill('#38BDF8');
       doc.restore();
 
-      let y = 98;
+      // 2. TOP BRANDING HEADER
+      // Daikin Logo text and ECDIAL subtitle
+      doc.fillColor('#0084D6').fontSize(22).font('Helvetica-Bold')
+        .text('DAIKIN', leftMargin, 26);
+      doc.fillColor(primaryNavy).fontSize(8).font('Helvetica-Bold')
+        .text('AIR CONDITIONERS', leftMargin, 50);
+      doc.fillColor(textMuted).fontSize(7).font('Helvetica')
+        .text('ECDIAL ENGINEERING SOLUTIONS', leftMargin, 60);
 
-      // 2. CUSTOMER INFO (LEFT) & QUOTATION SUMMARY BOX (RIGHT)
-      const leftBoxWidth = contentWidth * 0.52;
-      const rightBoxWidth = contentWidth * 0.44;
-      const rightBoxX = rightMargin - rightBoxWidth;
+      // Authorized Dealer Info on the right
+      const dealerX = rightMargin - 190;
+      doc.fillColor(primaryNavy).fontSize(8.5).font('Helvetica-Bold')
+        .text('Authorized Sales & Service Dealer', dealerX, 26, { width: 185, align: 'right' });
+      
+      // Vector location dot + text
+      doc.circle(dealerX + 50, 41, 2).fill(brandCyan);
+      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
+        .text('Coimbatore, Tamil Nadu', dealerX, 38, { width: 185, align: 'right' });
+      
+      // Vector phone dot + text
+      doc.circle(dealerX + 80, 52, 2).fill(brandCyan);
+      doc.text('+91 98765 43210', dealerX, 49, { width: 185, align: 'right' });
+      
+      // Vector email dot + text
+      doc.circle(dealerX + 40, 63, 2).fill(brandCyan);
+      doc.text('sales@daikincoimbatore.in', dealerX, 60, { width: 185, align: 'right' });
 
-      // To Customer Block
-      doc.fillColor(primaryNavy).fontSize(10).font('Helvetica-Bold').text('To,', leftMargin, y);
-      doc.fontSize(14).font('Helvetica-Bold').text(data.customerName, leftMargin, y + 14);
-      doc.fillColor(textMuted).fontSize(9).font('Helvetica').text(`📍 ${data.customerAddress}`, leftMargin, y + 34, { width: leftBoxWidth - 10 });
-      if (data.customerPhone) {
-        doc.text(`Phone: ${data.customerPhone}`, leftMargin, y + 50);
+      // Thin separator below header
+      doc.rect(leftMargin, 74, contentWidth, 0.5).fill('#E2E8F0');
+
+      let y = 82;
+
+      // 3. CUSTOMER BLOCK (LEFT) & QUOTATION SUMMARY CARD (RIGHT)
+      const cleanCustomerName = sanitizePdfText(data.customerName);
+      const cleanCustomerAddress = sanitizePdfText(data.customerAddress);
+      const cleanCustomerPhone = sanitizePdfText(data.customerPhone);
+      const hasCustomer = cleanCustomerName.length > 0;
+      const rightCardWidth = 185;
+      const rightCardX = rightMargin - rightCardWidth;
+
+      if (hasCustomer) {
+        doc.fillColor(primaryNavy).fontSize(9).font('Helvetica-Bold')
+          .text('To,', leftMargin, y + 2);
+        doc.fillColor(textDark).fontSize(11).font('Helvetica-Bold')
+          .text(cleanCustomerName, leftMargin, y + 14);
+        if (cleanCustomerAddress.length > 0) {
+          doc.fillColor(textMuted).fontSize(8).font('Helvetica')
+            .text(cleanCustomerAddress, leftMargin, y + 28, { width: 290 });
+        }
+        if (cleanCustomerPhone.length > 0) {
+          doc.fillColor(textMuted).fontSize(8).font('Helvetica')
+            .text(`Phone: ${cleanCustomerPhone}`, leftMargin, y + 42, { width: 290 });
+        }
       }
 
-      // Quotation Summary Card (Matching Image 2)
-      doc.rect(rightBoxX, y, rightBoxWidth, 88).lineWidth(1).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
+      // Quotation Summary Card (Image 2 style)
+      const cardHeight = 82;
+      doc.roundedRect(rightCardX, y, rightCardWidth, cardHeight, 4).lineWidth(0.8).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
 
-      // Card Header
-      doc.rect(rightBoxX, y, rightBoxWidth, 20).fill(brandCyan);
-      doc.fillColor('#FFFFFF').fontSize(10).font('Helvetica-Bold')
-        .text('QUOTATION', rightBoxX + 10, y + 5);
-      doc.fontSize(8.5).font('Helvetica')
-        .text(`Date: ${data.date}`, rightBoxX + 100, y + 6, { width: rightBoxWidth - 110, align: 'right' });
+      // Top Navy Header
+      doc.roundedRect(rightCardX, y, rightCardWidth, 18, 3).fill(primaryNavy);
+      doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold')
+        .text('QUOTATION', rightCardX + 8, y + 5);
+      doc.fontSize(7.5).font('Helvetica')
+        .text(`Date: ${sanitizePdfText(data.date)}`, rightCardX + 70, y + 5.5, { width: rightCardWidth - 78, align: 'right' });
 
       // Breakdown Lines
-      const cardRowY = y + 24;
-      doc.fillColor(textDark).fontSize(8).font('Helvetica');
+      const cardY = y + 22;
+      doc.fillColor(textDark).fontSize(7.5).font('Helvetica');
+      doc.text('Sub Total (A)', rightCardX + 8, cardY);
+      doc.text(`Rs.  ${Number(data.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 70, cardY, { width: rightCardWidth - 78, align: 'right' });
 
-      doc.text('Sub Total (A)', rightBoxX + 10, cardRowY);
-      doc.text(`₹  ${Number(data.subtotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightBoxX + 90, cardRowY, { width: rightBoxWidth - 100, align: 'right' });
+      doc.text(`CGST ${data.cgstPercent || 9}%`, rightCardX + 8, cardY + 11);
+      doc.text(`Rs.  ${Number(data.cgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 70, cardY + 11, { width: rightCardWidth - 78, align: 'right' });
 
-      doc.text(`CGST ${data.cgstPercent}%`, rightBoxX + 10, cardRowY + 12);
-      doc.text(`₹  ${Number(data.cgstAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightBoxX + 90, cardRowY + 12, { width: rightBoxWidth - 100, align: 'right' });
-
-      doc.text(`SGST ${data.sgstPercent}%`, rightBoxX + 10, cardRowY + 24);
-      doc.text(`₹  ${Number(data.sgstAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightBoxX + 90, cardRowY + 24, { width: rightBoxWidth - 100, align: 'right' });
+      doc.text(`SGST ${data.sgstPercent || 9}%`, rightCardX + 8, cardY + 22);
+      doc.text(`Rs.  ${Number(data.sgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 70, cardY + 22, { width: rightCardWidth - 78, align: 'right' });
 
       // Total Banner (Navy Blue)
-      doc.rect(rightBoxX, y + 66, rightBoxWidth, 22).fill(primaryNavy);
-      doc.fillColor('#FFFFFF').fontSize(9).font('Helvetica-Bold')
-        .text('TOTAL (A)', rightBoxX + 10, y + 72);
-      doc.fontSize(11).font('Helvetica-Bold')
-        .text(`₹ ${Number(data.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightBoxX + 80, y + 71, { width: rightBoxWidth - 90, align: 'right' });
+      doc.roundedRect(rightCardX, y + cardHeight - 20, rightCardWidth, 20, 3).fill(darkHeaderBg);
+      doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold')
+        .text('TOTAL (A)', rightCardX + 8, y + cardHeight - 15);
+      doc.fontSize(9.5).font('Helvetica-Bold')
+        .text(`Rs. ${Number(data.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 60, y + cardHeight - 15, { width: rightCardWidth - 68, align: 'right' });
 
-      y += 100;
+      y += cardHeight + 10;
 
-      // 3. TABLE DRAWING HELPER (Matching Section A & Section B from Image 2)
+      // 4. TABLE DRAWING HELPER
       const drawSectionTable = (
-        sectionBadge: string,
+        sectionLetter: string,
         sectionTitle: string,
         items: Array<{ description: string; quantity: number; unit: string; unitPrice: number; amount: number }>
       ) => {
-        // Section Header with Badge
-        doc.rect(leftMargin, y, 20, 16).fill(accentBlue);
-        doc.fillColor('#FFFFFF').fontSize(9.5).font('Helvetica-Bold')
-          .text(sectionBadge, leftMargin + 6, y + 3);
+        // Section Title & Badge
+        doc.roundedRect(leftMargin, y, 16, 14, 2).fill(darkHeaderBg);
+        doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold')
+          .text(sectionLetter, leftMargin + 4.5, y + 2.5);
 
-        doc.fillColor(primaryNavy).fontSize(9.5).font('Helvetica-Bold')
-          .text(sectionTitle, leftMargin + 26, y + 3);
+        doc.fillColor(primaryNavy).fontSize(8.5).font('Helvetica-Bold')
+          .text(sectionTitle, leftMargin + 22, y + 3);
 
-        // Header blue line
-        doc.rect(leftMargin + 190, y + 8, contentWidth - 190, 1.5).fill(accentBlue);
-        y += 20;
+        y += 18;
 
         // Table Header
-        doc.rect(leftMargin, y, contentWidth, 18).fill(tableHeaderBg);
-        doc.fillColor('#FFFFFF').fontSize(8).font('Helvetica-Bold');
-        doc.text('Sl.No', leftMargin + 5, y + 5, { width: 35, align: 'center' });
-        doc.text('Description', leftMargin + 45, y + 5, { width: 235 });
-        doc.text('Qty', leftMargin + 285, y + 5, { width: 35, align: 'center' });
-        doc.text('Unit', leftMargin + 325, y + 5, { width: 45, align: 'center' });
-        doc.text('Price (₹)', leftMargin + 375, y + 5, { width: 75, align: 'right' });
-        doc.text('Amount (₹)', leftMargin + 455, y + 5, { width: 75, align: 'right' });
-        y += 18;
+        doc.roundedRect(leftMargin, y, contentWidth, 16, 2).fill(darkHeaderBg);
+        doc.fillColor('#FFFFFF').fontSize(7.5).font('Helvetica-Bold');
+        doc.text('Sl.No', leftMargin + 4, y + 4.5, { width: 28, align: 'center' });
+        doc.text('Description', leftMargin + 36, y + 4.5, { width: 240 });
+        doc.text('Qty', leftMargin + 280, y + 4.5, { width: 30, align: 'center' });
+        doc.text('Unit', leftMargin + 315, y + 4.5, { width: 35, align: 'center' });
+        doc.text('Price (INR)', leftMargin + 355, y + 4.5, { width: 80, align: 'right' });
+        doc.text('Amount (INR)', leftMargin + 440, y + 4.5, { width: 85, align: 'right' });
+        y += 16;
 
         // Table Rows
         items.forEach((item, index) => {
-          const rowBg = index % 2 === 0 ? '#FFFFFF' : '#F9FBFE';
-          const rowHeight = 22;
+          const rowBg = index % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
+          const rowHeight = 18;
           doc.rect(leftMargin, y, contentWidth, rowHeight).lineWidth(0.5).strokeColor(borderGray).fillAndStroke(rowBg, borderGray);
 
-          doc.fillColor(textDark).fontSize(8).font('Helvetica');
-          doc.text(String(index + 1), leftMargin + 5, y + 6, { width: 35, align: 'center' });
-          doc.font('Helvetica-Bold').text(item.description, leftMargin + 45, y + 6, { width: 235, height: 16 });
+          doc.fillColor(textDark).fontSize(7).font('Helvetica');
+          doc.text(String(index + 1), leftMargin + 4, y + 5, { width: 28, align: 'center' });
+          doc.font('Helvetica-Bold').text(sanitizePdfText(item.description), leftMargin + 36, y + 5, { width: 240, height: 12 });
           doc.font('Helvetica');
-          doc.text(String(item.quantity), leftMargin + 285, y + 6, { width: 35, align: 'center' });
-          doc.text(item.unit, leftMargin + 325, y + 6, { width: 45, align: 'center' });
-          doc.text(Number(item.unitPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 }), leftMargin + 375, y + 6, { width: 75, align: 'right' });
-          doc.font('Helvetica-Bold').text(Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 }), leftMargin + 455, y + 6, { width: 75, align: 'right' });
+          doc.text(String(item.quantity || 1), leftMargin + 280, y + 5, { width: 30, align: 'center' });
+          doc.text(sanitizePdfText(item.unit) || 'Nos', leftMargin + 315, y + 5, { width: 35, align: 'center' });
+          doc.text(Number(item.unitPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }), leftMargin + 355, y + 5, { width: 80, align: 'right' });
+          doc.font('Helvetica-Bold').text(Number(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }), leftMargin + 440, y + 5, { width: 85, align: 'right' });
 
           y += rowHeight;
         });
 
-        y += 10;
+        y += 8;
       };
 
       // Render Section A: MAIN UNIT
-      drawSectionTable('A', 'MAIN UNIT', data.mainItems);
+      drawSectionTable('A', 'MAIN UNIT', data.mainItems || []);
 
-      // Render Section B: LOW SIDE (B) IF NEED EXTRA MATERIALS
+      // Render Section B: LOW SIDE
       if (data.hasLowSide && data.lowSideItems && data.lowSideItems.length > 0) {
-        if (y > 540) {
-          doc.addPage();
-          y = 28;
-        }
         drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', data.lowSideItems);
       }
 
-      // Check for Terms Box Page Break
-      if (y > 580) {
-        doc.addPage();
-        y = 28;
-      }
-
-      // 4. BOTTOM TWO-COLUMN BOXES: TERMS & CONDITIONS (LEFT) + PAYMENT METHOD (RIGHT)
-      const boxWidth = (contentWidth - 14) / 2;
-      const boxHeight = 165;
-      const rightColX = leftMargin + boxWidth + 14;
+      // 5. BOTTOM BOXES: TERMS & CONDITIONS (LEFT) + PAYMENT METHOD (RIGHT)
+      const boxWidth = (contentWidth - 10) / 2;
+      const boxHeight = 142;
+      const rightColX = leftMargin + boxWidth + 10;
 
       // Left Box: TERMS & CONDITIONS
-      doc.rect(leftMargin, y, boxWidth, boxHeight).lineWidth(1).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
-      doc.rect(leftMargin, y, boxWidth, 22).fill('#F1F5F9');
-      doc.fillColor(primaryNavy).fontSize(9).font('Helvetica-Bold')
-        .text('📝  TERMS & CONDITIONS', leftMargin + 8, y + 6);
+      doc.roundedRect(leftMargin, y, boxWidth, boxHeight, 4).lineWidth(0.8).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
+      doc.roundedRect(leftMargin, y, boxWidth, 18, 3).fill('#F1F5F9');
+      
+      // Vector document icon badge
+      doc.rect(leftMargin + 8, y + 5, 8, 8).fill(darkHeaderBg);
+      doc.fillColor(primaryNavy).fontSize(8).font('Helvetica-Bold')
+        .text('TERMS & CONDITIONS', leftMargin + 20, y + 5);
 
       const termsList = [
         'AC Price is inclusive of 18 % taxes. 18% Tax Additional for Lowside.',
@@ -230,22 +249,25 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
         'This Quotation Is Valid For 10 days.',
       ];
 
-      let termY = y + 28;
+      let termY = y + 22;
       termsList.forEach((term, idx) => {
-        // Number badge
-        doc.circle(leftMargin + 14, termY + 4, 6).fill(primaryNavy);
-        doc.fillColor('#FFFFFF').fontSize(6.5).font('Helvetica-Bold').text(String(idx + 1), leftMargin + 11.5, termY + 1.5);
+        doc.circle(leftMargin + 12, termY + 3.5, 4.5).fill(darkHeaderBg);
+        doc.fillColor('#FFFFFF').fontSize(5.5).font('Helvetica-Bold')
+          .text(String(idx + 1), leftMargin + 10, termY + 1.5);
 
-        doc.fillColor(textDark).fontSize(6.5).font('Helvetica')
-          .text(term, leftMargin + 25, termY, { width: boxWidth - 32 });
-        termY += 21;
+        doc.fillColor(textDark).fontSize(6).font('Helvetica')
+          .text(term, leftMargin + 20, termY, { width: boxWidth - 26, lineGap: 0.5 });
+        termY += 19;
       });
 
       // Right Box: PAYMENT METHOD
-      doc.rect(rightColX, y, boxWidth, boxHeight).lineWidth(1).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
-      doc.rect(rightColX, y, boxWidth, 22).fill('#F1F5F9');
-      doc.fillColor(primaryNavy).fontSize(9).font('Helvetica-Bold')
-        .text('💳  PAYMENT METHOD', rightColX + 8, y + 6);
+      doc.roundedRect(rightColX, y, boxWidth, boxHeight, 4).lineWidth(0.8).strokeColor(borderGray).fillAndStroke('#FFFFFF', borderGray);
+      doc.roundedRect(rightColX, y, boxWidth, 18, 3).fill('#F1F5F9');
+      
+      // Vector card icon badge
+      doc.rect(rightColX + 8, y + 5, 8, 8).fill(brandCyan);
+      doc.fillColor(primaryNavy).fontSize(8).font('Helvetica-Bold')
+        .text('PAYMENT METHOD', rightColX + 20, y + 5);
 
       const paymentList = [
         { num: 'i', text: '100% Payment advance with P.O for Machine.' },
@@ -254,36 +276,39 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
         { num: 'iv', text: '5% Payment after raising the final bill.' },
       ];
 
-      let payY = y + 28;
+      let payY = y + 23;
       paymentList.forEach((pay) => {
-        doc.circle(rightColX + 14, payY + 5, 7).fill(brandCyan);
-        doc.fillColor('#FFFFFF').fontSize(6.5).font('Helvetica-Bold').text(pay.num, rightColX + 11, payY + 2.5);
+        doc.circle(rightColX + 13, payY + 4, 5.5).fill(brandCyan);
+        doc.fillColor('#FFFFFF').fontSize(5.5).font('Helvetica-Bold')
+          .text(pay.num, rightColX + 10.5, payY + 2);
 
-        doc.fillColor(textDark).fontSize(7).font('Helvetica')
-          .text(pay.text, rightColX + 26, payY + 2, { width: boxWidth - 34 });
-        payY += 24;
+        doc.fillColor(textDark).fontSize(6.5).font('Helvetica')
+          .text(pay.text, rightColX + 23, payY + 1.5, { width: boxWidth - 28 });
+        payY += 21;
       });
 
-      // Quality Cooling Badge
-      doc.rect(rightColX + 12, payY + 4, boxWidth - 24, 28).fill('#EBF3FC');
-      doc.fillColor(brandCyan).fontSize(7.5).font('Helvetica-Bold')
-        .text('🛡️ Quality Cooling. Trusted Service. Every Time.', rightColX + 18, payY + 14);
+      // Quality Cooling Pill (Matching Image 2)
+      doc.roundedRect(rightColX + 8, payY + 4, boxWidth - 16, 20, 3).fill('#EBF5FF');
+      doc.fillColor(brandCyan).fontSize(7).font('Helvetica-Bold')
+        .text('Quality Cooling. Trusted Service. Every Time.', rightColX + 12, payY + 10, { width: boxWidth - 24, align: 'center' });
 
-      y += boxHeight + 10;
+      y += boxHeight + 8;
 
-      // 5. FOOTER BANNER (Dark Blue with Handshake & AC unit silhouettes)
-      if (y > doc.page.height - 45) {
-        doc.addPage();
-        y = doc.page.height - 45;
-      }
+      // 6. FOOTER BAR (Matching Image 2 with subtle curves and dual messages)
+      doc.roundedRect(leftMargin, y, contentWidth, 24, 4).fill(primaryNavy);
+      
+      // Left Shield & Quality Message
+      doc.fillColor('#FFFFFF').fontSize(7.5).font('Helvetica-Bold')
+        .text('Quality Cooling. Trusted Service. Every Time.', leftMargin + 10, y + 7.5);
 
-      doc.rect(leftMargin, y, contentWidth, 32).fill(primaryNavy);
-      doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold')
-        .text('🤝  Thanking you and assure our best service always.', leftMargin + 12, y + 11);
+      // Right Message
+      doc.fillColor('#FFFFFF').fontSize(7.5).font('Helvetica-Bold')
+        .text('Thanking you and assure our best service always.', rightMargin - 220, y + 7.5, { width: 210, align: 'right' });
 
-      // AC Unit Icons text representation on right
-      doc.fontSize(8).font('Helvetica')
-        .text('❄️ Split AC Indoor / Outdoor Units', rightMargin - 160, y + 11, { width: 150, align: 'right' });
+      // Subtle bottom right curve decorative swoosh
+      doc.save();
+      doc.path('M 480 841.89 C 520 820, 560 830, 595.28 800 L 595.28 841.89 Z').fill('#38BDF8');
+      doc.restore();
 
       doc.end();
     } catch (error) {
@@ -291,3 +316,4 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
     }
   });
 }
+
