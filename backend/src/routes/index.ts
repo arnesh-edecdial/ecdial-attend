@@ -58,6 +58,12 @@ router.patch(
   requireRole(['ADMIN', 'MANAGER']),
   authController.toggleEmployeeStatus
 );
+router.patch(
+  '/auth/employees/:id/toggle-status',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER']),
+  authController.toggleEmployeeStatus
+);
 router.delete(
   '/auth/employees/:id',
   authMiddleware,
@@ -72,10 +78,12 @@ router.delete(
 router.get('/attendance/qr/today', authMiddleware, attendanceController.getTodayQR);
 router.get('/attendance/qr/image.png', attendanceController.getTodayQRImage);
 
-// B. Check-in & Check-out Actions
+// B. Check-in & Check-out Actions (Supported with and without hyphens)
 router.get('/attendance/status/today', authMiddleware, attendanceController.getTodayStatus);
 router.post('/attendance/check-in', authMiddleware, attendanceController.checkIn);
+router.post('/attendance/checkin', authMiddleware, attendanceController.checkIn);
 router.post('/attendance/check-out', authMiddleware, attendanceController.checkOut);
+router.post('/attendance/checkout', authMiddleware, attendanceController.checkOut);
 
 // C. Attendance Requests (Single-Day / Closing)
 router.post('/attendance/requests', authMiddleware, attendanceController.submitAttendanceRequest);

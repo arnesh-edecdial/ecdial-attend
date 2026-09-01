@@ -189,6 +189,7 @@ model Quotation {
   customerEmail       String?
   customerLocation    String?
   createdById         String
+  quotationType       String          @default("DAIKIN") // "DAIKIN" or "ECDIAL"
   hasLowSide          Boolean         @default(false)
   mainUnitTotal       Float           @default(0.0)
   lowSideTotal        Float           @default(0.0)
@@ -215,6 +216,7 @@ model QuotationItem {
   quotationId String
   section     String    // "MAIN_UNIT" or "LOW_SIDE"
   productId   String?
+  brand       String?   // "Daikin", "Mitsubishi", "LG", "General", "Godrej", "Onida"
   itemOrder   Int       @default(0)
   description String    @db.Text
   quantity    Float     @default(1.0)

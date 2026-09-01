@@ -122,21 +122,27 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       const termsWidth = contentWidth;
       const termsHeight = termsWidth * (176 / 572); // ~163.4 pt
 
-      // =========================================================================
-      // 1. DETERMINE MULTI-PAGE vs SINGLE-PAGE & DYNAMIC ROW HEIGHTS
-      // =========================================================================
-      // Terms block sits right above the footer with an 8pt gap
+      // Helper to format date as DD-MM-YYYY
+      const formatDisplayDate = (dateStr?: string): string => {
+        if (!dateStr) return '18-05-2026';
+        const parts = dateStr.split('-');
+        if (parts.length === 3 && parts[0].length === 4) {
+          return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+        return dateStr;
+      };
+
+      const displayDate = formatDisplayDate(sanitizePdfText(data.date));
+
+      // Space available between Customer Summary Card and Terms block
       const termsY1Page = footerY - termsHeight - 8; // ~608.89 pt
 
-      // Space available between Customer Summary Card (ends at ~228pt) and Terms block (starts at ~608pt)
-      const availableTableHeight1Page = termsY1Page - 228 - 10; // ~370.89 pt
-
-      // If Main Units >= 4 or total items > 8, use 2 pages. Otherwise, use 1 page.
-      const isTwoPages = mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 8);
+      // If Main Units >= 4 or total items > 7, use 2 pages. Otherwise, use 1 page.
+      const isTwoPages = mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 7);
       const totalPages = isTwoPages ? 2 : 1;
 
-      // Helper to draw the Top Header on Page 1
-      const drawPage1Header = () => {
+      // Helper to draw the Top Header on any page
+      const drawHeaderBanner = () => {
         if (headerPath) {
           doc.image(headerPath, 0, 0, { width: headerWidth });
         } else {
@@ -144,28 +150,6 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
           doc.fillColor(daikinBrightBlue).fontSize(22).font('Helvetica-Bold').text('DAIKIN', 34, 28);
           doc.fillColor(daikinDarkNavy).fontSize(9).font('Helvetica-Bold').text('AIR CONDITIONERS', 34, 52);
         }
-      };
-
-      // Helper to draw the Top Header on Page 2
-      const drawPage2Header = () => {
-        const p2HeaderH = 46;
-        doc.rect(0, 0, headerWidth, p2HeaderH).fill('#F8FAFC');
-        
-        // Brand on Left
-        doc.fillColor(daikinBrightBlue).fontSize(16).font('Helvetica-Bold').text('DAIKIN', leftMargin, 12);
-        doc.fillColor(daikinDarkNavy).fontSize(8).font('Helvetica-Bold').text('AIR CONDITIONERS', leftMargin + 65, 16);
-        doc.fillColor(textMuted).fontSize(8).font('Helvetica').text('ECDIAL ENGINEERING SOLUTIONS', leftMargin + 165, 16);
-
-        // Date & Page 2 of 2 on Right
-        doc.fillColor(textDark).fontSize(9).font('Helvetica-Bold')
-          .text(`Date: ${sanitizePdfText(data.date)}`, rightMargin - 220, 10, { width: 100, align: 'right' });
-        doc.fillColor(daikinBrightBlue).fontSize(9).font('Helvetica-Bold')
-          .text(`Page 2 of ${totalPages}`, rightMargin - 105, 10, { width: 105, align: 'right' });
-        doc.fillColor(textMuted).fontSize(8).font('Helvetica')
-          .text(sanitizePdfText(data.quotationNumber), rightMargin - 150, 24, { width: 150, align: 'right' });
-
-        // Accent Bottom Border
-        doc.rect(0, p2HeaderH - 1.5, headerWidth, 1.5).fill(daikinBrightBlue);
       };
 
       // Helper to draw Footer Banner on any page
@@ -182,9 +166,9 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       // =========================================================================
       // 2. RENDER PAGE 1 TOP SECTION
       // =========================================================================
-      drawPage1Header();
+      drawHeaderBanner();
 
-      let y = headerHeight + 5;
+      let y = headerHeight + 8;
 
       // Customer Info (Left) & Quotation Commercial Summary Box (Right)
       const cleanCustomerName = sanitizePdfText(data.customerName);
@@ -194,16 +178,8 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
 
       const rightCardWidth = 205;
       const rightCardX = rightMargin - rightCardWidth;
-      const cardHeight = 112;
-
-      // Top Meta: Date and Page Number indicator above cards if multi-page
-      if (isTwoPages) {
-        doc.fillColor(textDark).fontSize(9).font('Helvetica-Bold')
-          .text(`Date: ${sanitizePdfText(data.date)}`, rightMargin - 220, y - 2, { width: 110, align: 'right' });
-        doc.fillColor(daikinBrightBlue).fontSize(9).font('Helvetica-Bold')
-          .text(`Page 1 of ${totalPages}`, rightMargin - 100, y - 2, { width: 100, align: 'right' });
-        y += 10;
-      }
+      const cardHeight = 114;
+      const cardRowH = 18;
 
       // Left Customer Box
       if (hasCustomer) {
@@ -224,44 +200,56 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
         }
       }
 
-      // Right: Quotation Commercial Card
-      doc.roundedRect(rightCardX, y, rightCardWidth, cardHeight, 6)
-        .lineWidth(0.8).strokeColor(ruleGray).fillAndStroke('#FFFFFF', ruleGray);
+      // Right: Quotation Commercial Summary Box (Crisp High-Contrast Grid)
+      doc.roundedRect(rightCardX, y, rightCardWidth, cardHeight, 5)
+        .lineWidth(0.8).strokeColor('#CBD5E1').fillAndStroke('#FFFFFF', '#CBD5E1');
 
-      // Top Dark Blue Header: QUOTATION
+      // Top Navy Header: QUOTATION
       doc.roundedRect(rightCardX, y, rightCardWidth, 23, 5).fill(daikinDarkNavy);
       doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold')
         .text('QUOTATION', rightCardX, y + 6.5, { width: rightCardWidth, align: 'center' });
 
-      // Summary Meta: Date & Quote Number
-      const dateY = y + 27;
-      doc.fillColor(textMuted).fontSize(8.5).font('Helvetica')
-        .text(`Date: ${sanitizePdfText(data.date)}`, rightCardX + 10, dateY);
-      doc.text(sanitizePdfText(data.quotationNumber), rightCardX + 80, dateY, { width: rightCardWidth - 90, align: 'right' });
+      // Row 1: Date (Clean date only, quotation number removed as requested)
+      const r1Y = y + 23;
+      doc.rect(rightCardX, r1Y, rightCardWidth, cardRowH).fill('#F8FAFC');
+      doc.rect(rightCardX, r1Y, rightCardWidth, 0.6).fill('#E2E8F0');
+      doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
+        .text(`Date: ${displayDate}`, rightCardX, r1Y + 4.5, { width: rightCardWidth, align: 'center' });
 
-      // Divider line below meta
-      doc.rect(rightCardX, y + 39, rightCardWidth, 0.8).fill(ruleGray);
+      // Row 2: Sub Total
+      const r2Y = r1Y + cardRowH;
+      doc.rect(rightCardX, r2Y, rightCardWidth, 0.6).fill('#E2E8F0');
+      doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
+        .text(isTwoPages ? 'Sub Total (A)' : 'Sub Total', rightCardX + 10, r2Y + 4.5);
+      doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
+        .text(`Rs. ${Number(data.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r2Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
 
-      // Breakdown Lines
-      const cardBodyY = y + 44;
-      doc.fillColor(textDark).fontSize(8.5).font('Helvetica');
-      doc.text('Sub Total', rightCardX + 12, cardBodyY);
-      doc.font('Helvetica-Bold').text(`Rs. ${Number(data.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 75, cardBodyY, { width: rightCardWidth - 87, align: 'right' });
-      doc.rect(rightCardX + 10, cardBodyY + 13, rightCardWidth - 20, 0.5).fill('#EEF3F8');
+      // Row 3: CGST (Crisp dark text)
+      const r3Y = r2Y + cardRowH;
+      doc.rect(rightCardX, r3Y, rightCardWidth, 0.6).fill('#E2E8F0');
+      doc.fillColor('#334155').fontSize(8.5).font('Helvetica')
+        .text(`CGST ${data.cgstPercent || 9}%`, rightCardX + 10, r3Y + 4.5);
+      doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
+        .text(`Rs. ${Number(data.cgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r3Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
 
-      doc.font('Helvetica').text(`CGST ${data.cgstPercent || 9}%`, rightCardX + 12, cardBodyY + 17);
-      doc.font('Helvetica-Bold').text(`Rs. ${Number(data.cgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 75, cardBodyY + 17, { width: rightCardWidth - 87, align: 'right' });
-      doc.rect(rightCardX + 10, cardBodyY + 30, rightCardWidth - 20, 0.5).fill('#EEF3F8');
+      // Row 4: SGST (Crisp dark text)
+      const r4Y = r3Y + cardRowH;
+      doc.rect(rightCardX, r4Y, rightCardWidth, 0.6).fill('#E2E8F0');
+      doc.fillColor('#334155').fontSize(8.5).font('Helvetica')
+        .text(`SGST ${data.sgstPercent || 9}%`, rightCardX + 10, r4Y + 4.5);
+      doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
+        .text(`Rs. ${Number(data.sgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r4Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
 
-      doc.font('Helvetica').text(`SGST ${data.sgstPercent || 9}%`, rightCardX + 12, cardBodyY + 34);
-      doc.font('Helvetica-Bold').text(`Rs. ${Number(data.sgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 75, cardBodyY + 34, { width: rightCardWidth - 87, align: 'right' });
+      // Row 5: Total Banner
+      const r5Y = r4Y + cardRowH;
+      doc.roundedRect(rightCardX, r5Y, rightCardWidth, 24, 5).fill(daikinDarkNavy);
+      doc.fillColor('#FFFFFF').fontSize(9.5).font('Helvetica-Bold')
+        .text(isTwoPages ? 'TOTAL (A)' : 'TOTAL', rightCardX + 10, r5Y + 6.5);
+      doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold')
+        .text(`Rs. ${Number(data.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 75, r5Y + 6, { width: rightCardWidth - 85, align: 'right' });
 
-      // Total Banner (Bright Blue / Royal Blue Pill)
-      doc.roundedRect(rightCardX, y + cardHeight - 24, rightCardWidth, 24, 5).fill(daikinDarkNavy);
-      doc.fillColor('#FFFFFF').fontSize(10).font('Helvetica-Bold')
-        .text('TOTAL', rightCardX + 12, y + cardHeight - 17);
-      doc.fontSize(12).font('Helvetica-Bold')
-        .text(`Rs. ${Number(data.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 65, y + cardHeight - 18, { width: rightCardWidth - 77, align: 'right' });
+      // Vertical divider in middle of summary box
+      doc.rect(rightCardX + 90, r1Y, 0.6, cardRowH * 4).fill('#E2E8F0');
 
       y += cardHeight + 10;
 
@@ -352,7 +340,6 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
         items.forEach((item, index) => {
           const rowBg = index % 2 === 0 ? '#FFFFFF' : rowAltBg;
           
-          // Determine dynamic row height if description wraps
           const descText = sanitizePdfText(item.description);
           doc.fontSize(8.5).font('Helvetica-Bold');
           const textH = doc.heightOfString(descText, { width: colX.descW - 10 });
@@ -407,65 +394,70 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       // 4. EXECUTE PAGE RENDERING (SINGLE-PAGE vs TWO-PAGES)
       // =========================================================================
       if (!isTwoPages) {
-        // --- SINGLE-PAGE MODE (Image 3 Reference Style) ---
-        // Render Section A (Main Unit)
+        // --- SINGLE-PAGE MODE ---
         drawSectionTable('A', 'MAIN UNIT', null, mainItems, null, null, mainUnitRowHeight);
 
-        // Render Section B (Low Side Extra Materials)
         if (lowSideItems.length > 0) {
           drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', null, lowSideItems, null, null, lowSideRowHeight);
         }
 
-        // Terms & Conditions / Payment Method sits right at the bottom above the footer!
         if (termsPaymentPath) {
           doc.image(termsPaymentPath, leftMargin, termsY1Page, { width: termsWidth });
         }
 
-        // Footer Banner at very bottom
         drawFooterBanner();
       } else {
-        // --- TWO-PAGE MODE (Image 2 Reference Style) ---
-        // PAGE 1: Section A (Main Units) with roomy rows & Continuation Note
+        // --- TWO-PAGE MODE (Image 2 & 3 Reference Style) ---
+        // PAGE 1: Section A (Main Units)
         const mainSubtotal = data.mainUnitTotal || mainItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
         const countBadgeText = `( ${mainItems.length} ITEMS )`;
         
-        drawSectionTable('A', 'MAIN UNITS', countBadgeText, mainItems, 'Total (A)', mainSubtotal, 34);
+        drawSectionTable('A', 'MAIN UNITS', countBadgeText, mainItems, null, null, 36);
 
-        // Page 1 Bottom Continuation Notice Bar
-        const noteBoxY = 745;
-        const noteBoxHeight = 26;
-        const noteBoxWidth = 340;
+        // Page 1 Bottom: Note box & Continued Link
+        const noteBoxY = 735;
+        const noteBoxHeight = 32;
+        const noteBoxWidth = 320;
 
-        // Orange Outlined Note Box
+        // Note Box
         doc.roundedRect(leftMargin, noteBoxY, noteBoxWidth, noteBoxHeight, 4)
-          .lineWidth(1).strokeColor(orangeBorder).fillAndStroke(orangeBg, orangeBorder);
+          .lineWidth(0.8).strokeColor(orangeBorder).fillAndStroke(orangeBg, orangeBorder);
         
-        doc.fillColor(orangeBadge).fontSize(7.5).font('Helvetica-Bold')
-          .text('NOTE:', leftMargin + 6, noteBoxY + 5);
+        doc.fillColor(orangeBadge).fontSize(8).font('Helvetica-Bold')
+          .text('NOTE:', leftMargin + 8, noteBoxY + 6);
         doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
-          .text('Low side / additional materials (If added), Terms & Conditions, Payment Method & Other details on next page.', leftMargin + 36, noteBoxY + 5, { width: noteBoxWidth - 42 });
+          .text('Low side / additional materials (If added).\nTerms & Conditions, Payment Method & Other details on next page.', leftMargin + 40, noteBoxY + 6, { width: noteBoxWidth - 48 });
 
-        // Continued on next page Link / Text on Right
-        doc.fillColor(daikinDarkNavy).fontSize(9.5).font('Helvetica-Bold')
-          .text('Continued on next page ->', rightMargin - 150, noteBoxY + 7.5, { width: 150, align: 'right' });
+        // Continued on next page Link / Icon on Right
+        doc.fillColor(daikinBrightBlue).fontSize(10).font('Helvetica-Bold')
+          .text('📄  Continued on next page →', rightMargin - 180, noteBoxY + 10, { width: 180, align: 'right' });
 
-        // Navy bottom line on Page 1
-        doc.rect(0, 841.89 - 8, headerWidth, 8).fill(daikinDarkNavy);
+        // Footer on Page 1
+        drawFooterBanner();
 
-        // PAGE 2: Add Page
+        // PAGE 2
         doc.addPage({ size: 'A4', margin: 0 });
 
-        drawPage2Header();
-        y = 58;
+        drawHeaderBanner();
 
-        // Section B: Low Side Items (if any)
+        // Subheader on Page 2: Date and Page 2 of 2
+        const p2SubY = headerHeight + 6;
+        doc.fillColor(textDark).fontSize(9).font('Helvetica-Bold')
+          .text(`Date: ${displayDate}`, rightMargin - 200, p2SubY, { width: 90, align: 'right' });
+        doc.fillColor(textMuted).fontSize(9).font('Helvetica')
+          .text('|', rightMargin - 105, p2SubY, { width: 10, align: 'center' });
+        doc.fillColor(daikinBrightBlue).fontSize(9).font('Helvetica-Bold')
+          .text(`Page 2 of ${totalPages}`, rightMargin - 90, p2SubY, { width: 90, align: 'right' });
+
+        y = headerHeight + 22;
+
+        // Section B: Low Side Items
         if (lowSideItems.length > 0) {
-          const lowSideSubtotal = data.lowSideTotal || lowSideItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
           const lowSideCountBadge = `( ${lowSideItems.length} ITEMS )`;
-          drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideCountBadge, lowSideItems, 'Total (B)', lowSideSubtotal, 28);
+          drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideCountBadge, lowSideItems, null, null, 30);
         }
 
-        // Terms & Conditions / Payment Method on Page 2 sits above footer
+        // Terms & Conditions / Payment Method on Page 2
         const p2TermsY = footerY - termsHeight - 8;
         if (termsPaymentPath) {
           doc.image(termsPaymentPath, leftMargin, p2TermsY, { width: termsWidth });

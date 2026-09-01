@@ -100,26 +100,54 @@ export function calculateOvertimeMinutes(
 }
 
 /**
- * Format time to 12-hour AM/PM string (e.g. "09:04 AM")
+ * Format time to 12-hour AM/PM string in Indian Standard Time (IST / Asia/Kolkata)
+ * e.g. "09:15 AM", "06:30 PM"
  */
 export function formatTime12h(date: Date | string): string {
+  if (!date) return '—';
   const d = typeof date === 'string' ? new Date(date) : date;
-  let hours = d.getHours();
-  const minutes = d.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
-  const strMinutes = minutes < 10 ? '0' + minutes : minutes;
-  const strHours = hours < 10 ? '0' + hours : hours;
-  return `${strHours}:${strMinutes} ${ampm}`;
+  if (isNaN(d.getTime())) return '—';
+
+  try {
+    const formatter = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    return formatter.format(d).toUpperCase();
+  } catch {
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(d.getTime() + istOffsetMs);
+    let hours = istDate.getUTCHours();
+    const minutes = istDate.getUTCMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const strMinutes = minutes < 10 ? '0' + minutes : String(minutes);
+    const strHours = hours < 10 ? '0' + hours : String(hours);
+    return `${strHours}:${strMinutes} ${ampm}`;
+  }
 }
 
 /**
- * Format Date to YYYY-MM-DD
+ * Format Date to YYYY-MM-DD in Indian Standard Time (IST / Asia/Kolkata)
  */
 export function getTodayDateString(d: Date = new Date()): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(d);
+  } catch {
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(d.getTime() + istOffsetMs);
+    const year = istDate.getUTCFullYear();
+    const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(istDate.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 }

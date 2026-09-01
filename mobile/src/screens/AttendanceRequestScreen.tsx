@@ -13,6 +13,7 @@ import {
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MaterialAnalogClockPicker } from '../components/MaterialAnalogClockPicker';
 
 interface AttendanceRequestScreenProps {
   onClose: () => void;
@@ -518,89 +519,27 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
         </TouchableOpacity>
       </View>
 
-      {/* TIME PICKER MODAL */}
-      <Modal visible={timePickerTarget !== null} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.timeModalCard}>
-            <Text style={styles.modalTitle}>
-              Select {timePickerTarget === 'IN' ? 'Check-In' : 'Closing'} Time
-            </Text>
-            <Text style={styles.modalSub}>Pick hour, minute, and AM/PM period</Text>
-
-            {/* Hour Selector */}
-            <Text style={styles.pickerSectionLabel}>Hour (1 - 12)</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => {
-                const currentH = timePickerTarget === 'IN' ? checkInHour : closingHour;
-                const isSelected = currentH === h;
-                return (
-                  <TouchableOpacity
-                    key={h}
-                    style={[styles.pickerPill, isSelected && styles.pickerPillActive]}
-                    onPress={() => {
-                      if (timePickerTarget === 'IN') setCheckInHour(h);
-                      else setClosingHour(h);
-                    }}
-                  >
-                    <Text style={[styles.pickerPillText, isSelected && styles.pickerPillTextActive]}>{h}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            {/* Minute Selector */}
-            <Text style={styles.pickerSectionLabel}>Minute</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
-              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => {
-                const currentM = timePickerTarget === 'IN' ? checkInMinute : closingMinute;
-                const isSelected = currentM === m;
-                return (
-                  <TouchableOpacity
-                    key={m}
-                    style={[styles.pickerPill, isSelected && styles.pickerPillActive]}
-                    onPress={() => {
-                      if (timePickerTarget === 'IN') setCheckInMinute(m);
-                      else setClosingMinute(m);
-                    }}
-                  >
-                    <Text style={[styles.pickerPillText, isSelected && styles.pickerPillTextActive]}>
-                      {String(m).padStart(2, '0')}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            {/* Period Selector */}
-            <Text style={styles.pickerSectionLabel}>Period</Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              {(['AM', 'PM'] as const).map((p) => {
-                const currentP = timePickerTarget === 'IN' ? checkInPeriod : closingPeriod;
-                const isSelected = currentP === p;
-                return (
-                  <TouchableOpacity
-                    key={p}
-                    style={[styles.periodBtn, isSelected && styles.periodBtnActive]}
-                    onPress={() => {
-                      if (timePickerTarget === 'IN') setCheckInPeriod(p);
-                      else setClosingPeriod(p);
-                    }}
-                  >
-                    <Text style={[styles.periodBtnText, isSelected && styles.periodBtnTextActive]}>{p}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <TouchableOpacity
-              style={styles.doneTimeBtn}
-              onPress={() => setTimePickerTarget(null)}
-            >
-              <Text style={styles.doneTimeBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* MATERIAL ANALOG CLOCK TIME PICKER (Image 5 Reference) */}
+      <MaterialAnalogClockPicker
+        visible={timePickerTarget !== null}
+        initialHour={timePickerTarget === 'IN' ? checkInHour : closingHour}
+        initialMinute={timePickerTarget === 'IN' ? checkInMinute : closingMinute}
+        initialPeriod={timePickerTarget === 'IN' ? checkInPeriod : closingPeriod}
+        title={timePickerTarget === 'IN' ? 'Set Check-In Time' : 'Set Closing Time'}
+        onConfirm={(h, m, p) => {
+          if (timePickerTarget === 'IN') {
+            setCheckInHour(h);
+            setCheckInMinute(m);
+            setCheckInPeriod(p);
+          } else {
+            setClosingHour(h);
+            setClosingMinute(m);
+            setClosingPeriod(p);
+          }
+          setTimePickerTarget(null);
+        }}
+        onCancel={() => setTimePickerTarget(null)}
+      />
     </View>
   );
 };

@@ -299,7 +299,35 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const isCompanyLeave = statusData?.displayStatus === 'COMPANY_LEAVE';
   const hasActiveRequest = Boolean(statusData && (statusData as any).activeRequest);
 
-  const checkInTimeDisplay = statusData?.attendance?.checkInFormatted || '—';
+  // Timezone-aware local time formatter for Indian Standard Time
+  const formatLocalTime = (isoString?: string | null, fallbackFormatted?: string | null): string => {
+    if (fallbackFormatted && fallbackFormatted !== '—' && !fallbackFormatted.includes('NaN')) {
+      return fallbackFormatted;
+    }
+    if (!isoString) return '—';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return fallbackFormatted || '—';
+      return d.toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+    } catch {
+      return fallbackFormatted || '—';
+    }
+  };
+
+  const checkInTimeDisplay = formatLocalTime(
+    (statusData?.attendance as any)?.checkInTime,
+    statusData?.attendance?.checkInFormatted
+  );
+  const checkOutTimeDisplay = formatLocalTime(
+    (statusData?.attendance as any)?.checkOutTime,
+    (statusData?.attendance as any)?.checkOutFormatted
+  );
+
   const durationDisplay = statusData?.attendance?.durationFormatted || '00h 00m';
   const otDisplay = statusData?.attendance?.otMinutes
     ? `${Math.floor(statusData.attendance.otMinutes / 60)}h ${statusData.attendance.otMinutes % 60}m`
@@ -664,6 +692,30 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           )}
 
+          {/* LOGGED IN AT BANNER (Prominently shows employee logged in time) */}
+          {(isCheckedIn || isCompleted) && (
+            <View style={styles.loggedInBanner}>
+              <View style={styles.loggedInIconCircle}>
+                <Text style={{ fontSize: 18 }}>⏱️</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.loggedInBannerTitle}>
+                  {isCheckedIn ? 'Currently Logged In' : 'Shift Completed Today'}
+                </Text>
+                <Text style={styles.loggedInBannerSub}>
+                  Logged in at <Text style={{ fontWeight: '800', color: '#0F172A' }}>{checkInTimeDisplay}</Text>
+                  {isCompleted && checkOutTimeDisplay !== '—' ? ` • Closed at ${checkOutTimeDisplay}` : ''}
+                </Text>
+              </View>
+              <View style={[styles.loggedInStatusTag, isCheckedIn ? styles.tagActive : styles.tagDone]}>
+                <View style={[styles.tagDot, isCheckedIn ? styles.tagDotActive : styles.tagDotDone]} />
+                <Text style={[styles.tagText, isCheckedIn ? styles.tagTextActive : styles.tagTextDone]}>
+                  {isCheckedIn ? 'ONLINE' : 'CLOSED'}
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* HERO ATTENDANCE CARD */}
           <View style={styles.heroCard}>
             <View style={styles.heroTopRow}>
@@ -691,8 +743,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               </View>
 
               <View style={styles.timeBlock}>
-                <Text style={styles.timeLabel}>Check In Time</Text>
-                <Text style={styles.timeValue}>{isCheckedIn ? checkInTimeDisplay : '--:--'}</Text>
+                <Text style={styles.timeLabel}>{isCompleted ? 'Check In / Out' : 'Check In Time'}</Text>
+                <Text style={styles.timeValue}>{isCheckedIn || isCompleted ? checkInTimeDisplay : '--:--'}</Text>
                 <Text style={styles.dateSubText}>{statusData?.date || 'Aug 20, 2026'}</Text>
               </View>
             </View>
@@ -1430,6 +1482,76 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 2,
     width: '100%',
+  },
+  loggedInBanner: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+    gap: 10,
+  },
+  loggedInIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loggedInBannerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  loggedInBannerSub: {
+    fontSize: 13,
+    color: '#334155',
+    marginTop: 1,
+  },
+  loggedInStatusTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  tagActive: {
+    backgroundColor: '#DCFCE7',
+  },
+  tagDone: {
+    backgroundColor: '#F1F5F9',
+  },
+  tagDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  tagDotActive: {
+    backgroundColor: '#16A34A',
+  },
+  tagDotDone: {
+    backgroundColor: '#64748B',
+  },
+  tagText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  tagTextActive: {
+    color: '#16A34A',
+  },
+  tagTextDone: {
+    color: '#64748B',
   },
   scanBanner: {
     backgroundColor: '#0F1E36',
