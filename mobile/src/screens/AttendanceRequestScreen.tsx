@@ -7,10 +7,12 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
+  Alert,
   Modal,
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AttendanceRequestScreenProps {
   onClose: () => void;
@@ -23,54 +25,54 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   onClose,
   onSuccess,
   initialDate,
+  initialMode,
 }) => {
+  const insets = useSafeAreaInsets();
   const today = new Date();
   const todayStr = today.toISOString().substring(0, 10);
   const currentHour24 = today.getHours();
-  const isPastNoon = currentHour24 >= 12;
+  const isAfternoonEligible = currentHour24 >= 13; // 1:00 PM Afternoon threshold
 
-  // Selected Dates State
+  // Single Date Selection State (Requirement 7 & 12: Each date is handled individually)
   const [selectedDate, setSelectedDate] = useState<string>(initialDate || todayStr);
-  const [multiSelectMode, setMultiSelectMode] = useState<boolean>(false);
-  const [selectedDates, setSelectedDates] = useState<string[]>([initialDate || todayStr]);
+  const [requestType, setRequestType] = useState<'ATTENDANCE' | 'CLOSING'>(
+    initialMode === 'CLOSING' ? 'CLOSING' : 'ATTENDANCE'
+  );
 
-  // Calendar State
+  // Calendar for Date Picking
   const [year, setYear] = useState<number>(today.getFullYear());
   const [month, setMonth] = useState<number>(today.getMonth() + 1);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [isLoadingCalendar, setIsLoadingCalendar] = useState<boolean>(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<string>('2026-01-01');
 
-  // Alarm-Style Time Picker States
+  // Alarm-Style Time Picker State
   const [checkInHour, setCheckInHour] = useState<number>(9);
   const [checkInMinute, setCheckInMinute] = useState<number>(0);
   const [checkInPeriod, setCheckInPeriod] = useState<'AM' | 'PM'>('AM');
 
-  const [checkOutHour, setCheckOutHour] = useState<number>(6);
-  const [checkOutMinute, setCheckOutMinute] = useState<number>(0);
-  const [checkOutPeriod, setCheckOutPeriod] = useState<'AM' | 'PM'>('PM');
-  const [includeCheckoutForPast, setIncludeCheckoutForPast] = useState<boolean>(true);
+  const [closingHour, setClosingHour] = useState<number>(6);
+  const [closingMinute, setClosingMinute] = useState<number>(0);
+  const [closingPeriod, setClosingPeriod] = useState<'AM' | 'PM'>('PM');
 
-  // Time Picker Modal Target ('IN' | 'OUT' | null)
   const [timePickerTarget, setTimePickerTarget] = useState<'IN' | 'OUT' | null>(null);
 
   // Form Fields
-  const [reason, setReason] = useState<string>('Site Work / Offsite Project');
+  const [reason, setReason] = useState<string>('Customer Site Visit');
   const [remarks, setRemarks] = useState<string>('');
   const [isLoadingSubmit, setIsLoadingSubmit] = useState<boolean>(false);
   const [hasActiveRequest, setHasActiveRequest] = useState<boolean>(false);
   const [activeRequestMsg, setActiveRequestMsg] = useState<string | null>(null);
 
-  // Quick Reason Presets
   const reasonPresets = [
-    'Site Work / Offsite Project',
     'Customer Site Visit',
-    'Travelling for Work',
+    'Offsite Project / Site Work',
+    'Travelling on Duty',
     'Missed Office QR Scan',
-    'Half Day Work',
+    'Equipment / System Issue',
   ];
 
-  // Fetch Calendar & Profile
+  // Fetch Calendar Data
   const fetchCalendar = async () => {
     try {
       setIsLoadingCalendar(true);
@@ -102,7 +104,7 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     fetchCalendar();
   }, [year, month]);
 
-  // Check Active Request Status
+  // Check Active Request
   useEffect(() => {
     (async () => {
       try {
@@ -110,7 +112,7 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
         if (res.success && res.data.activeRequest) {
           setHasActiveRequest(true);
           setActiveRequestMsg(
-            `You have an active request (${res.data.activeRequest.requestType}) under approval.`
+            `You already have an attendance request (${res.data.activeRequest.requestType}) under approval.`
           );
         }
       } catch (err) {
@@ -119,7 +121,23 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     })();
   }, []);
 
-  // Format Helper: 24h String
+  // Selected Day Info
+  const selectedDayInfo = useMemo(() => {
+    return calendarDays.find((d) => d.date === selectedDate);
+  }, [calendarDays, selectedDate]);
+
+  // Auto-set request type based on existing attendance for selected date
+  useEffect(() => {
+    if (selectedDayInfo) {
+      if (selectedDayInfo.checkIn && !selectedDayInfo.checkOut) {
+        setRequestType('CLOSING');
+      } else {
+        setRequestType('ATTENDANCE');
+      }
+    }
+  }, [selectedDayInfo]);
+
+  // 24-hour time formatting helper
   const formatTime24h = (hour: number, minute: number, period: 'AM' | 'PM') => {
     let h = hour;
     if (period === 'PM' && h < 12) h += 12;
@@ -131,132 +149,58 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${period}`;
   };
 
-  // Find currently selected day record from calendar
-  const currentSelectedDayInfo = useMemo(() => {
-    return calendarDays.find((d) => d.date === selectedDate);
-  }, [calendarDays, selectedDate]);
-
-  // Unmarked Past Days (Eligible for quick batch selection)
-  const unmarkedPastDays = useMemo(() => {
-    return calendarDays.filter((d) => {
-      const isPast = d.date < todayStr;
-      const isEligible = d.date >= employeeStartDate;
-      const isSunday = new Date(d.date).getDay() === 0;
-      const isUnmarked = !d.status || d.status === 'NOT_MARKED' || d.colorCode === 'GREY';
-      return isPast && isEligible && !isSunday && isUnmarked && !d.isCompanyLeave;
-    });
-  }, [calendarDays, todayStr, employeeStartDate]);
-
-  // Date Selection Handlers
-  const handleSelectDate = (dateStr: string) => {
-    if (dateStr > todayStr) return; // Future date blocked
-    if (dateStr < employeeStartDate) return; // Pre-joining blocked
-
-    if (multiSelectMode) {
-      if (selectedDates.includes(dateStr)) {
-        if (selectedDates.length > 1) {
-          setSelectedDates(selectedDates.filter((d) => d !== dateStr));
-        }
-      } else {
-        setSelectedDates([...selectedDates, dateStr]);
-      }
-    } else {
-      setSelectedDate(dateStr);
-      setSelectedDates([dateStr]);
-    }
-  };
-
-  const toggleMultiSelectBatch = () => {
-    if (!multiSelectMode) {
-      setMultiSelectMode(true);
-      const batch = unmarkedPastDays.map((d) => d.date);
-      if (batch.length > 0) {
-        setSelectedDates(batch);
-        setSelectedDate(batch[0]);
-      }
-    } else {
-      setMultiSelectMode(false);
-      setSelectedDates([selectedDate]);
-    }
-  };
-
-  // Dynamic Closing Time Lock Rules
-  const isSelectedToday = selectedDate === todayStr && !multiSelectMode;
-  const isClosingLockedToday = isSelectedToday && !isPastNoon;
-
-  // Status computation for selected day
-  const isSundaySelected = new Date(selectedDate).getDay() === 0;
-  const dayStatusLabel = isSundaySelected
-    ? 'Sunday (Weekly Off)'
-    : currentSelectedDayInfo?.status === 'PRESENT'
-    ? 'Present'
-    : currentSelectedDayInfo?.status === 'HALF_DAY'
-    ? 'Half Day'
-    : currentSelectedDayInfo?.status === 'ABSENT'
-    ? 'Absent'
-    : currentSelectedDayInfo?.status === 'LEAVE'
-    ? 'On Leave'
-    : currentSelectedDayInfo?.badge || 'Attendance Not Marked';
-
-  const isAlreadyPresent = currentSelectedDayInfo?.status === 'PRESENT' && currentSelectedDayInfo?.checkOut;
-
-  // Handle Form Submission
-  const handleSubmitRequest = async () => {
-    if (hasActiveRequest) {
-      alert('You already have an active request under review. Please wait for admin approval.');
+  // Submit Handler
+  const handleSubmit = async () => {
+    if (!reason || reason.trim() === '') {
+      Alert.alert('Required Field', 'Please provide a valid reason for this request.');
       return;
     }
 
-    if (!reason.trim()) {
-      alert('Please select or specify a reason for this attendance request.');
+    if (selectedDate > todayStr) {
+      Alert.alert('Invalid Date', 'Attendance request cannot be submitted for future dates.');
       return;
     }
+
+    if (selectedDate < employeeStartDate) {
+      Alert.alert('Invalid Date', `Cannot request attendance before your joining date (${employeeStartDate}).`);
+      return;
+    }
+
+    if (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible) {
+      Alert.alert(
+        'Closing Time Not Yet Eligible',
+        'Closing time request for today can only be submitted in the afternoon (after 1:00 PM).'
+      );
+      return;
+    }
+
+    const checkIn24 = formatTime24h(checkInHour, checkInMinute, checkInPeriod);
+    const closing24 = formatTime24h(closingHour, closingMinute, closingPeriod);
+
+    const payload = {
+      requestType: requestType === 'CLOSING' ? 'CLOSING_REQUEST' : (selectedDate === todayStr ? 'TODAY_ATTENDANCE' : 'MISSED_ATTENDANCE'),
+      dates: [selectedDate],
+      checkInTime: requestType === 'CLOSING' ? (selectedDayInfo?.checkIn || checkIn24) : checkIn24,
+      checkOutTime: requestType === 'CLOSING' ? closing24 : undefined,
+      closingTime: requestType === 'CLOSING' ? closing24 : undefined,
+      reason: reason.trim(),
+      remarks: remarks.trim() || undefined,
+    };
 
     setIsLoadingSubmit(true);
     try {
-      const inTime24 = formatTime24h(checkInHour, checkInMinute, checkInPeriod);
-      const outTime24 = formatTime24h(checkOutHour, checkOutMinute, checkOutPeriod);
-
-      const targetDates = multiSelectMode ? selectedDates : [selectedDate];
-
-      let payload: any = {
-        dates: targetDates,
-        reason: reason.trim(),
-        remarks: remarks.trim() || undefined,
-      };
-
-      if (isSelectedToday) {
-        if (!isPastNoon) {
-          // Today Before 12 PM -> Start time only, Closing time strictly null
-          payload.requestType = 'TODAY_ATTENDANCE';
-          payload.checkInTime = inTime24;
-          payload.checkOutTime = null;
-        } else {
-          // Today After 12 PM -> Check-in + optional Closing time
-          payload.requestType = 'TODAY_ATTENDANCE';
-          payload.checkInTime = inTime24;
-          payload.checkOutTime = outTime24;
-        }
-      } else if (targetDates.length > 1) {
-        // Multi-Day Missed Attendance
-        payload.requestType = 'MULTI_DAY_MISSED';
-        payload.checkInTime = inTime24;
-        payload.checkOutTime = includeCheckoutForPast ? outTime24 : null;
-      } else {
-        // Single Past Missed Day
-        payload.requestType = 'MISSED_ATTENDANCE';
-        payload.checkInTime = inTime24;
-        payload.checkOutTime = includeCheckoutForPast ? outTime24 : null;
-      }
-
-      const res = await mobileApi.submitRequest(payload);
+      const res = await mobileApi.submitAttendanceRequest(payload);
       if (res.success) {
-        alert('✓ Attendance request submitted successfully!\nStatus: UNDER APPROVAL.');
-        onSuccess();
-        onClose();
+        Alert.alert(
+          '✓ Request Submitted',
+          'Your attendance request was submitted and is now under approval.',
+          [{ text: 'OK', onPress: () => { onSuccess(); onClose(); } }]
+        );
+      } else {
+        Alert.alert('Submission Error', res.message || 'Failed to submit request.');
       }
     } catch (err: any) {
-      alert(err.message || 'Submission failed');
+      Alert.alert('Error', err.message || 'Network error occurred while submitting.');
     } finally {
       setIsLoadingSubmit(false);
     }
@@ -269,136 +213,117 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
 
   return (
     <View style={styles.container}>
-      {/* Top Header */}
-      <View style={styles.header}>
+      {/* Top Header with Safe Area Inset */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Attendance Request</Text>
-          <Text style={styles.subtitle}>Unified Smart Single-Page Attendance Flow</Text>
+          <Text style={styles.subtitle}>Submit single-day attendance correction or closing time</Text>
         </View>
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-          <Text style={styles.closeBtnText}>Back</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          style={styles.closeBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.closeBtnText}>✕</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView
         style={styles.scrollArea}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, 24) + 90 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Active Pending Request Warning Banner */}
+        {/* Active Request Warning Banner */}
         {hasActiveRequest && (
-          <View style={styles.warningBanner}>
-            <Text style={{ fontSize: 20 }}>⚠️</Text>
+          <View style={styles.activeRequestBanner}>
+            <Text style={{ fontSize: 18 }}>⏳</Text>
             <View style={{ flex: 1 }}>
-              <Text style={styles.warningTitle}>Pending Request Under Review</Text>
-              <Text style={styles.warningSub}>
-                {activeRequestMsg || 'You already have an attendance request waiting for Admin review.'}
-              </Text>
+              <Text style={styles.activeRequestTitle}>Request Under Approval</Text>
+              <Text style={styles.activeRequestSub}>{activeRequestMsg}</Text>
             </View>
           </View>
         )}
 
-        {/* 1. TOP INTERACTIVE ATTENDANCE CALENDAR */}
-        <View style={styles.calendarCard}>
-          <View style={styles.monthNavRow}>
-            <TouchableOpacity
-              onPress={() => setMonth((m) => (m === 1 ? 12 : m - 1))}
-              style={styles.navArrowBtn}
-            >
-              <Text style={styles.navArrow}>‹</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.monthTitle}>
-              {monthNames[month - 1]} {year}
-            </Text>
-
-            <TouchableOpacity
-              onPress={() => setMonth((m) => (m === 12 ? 1 : m + 1))}
-              style={styles.navArrowBtn}
-            >
-              <Text style={styles.navArrow}>›</Text>
-            </TouchableOpacity>
+        {/* STEP 1: SELECT DATE */}
+        <View style={styles.card}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.cardLabel}>1. SELECT DATE</Text>
+            <View style={styles.monthNav}>
+              <TouchableOpacity onPress={() => setMonth((m) => (m === 1 ? 12 : m - 1))}>
+                <Text style={styles.monthNavBtn}>‹</Text>
+              </TouchableOpacity>
+              <Text style={styles.monthNavText}>{monthNames[month - 1]} {year}</Text>
+              <TouchableOpacity onPress={() => setMonth((m) => (m === 12 ? 1 : m + 1))}>
+                <Text style={styles.monthNavBtn}>›</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Weekday Header */}
-          <View style={styles.weekHeader}>
+          {/* Calendar Grid Header */}
+          <View style={styles.daysHeaderRow}>
             {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
-              <Text
-                key={i}
-                style={[styles.weekHeaderText, i === 0 && { color: '#8B5CF6' }]}
-              >
+              <Text key={i} style={[styles.dayHeaderCell, i === 0 && { color: '#8B5CF6' }]}>
                 {d}
               </Text>
             ))}
           </View>
 
-          {/* Calendar Grid */}
+          {/* Calendar Days */}
           {isLoadingCalendar ? (
-            <ActivityIndicator color="#0066CC" style={{ marginVertical: 20 }} />
+            <ActivityIndicator size="small" color="#0066CC" style={{ marginVertical: 20 }} />
           ) : (
             <View style={styles.calendarGrid}>
-              {/* Leading Blank Cells for Weekday Alignment */}
+              {/* Leading Blanks */}
               {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
-                <View key={`blank-${i}`} style={styles.dayCell} />
+                <View key={`b-${i}`} style={styles.calendarDayCell} />
               ))}
 
-              {calendarDays.map((day) => {
-                const isSelected = multiSelectMode
-                  ? selectedDates.includes(day.date)
-                  : selectedDate === day.date;
-                const isToday = day.date === todayStr;
-                const isFuture = day.date > todayStr;
-                const isPreJoining = day.date < employeeStartDate;
-                const isSunday = new Date(day.date).getDay() === 0;
-
-                const isPresent = day.colorCode === 'GREEN';
-                const isAbsent = day.colorCode === 'RED';
-                const isHalf = day.colorCode === 'YELLOW';
+              {calendarDays.map((d) => {
+                const isSelected = selectedDate === d.date;
+                const isFuture = d.date > todayStr;
+                const isPreJoin = d.date < employeeStartDate;
+                const isSun = new Date(year, month - 1, d.dayNumber).getDay() === 0;
 
                 return (
                   <TouchableOpacity
-                    key={day.date}
+                    key={d.date}
                     style={[
-                      styles.dayCell,
-                      isFuture && styles.dayCellFuture,
-                      isPreJoining && styles.dayCellPreJoining,
+                      styles.calendarDayCell,
                       isSelected && styles.dayCellSelected,
-                      isPresent && !isSelected && styles.dayCellPresent,
-                      isAbsent && !isSelected && styles.dayCellAbsent,
-                      isHalf && !isSelected && styles.dayCellHalf,
-                      isSunday && !isPresent && !isAbsent && styles.dayCellSunday,
+                      isFuture && styles.dayCellDisabled,
+                      isPreJoin && styles.dayCellDisabled,
                     ]}
-                    onPress={() => handleSelectDate(day.date)}
-                    disabled={isFuture || isPreJoining}
-                    activeOpacity={0.7}
+                    disabled={isFuture || isPreJoin}
+                    onPress={() => setSelectedDate(d.date)}
                   >
                     <Text
                       style={[
-                        styles.dayNumText,
-                        isToday && { fontWeight: '900', color: '#0066CC' },
-                        isSunday && !isPresent && !isAbsent && { color: '#8B5CF6' },
-                        isSelected && { fontWeight: '900', color: '#0066CC' },
-                        (isFuture || isPreJoining) && { color: '#94A3B8' },
+                        styles.dayNumberText,
+                        isSelected && styles.dayNumberSelected,
+                        isSun && !isSelected && { color: '#8B5CF6' },
+                        (isFuture || isPreJoin) && styles.dayNumberDisabled,
                       ]}
                     >
-                      {day.dayNumber}
+                      {d.dayNumber}
                     </Text>
-
                     {/* Status Dot */}
                     <View
                       style={[
-                        styles.statusDot,
+                        styles.miniDot,
                         {
                           backgroundColor:
-                            isSunday && !isPresent && !isAbsent
-                              ? '#8B5CF6'
-                              : isPresent
+                            d.status === 'PRESENT'
                               ? '#10B981'
-                              : isAbsent
+                              : d.status === 'ABSENT'
                               ? '#EF4444'
-                              : isHalf
+                              : d.status === 'UNDER_APPROVAL'
                               ? '#F59E0B'
-                              : '#E2E8F0',
+                              : isSun
+                              ? '#8B5CF6'
+                              : '#CBD5E1',
                         },
                       ]}
                     />
@@ -408,412 +333,270 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
             </View>
           )}
 
-          {/* Calendar Status Legend */}
-          <View style={styles.legendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
-              <Text style={styles.legendText}>Present</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-              <Text style={styles.legendText}>Absent</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} />
-              <Text style={styles.legendText}>Half Day</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#8B5CF6' }]} />
-              <Text style={styles.legendText}>Sunday/Off</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#CBD5E1' }]} />
-              <Text style={styles.legendText}>Unmarked</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 2. MULTI-MISSING DAYS SHORTCUT BANNER */}
-        {unmarkedPastDays.length >= 2 && (
-          <TouchableOpacity
-            style={[styles.batchBanner, multiSelectMode && styles.batchBannerActive]}
-            onPress={toggleMultiSelectBatch}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.batchTitle}>
-                📌 {unmarkedPastDays.length} Attendance Days Not Marked
+          {/* Selected Date Status Badge */}
+          <View style={styles.dateStatusBox}>
+            <View style={styles.rowBetween}>
+              <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                Selected: {selectedDate} {selectedDate === todayStr ? '(Today)' : ''}
               </Text>
-              <Text style={styles.batchSub}>
-                {multiSelectMode
-                  ? 'Batch mode active. Selected dates will be requested together.'
-                  : 'Tap to select and request missing attendance for these days.'}
-              </Text>
-            </View>
-            <View style={styles.batchBtn}>
-              <Text style={styles.batchBtnText}>
-                {multiSelectMode ? 'Single Mode' : 'Request All'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* 3. SELECTED DATE INFORMATION & STATUS PANEL */}
-        <View style={styles.infoCard}>
-          <View style={styles.rowBetween}>
-            <View>
-              <Text style={styles.infoDate}>
-                {multiSelectMode
-                  ? `${selectedDates.length} Dates Selected`
-                  : `${selectedDate} (${currentSelectedDayInfo?.dayName || 'Day'})`}
-              </Text>
-              {isSelectedToday && (
-                <Text style={styles.todayPill}>📅 Today's Session</Text>
-              )}
-            </View>
-
-            <View
-              style={[
-                styles.statusBadge,
-                {
-                  backgroundColor:
-                    dayStatusLabel.includes('Present')
-                      ? '#ECFDF5'
-                      : dayStatusLabel.includes('Sunday')
-                      ? '#FAF5FF'
-                      : '#FEF3C7',
-                },
-              ]}
-            >
               <Text
-                style={[
-                  styles.statusBadgeText,
-                  {
-                    color:
-                      dayStatusLabel.includes('Present')
-                        ? '#059669'
-                        : dayStatusLabel.includes('Sunday')
-                        ? '#8B5CF6'
-                        : '#D97706',
-                  },
-                ]}
+                style={{
+                  fontSize: 11,
+                  fontWeight: '800',
+                  color:
+                    selectedDayInfo?.status === 'PRESENT'
+                      ? '#059669'
+                      : selectedDayInfo?.status === 'ABSENT'
+                      ? '#DC2626'
+                      : '#64748B',
+                }}
               >
-                {dayStatusLabel}
+                {selectedDayInfo?.status || 'NOT MARKED'}
               </Text>
             </View>
-          </View>
-
-          {/* Real Times Breakdown */}
-          <View style={styles.timeStatsRow}>
-            <View style={styles.timeStatBox}>
-              <Text style={styles.timeStatLabel}>Recorded In</Text>
-              <Text style={styles.timeStatVal}>
-                {currentSelectedDayInfo?.checkIn || '—'}
+            {selectedDayInfo?.checkIn && (
+              <Text style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+                Check-in logged: {selectedDayInfo.checkIn} {selectedDayInfo.checkOut ? `• Check-out: ${selectedDayInfo.checkOut}` : '• (Missing Closing Time)'}
               </Text>
-            </View>
-
-            <View style={styles.timeStatBox}>
-              <Text style={styles.timeStatLabel}>Recorded Out</Text>
-              <Text style={styles.timeStatVal}>
-                {currentSelectedDayInfo?.checkOut || '—'}
-              </Text>
-            </View>
-
-            <View style={styles.timeStatBox}>
-              <Text style={styles.timeStatLabel}>Working Duration</Text>
-              <Text style={[styles.timeStatVal, { color: '#0066CC' }]}>
-                {currentSelectedDayInfo?.workingDuration || '—'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 4. SMART TIME SELECTION (ALARM STYLE) */}
-        <View style={styles.formCard}>
-          <Text style={styles.cardSectionTitle}>TIME SELECTION (ALARM STYLE)</Text>
-
-          <View style={styles.timePickerCardsRow}>
-            {/* Start Time Card */}
-            <TouchableOpacity
-              style={styles.alarmTimeCard}
-              onPress={() => setTimePickerTarget('IN')}
-            >
-              <Text style={styles.alarmCardLabel}>Start Time (Check-In)</Text>
-              <Text style={styles.alarmCardValue}>
-                {formatDisplayTime(checkInHour, checkInMinute, checkInPeriod)}
-              </Text>
-              <Text style={styles.alarmCardHelper}>⏰ Tap to set start time</Text>
-            </TouchableOpacity>
-
-            {/* Closing Time Card (Dynamic 12 PM Rule) */}
-            {isClosingLockedToday ? (
-              <View style={[styles.alarmTimeCard, styles.alarmTimeCardLocked]}>
-                <View style={styles.lockRow}>
-                  <Text style={{ fontSize: 14 }}>🔒</Text>
-                  <Text style={styles.lockTitle}>Closing Time Locked</Text>
-                </View>
-                <Text style={styles.lockSubtitle}>
-                  Available after 12:00 PM
-                </Text>
-                <Text style={styles.lockHelper}>
-                  End time will be recorded upon shift checkout.
-                </Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={[
-                  styles.alarmTimeCard,
-                  !isSelectedToday && !includeCheckoutForPast && { opacity: 0.5 },
-                ]}
-                onPress={() => setTimePickerTarget('OUT')}
-              >
-                <Text style={styles.alarmCardLabel}>Closing Time (End)</Text>
-                <Text style={[styles.alarmCardValue, { color: '#0066CC' }]}>
-                  {formatDisplayTime(checkOutHour, checkOutMinute, checkOutPeriod)}
-                </Text>
-                <Text style={styles.alarmCardHelper}>⏰ Tap to set closing time</Text>
-              </TouchableOpacity>
             )}
           </View>
+        </View>
 
-          {/* Toggle for optional checkout on past dates */}
-          {!isSelectedToday && (
+        {/* STEP 2: REQUEST TYPE (ATTENDANCE vs CLOSING) */}
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>2. REQUEST TYPE</Text>
+          <View style={styles.typeSelectorRow}>
             <TouchableOpacity
-              style={styles.checkoutToggleRow}
-              onPress={() => setIncludeCheckoutForPast(!includeCheckoutForPast)}
+              style={[
+                styles.typeOption,
+                requestType === 'ATTENDANCE' && styles.typeOptionActive,
+              ]}
+              onPress={() => setRequestType('ATTENDANCE')}
             >
-              <Text style={{ fontSize: 16 }}>
-                {includeCheckoutForPast ? '☑️' : '◻️'}
+              <Text style={{ fontSize: 18 }}>⏱️</Text>
+              <Text
+                style={[
+                  styles.typeOptionText,
+                  requestType === 'ATTENDANCE' && styles.typeOptionTextActive,
+                ]}
+              >
+                Attendance Check-In
               </Text>
-              <Text style={styles.checkoutToggleText}>
-                Include Closing Time (Uncheck if you only missed check-in)
-              </Text>
+              <Text style={styles.typeOptionSub}>Mark attendance start time</Text>
             </TouchableOpacity>
-          )}
 
-          {/* 5. REASON & REMARKS */}
-          <Text style={[styles.cardSectionTitle, { marginTop: 16 }]}>
-            REASON FOR OFFSITE / REQUEST
+            <TouchableOpacity
+              style={[
+                styles.typeOption,
+                requestType === 'CLOSING' && styles.typeOptionActive,
+              ]}
+              onPress={() => setRequestType('CLOSING')}
+            >
+              <Text style={{ fontSize: 18 }}>🏁</Text>
+              <Text
+                style={[
+                  styles.typeOptionText,
+                  requestType === 'CLOSING' && styles.typeOptionTextActive,
+                ]}
+              >
+                Closing Time
+              </Text>
+              <Text style={styles.typeOptionSub}>End of day checkout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* STEP 3: TIME SELECTION */}
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>
+            3. {requestType === 'ATTENDANCE' ? 'START / CHECK-IN TIME' : 'CLOSING / CHECK-OUT TIME'}
           </Text>
 
-          {/* Reason Presets */}
-          <View style={styles.presetChipRow}>
-            {reasonPresets.map((p) => {
-              const isSelected = reason === p;
-              return (
-                <TouchableOpacity
-                  key={p}
-                  style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                  onPress={() => setReason(p)}
+          {requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && (
+            <View style={styles.disabledTimeNotice}>
+              <Text style={{ fontSize: 14 }}>🔒</Text>
+              <Text style={styles.disabledTimeNoticeText}>
+                Closing time request is disabled before afternoon. It will automatically unlock at 1:00 PM.
+              </Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.timeDisplayCard,
+              requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && { opacity: 0.5 },
+            ]}
+            disabled={requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible}
+            onPress={() => setTimePickerTarget(requestType === 'ATTENDANCE' ? 'IN' : 'OUT')}
+          >
+            <View>
+              <Text style={styles.timeDisplayLabel}>
+                {requestType === 'ATTENDANCE' ? 'Requested Check-In' : 'Requested Closing'}
+              </Text>
+              <Text style={styles.timeDisplayVal}>
+                {requestType === 'ATTENDANCE'
+                  ? formatDisplayTime(checkInHour, checkInMinute, checkInPeriod)
+                  : formatDisplayTime(closingHour, closingMinute, closingPeriod)}
+              </Text>
+            </View>
+            <View style={styles.changeTimeBadge}>
+              <Text style={styles.changeTimeBadgeText}>Change Time ✏️</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* STEP 4: REASON & DETAILS */}
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>4. REASON FOR REQUEST</Text>
+          <View style={styles.presetRow}>
+            {reasonPresets.map((p, idx) => (
+              <TouchableOpacity
+                key={idx}
+                style={[styles.presetChip, reason === p && styles.presetChipActive]}
+                onPress={() => setReason(p)}
+              >
+                <Text
+                  style={[
+                    styles.presetChipText,
+                    reason === p && styles.presetChipTextActive,
+                  ]}
                 >
-                  <Text
-                    style={[
-                      styles.presetChipText,
-                      isSelected && styles.presetChipTextActive,
-                    ]}
-                  >
-                    {p}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+                  {p}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
           <TextInput
-            style={styles.input}
-            placeholder="Or specify custom reason..."
+            style={styles.reasonInput}
+            placeholder="Provide specific details / reason for request..."
             placeholderTextColor="#94A3B8"
             value={reason}
             onChangeText={setReason}
           />
 
-          <Text style={[styles.cardSectionTitle, { marginTop: 12 }]}>
-            PROJECT / SITE REMARKS (OPTIONAL)
-          </Text>
+          <Text style={[styles.cardLabel, { marginTop: 12 }]}>OPTIONAL REMARKS</Text>
           <TextInput
-            style={[styles.input, { height: 60, textAlignVertical: 'top' }]}
-            placeholder="Customer site notes, job details, or approval remarks..."
+            style={[styles.reasonInput, { height: 60, textAlignVertical: 'top' }]}
+            placeholder="Additional notes for manager..."
             placeholderTextColor="#94A3B8"
             value={remarks}
             onChangeText={setRemarks}
             multiline
           />
-
-          {/* SUBMIT BUTTON */}
-          <TouchableOpacity
-            style={[
-              styles.submitBtn,
-              Boolean(hasActiveRequest || isLoadingSubmit || isAlreadyPresent) && styles.submitBtnDisabled,
-            ]}
-            onPress={handleSubmitRequest}
-            disabled={Boolean(hasActiveRequest || isLoadingSubmit || isAlreadyPresent)}
-          >
-            {isLoadingSubmit ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.submitBtnText}>
-                {hasActiveRequest
-                  ? 'UNDER APPROVAL (PENDING)'
-                  : isAlreadyPresent
-                  ? 'ATTENDANCE ALREADY COMPLETED'
-                  : isSelectedToday && !isPastNoon
-                  ? '[ SUBMIT CHECK-IN REQUEST ]'
-                  : '[ SUBMIT ATTENDANCE REQUEST ]'}
-              </Text>
-            )}
-          </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* 6. ALARM-STYLE TIME PICKER MODAL */}
-      <Modal
-        visible={timePickerTarget !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setTimePickerTarget(null)}
-      >
+      {/* STICKY BOTTOM ACTION BAR */}
+      <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+        <TouchableOpacity
+          style={styles.cancelBtn}
+          onPress={onClose}
+          disabled={isLoadingSubmit}
+        >
+          <Text style={styles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.submitBtn,
+            (hasActiveRequest || (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)) &&
+              styles.submitBtnDisabled,
+          ]}
+          onPress={handleSubmit}
+          disabled={
+            isLoadingSubmit ||
+            hasActiveRequest ||
+            (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)
+          }
+        >
+          {isLoadingSubmit ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <Text style={styles.submitBtnText}>Submit Request</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* TIME PICKER MODAL */}
+      <Modal visible={timePickerTarget !== null} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.alarmModal}>
-            <Text style={styles.alarmTitle}>
-              Set {timePickerTarget === 'IN' ? 'Check-In' : 'Closing'} Time
+          <View style={styles.timeModalCard}>
+            <Text style={styles.modalTitle}>
+              Select {timePickerTarget === 'IN' ? 'Check-In' : 'Closing'} Time
             </Text>
+            <Text style={styles.modalSub}>Pick hour, minute, and AM/PM period</Text>
 
-            {/* Stepper Digits */}
-            <View style={styles.alarmDigitsBox}>
-              {/* Hours */}
-              <View style={styles.digitCol}>
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInHour((h) => (h === 12 ? 1 : h + 1));
-                    else setCheckOutHour((h) => (h === 12 ? 1 : h + 1));
-                  }}
-                >
-                  <Text style={styles.stepBtnText}>▲</Text>
-                </TouchableOpacity>
-
-                <Text style={styles.digitText}>
-                  {String(timePickerTarget === 'IN' ? checkInHour : checkOutHour).padStart(2, '0')}
-                </Text>
-
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInHour((h) => (h === 1 ? 12 : h - 1));
-                    else setCheckOutHour((h) => (h === 1 ? 12 : h - 1));
-                  }}
-                >
-                  <Text style={styles.stepBtnText}>▼</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.colonText}>:</Text>
-
-              {/* Minutes */}
-              <View style={styles.digitCol}>
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInMinute((m) => (m + 5) % 60);
-                    else setCheckOutMinute((m) => (m + 5) % 60);
-                  }}
-                >
-                  <Text style={styles.stepBtnText}>▲</Text>
-                </TouchableOpacity>
-
-                <Text style={styles.digitText}>
-                  {String(timePickerTarget === 'IN' ? checkInMinute : checkOutMinute).padStart(2, '0')}
-                </Text>
-
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInMinute((m) => (m - 5 + 60) % 60);
-                    else setCheckOutMinute((m) => (m - 5 + 60) % 60);
-                  }}
-                >
-                  <Text style={styles.stepBtnText}>▼</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* AM / PM Toggle */}
-              <View style={styles.periodCol}>
-                <TouchableOpacity
-                  style={[
-                    styles.periodBtn,
-                    (timePickerTarget === 'IN' ? checkInPeriod : checkOutPeriod) === 'AM' &&
-                      styles.periodBtnActive,
-                  ]}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInPeriod('AM');
-                    else setCheckOutPeriod('AM');
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.periodText,
-                      (timePickerTarget === 'IN' ? checkInPeriod : checkOutPeriod) === 'AM' &&
-                        styles.periodTextActive,
-                    ]}
+            {/* Hour Selector */}
+            <Text style={styles.pickerSectionLabel}>Hour (1 - 12)</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => {
+                const currentH = timePickerTarget === 'IN' ? checkInHour : closingHour;
+                const isSelected = currentH === h;
+                return (
+                  <TouchableOpacity
+                    key={h}
+                    style={[styles.pickerPill, isSelected && styles.pickerPillActive]}
+                    onPress={() => {
+                      if (timePickerTarget === 'IN') setCheckInHour(h);
+                      else setClosingHour(h);
+                    }}
                   >
-                    AM
-                  </Text>
-                </TouchableOpacity>
+                    <Text style={[styles.pickerPillText, isSelected && styles.pickerPillTextActive]}>{h}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
 
-                <TouchableOpacity
-                  style={[
-                    styles.periodBtn,
-                    (timePickerTarget === 'IN' ? checkInPeriod : checkOutPeriod) === 'PM' &&
-                      styles.periodBtnActive,
-                  ]}
-                  onPress={() => {
-                    if (timePickerTarget === 'IN') setCheckInPeriod('PM');
-                    else setCheckOutPeriod('PM');
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.periodText,
-                      (timePickerTarget === 'IN' ? checkInPeriod : checkOutPeriod) === 'PM' &&
-                        styles.periodTextActive,
-                    ]}
+            {/* Minute Selector */}
+            <Text style={styles.pickerSectionLabel}>Minute</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
+              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => {
+                const currentM = timePickerTarget === 'IN' ? checkInMinute : closingMinute;
+                const isSelected = currentM === m;
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.pickerPill, isSelected && styles.pickerPillActive]}
+                    onPress={() => {
+                      if (timePickerTarget === 'IN') setCheckInMinute(m);
+                      else setClosingMinute(m);
+                    }}
                   >
-                    PM
-                  </Text>
-                </TouchableOpacity>
-              </View>
+                    <Text style={[styles.pickerPillText, isSelected && styles.pickerPillTextActive]}>
+                      {String(m).padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Period Selector */}
+            <Text style={styles.pickerSectionLabel}>Period</Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              {(['AM', 'PM'] as const).map((p) => {
+                const currentP = timePickerTarget === 'IN' ? checkInPeriod : closingPeriod;
+                const isSelected = currentP === p;
+                return (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.periodBtn, isSelected && styles.periodBtnActive]}
+                    onPress={() => {
+                      if (timePickerTarget === 'IN') setCheckInPeriod(p);
+                      else setClosingPeriod(p);
+                    }}
+                  >
+                    <Text style={[styles.periodBtnText, isSelected && styles.periodBtnTextActive]}>{p}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
-            {/* Quick Alarm Presets */}
-            <View style={styles.alarmPresetRow}>
-              {['09:00 AM', '09:30 AM', '01:30 PM', '06:00 PM', '06:30 PM'].map((timeStr) => (
-                <TouchableOpacity
-                  key={timeStr}
-                  style={styles.alarmPresetBtn}
-                  onPress={() => {
-                    const [t, p] = timeStr.split(' ');
-                    const [h, m] = t.split(':');
-                    if (timePickerTarget === 'IN') {
-                      setCheckInHour(parseInt(h));
-                      setCheckInMinute(parseInt(m));
-                      setCheckInPeriod(p as 'AM' | 'PM');
-                    } else {
-                      setCheckOutHour(parseInt(h));
-                      setCheckOutMinute(parseInt(m));
-                      setCheckOutPeriod(p as 'AM' | 'PM');
-                    }
-                  }}
-                >
-                  <Text style={styles.alarmPresetText}>{timeStr}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Done Button */}
             <TouchableOpacity
-              style={styles.alarmDoneBtn}
+              style={styles.doneTimeBtn}
               onPress={() => setTimePickerTarget(null)}
             >
-              <Text style={styles.alarmDoneBtnText}>Set Time</Text>
+              <Text style={styles.doneTimeBtnText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -831,10 +614,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
   },
   title: {
     fontSize: 18,
@@ -842,496 +626,383 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   subtitle: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
   closeBtn: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   closeBtnText: {
-    color: '#0F172A',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#64748B',
   },
   scrollArea: {
     flex: 1,
   },
   scrollContent: {
     padding: 14,
-    paddingBottom: 120,
     gap: 12,
   },
-  warningBanner: {
+  activeRequestBanner: {
     flexDirection: 'row',
-    alignItems: 'center',
     gap: 10,
-    backgroundColor: '#FFFBEB',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
+    backgroundColor: '#FEF3C7',
     padding: 12,
     borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
   },
-  warningTitle: {
-    fontSize: 12,
+  activeRequestTitle: {
+    fontSize: 13,
     fontWeight: '800',
-    color: '#B45309',
-  },
-  warningSub: {
-    fontSize: 11,
     color: '#92400E',
+  },
+  activeRequestSub: {
+    fontSize: 11,
+    color: '#78350F',
     marginTop: 2,
   },
-  calendarCard: {
+  card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOpacity: 0.02,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  monthNavRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  monthTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  navArrowBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  navArrow: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#0066CC',
-  },
-  weekHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  weekHeaderText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748B',
-    width: '14.28%',
-    textAlign: 'center',
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: '14.28%',
-    aspectRatio: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 2,
-    borderRadius: 6,
-  },
-  dayCellSelected: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#0066CC',
-  },
-  dayCellPresent: {
-    backgroundColor: '#ECFDF5',
-  },
-  dayCellAbsent: {
-    backgroundColor: '#FEF2F2',
-  },
-  dayCellHalf: {
-    backgroundColor: '#FFFBEB',
-  },
-  dayCellSunday: {
-    backgroundColor: '#FAF5FF',
-  },
-  dayCellFuture: {
-    opacity: 0.35,
-  },
-  dayCellPreJoining: {
-    opacity: 0.25,
-  },
-  dayNumText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  statusDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    marginTop: 2,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  legendDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  legendText: {
-    fontSize: 9.5,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  batchBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    padding: 12,
-    borderRadius: 10,
-    gap: 8,
-  },
-  batchBannerActive: {
-    backgroundColor: '#DBEAFE',
-    borderColor: '#0066CC',
-  },
-  batchTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0066CC',
-  },
-  batchSub: {
-    fontSize: 10.5,
-    color: '#1E40AF',
-    marginTop: 1,
-  },
-  batchBtn: {
-    backgroundColor: '#0066CC',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  batchBtnText: {
-    color: '#FFFFFF',
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardLabel: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0066CC',
+    letterSpacing: 0.5,
+    marginBottom: 8,
   },
   rowBetween: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  infoDate: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  todayPill: {
-    fontSize: 10.5,
-    color: '#0066CC',
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusBadgeText: {
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
-  timeStatsRow: {
+  monthNav: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderColor: '#F1F5F9',
+    alignItems: 'center',
+    gap: 6,
   },
-  timeStatBox: {
+  monthNavBtn: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0066CC',
+    paddingHorizontal: 6,
+  },
+  monthNavText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  daysHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 6,
+  },
+  dayHeaderCell: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
-    padding: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  timeStatLabel: {
-    fontSize: 9.5,
+    textAlign: 'center',
+    fontSize: 10.5,
+    fontWeight: '700',
     color: '#64748B',
   },
-  timeStatVal: {
-    fontSize: 12.5,
-    fontWeight: '800',
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarDayCell: {
+    width: '14.28%',
+    aspectRatio: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    marginVertical: 2,
+  },
+  dayCellSelected: {
+    backgroundColor: '#0066CC',
+  },
+  dayCellDisabled: {
+    opacity: 0.25,
+  },
+  dayNumberText: {
+    fontSize: 12,
+    fontWeight: '700',
     color: '#0F172A',
+  },
+  dayNumberSelected: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  dayNumberDisabled: {
+    color: '#94A3B8',
+  },
+  miniDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     marginTop: 2,
   },
-  formCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
+  dateStatusBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  cardSectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  timePickerCardsRow: {
+  typeSelectorRow: {
     flexDirection: 'row',
     gap: 10,
   },
-  alarmTimeCard: {
+  typeOption: {
     flex: 1,
     backgroundColor: '#F8FAFC',
     borderRadius: 10,
     padding: 12,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     alignItems: 'center',
   },
-  alarmTimeCardLocked: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
+  typeOptionActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0066CC',
   },
-  alarmCardLabel: {
+  typeOptionText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    marginTop: 4,
+  },
+  typeOptionTextActive: {
+    color: '#0066CC',
+  },
+  typeOptionSub: {
     fontSize: 10,
     color: '#64748B',
-    fontWeight: '700',
+    marginTop: 2,
+    textAlign: 'center',
   },
-  alarmCardValue: {
+  disabledTimeNotice: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginBottom: 8,
+  },
+  disabledTimeNoticeText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#B91C1C',
+    fontWeight: '600',
+  },
+  timeDisplayCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  timeDisplayLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  timeDisplayVal: {
     fontSize: 18,
     fontWeight: '900',
     color: '#0F172A',
-    marginVertical: 4,
-  },
-  alarmCardHelper: {
-    fontSize: 9.5,
-    color: '#64748B',
-  },
-  lockRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
     marginTop: 2,
   },
-  lockTitle: {
+  changeTimeBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  changeTimeBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748B',
+    color: '#0066CC',
   },
-  lockSubtitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#B45309',
-    marginTop: 2,
-  },
-  lockHelper: {
-    fontSize: 8.5,
-    color: '#94A3B8',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  checkoutToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 10,
-  },
-  checkoutToggleText: {
-    fontSize: 11,
-    color: '#475569',
-    fontWeight: '600',
-  },
-  presetChipRow: {
+  presetRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   presetChip: {
     backgroundColor: '#F1F5F9',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
+    paddingVertical: 6,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   presetChipActive: {
-    backgroundColor: '#0066CC',
+    backgroundColor: '#EFF6FF',
     borderColor: '#0066CC',
   },
   presetChipText: {
-    fontSize: 10.5,
-    fontWeight: '700',
+    fontSize: 11,
     color: '#475569',
+    fontWeight: '600',
   },
   presetChipTextActive: {
-    color: '#FFFFFF',
+    color: '#0066CC',
+    fontWeight: '800',
   },
-  input: {
+  reasonInput: {
     backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
     fontSize: 12.5,
     color: '#0F172A',
   },
-  submitBtn: {
-    backgroundColor: '#0066CC',
-    paddingVertical: 14,
+  bottomActionBar: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
-    marginTop: 16,
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  submitBtn: {
+    flex: 2,
+    backgroundColor: '#0066CC',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
   },
   submitBtnDisabled: {
     backgroundColor: '#94A3B8',
   },
   submitBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
     color: '#FFFFFF',
-    fontSize: 12.5,
-    fontWeight: '900',
-    letterSpacing: 0.5,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    justifyContent: 'center',
-    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
-  alarmModal: {
+  timeModalCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     padding: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 8,
   },
-  alarmTitle: {
-    fontSize: 15,
+  modalTitle: {
+    fontSize: 16,
     fontWeight: '900',
     color: '#0F172A',
-    textAlign: 'center',
-    marginBottom: 16,
   },
-  alarmDigitsBox: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    paddingVertical: 16,
+  modalSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  pickerSectionLabel: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0066CC',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  pickerRow: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  pickerPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  digitCol: {
-    alignItems: 'center',
+  pickerPillActive: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
   },
-  stepBtn: {
-    padding: 8,
-  },
-  stepBtnText: {
-    fontSize: 14,
-    color: '#0066CC',
-    fontWeight: '900',
-  },
-  digitText: {
-    fontSize: 32,
-    fontWeight: '900',
+  pickerPillText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#0F172A',
-    minWidth: 44,
-    textAlign: 'center',
   },
-  colonText: {
-    fontSize: 28,
+  pickerPillTextActive: {
+    color: '#FFFFFF',
     fontWeight: '900',
-    color: '#64748B',
-  },
-  periodCol: {
-    gap: 6,
-    marginLeft: 8,
   },
   periodBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#E2E8F0',
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   periodBtnActive: {
     backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
   },
-  periodText: {
-    fontSize: 11,
+  periodBtnText: {
+    fontSize: 13,
     fontWeight: '800',
-    color: '#64748B',
+    color: '#475569',
   },
-  periodTextActive: {
+  periodBtnTextActive: {
     color: '#FFFFFF',
   },
-  alarmPresetRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 14,
-  },
-  alarmPresetBtn: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  alarmPresetText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#0066CC',
-  },
-  alarmDoneBtn: {
+  doneTimeBtn: {
+    marginTop: 16,
     backgroundColor: '#0066CC',
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
-    marginTop: 16,
   },
-  alarmDoneBtnText: {
+  doneTimeBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
   },
 });

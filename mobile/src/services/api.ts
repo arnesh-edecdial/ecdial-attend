@@ -181,6 +181,36 @@ export const mobileApi = {
       body: JSON.stringify(payload),
     }),
 
+  // Excel Attendance Export Endpoints (Admin Only)
+  getTodayExportUrl: (date?: string) => {
+    const d = date ? `?date=${date}` : '';
+    return `${getApiBaseUrl()}/attendance/export/today${d}`;
+  },
+  getMonthExportUrl: (year?: number, month?: number) => {
+    const y = year || new Date().getFullYear();
+    const m = month || new Date().getMonth() + 1;
+    return `${getApiBaseUrl()}/attendance/export/month?year=${y}&month=${m}`;
+  },
+
+  // QR Image Download / Share
+  getOfficeQrImageUrl: () => `${getApiBaseUrl()}/attendance/qr/image.png`,
+
+  // Customers
+  listCustomers: (search?: string, page?: number, limit?: number) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (page) params.append('page', String(page));
+    if (limit) params.append('limit', String(limit));
+    return request<any>(`/customers?${params.toString()}`);
+  },
+  getCustomer: (id: string) => request<any>(`/customers/${id}`),
+  createCustomer: (payload: { name?: string; address?: string; mobile?: string; email?: string; notes?: string }) =>
+    request<any>('/customers', { method: 'POST', body: JSON.stringify(payload) }),
+  updateCustomer: (id: string, payload: any) =>
+    request<any>(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteCustomer: (id: string) =>
+    request<any>(`/customers/${id}`, { method: 'DELETE' }),
+
   // Quotations
   createQuotation: (payload: any) =>
     request<any>('/quotations', { method: 'POST', body: JSON.stringify(payload) }),
@@ -197,4 +227,19 @@ export const mobileApi = {
   deleteQuotation: (id: string) =>
     request<any>(`/quotations/${id}`, { method: 'DELETE' }),
   getPdfUrl: (id: string) => `${getApiBaseUrl()}/quotations/${id}/pdf`,
+
+  // Attendance Request Aliases
+  submitAttendanceRequest: (payload: any) =>
+    request<any>('/attendance/requests', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // In-App & Push Notifications
+  listNotifications: () => request<any>('/notifications'),
+  markNotificationAsRead: (id: string) =>
+    request<any>(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllNotificationsAsRead: () =>
+    request<any>('/notifications/read-all', { method: 'PATCH' }),
+  registerDeviceToken: (payload: { token: string; platform: string; deviceId?: string; deviceModel?: string }) =>
+    request<any>('/devices/register', { method: 'POST', body: JSON.stringify(payload) }),
+  unregisterDeviceToken: (payload?: { token?: string }) =>
+    request<any>('/devices/unregister', { method: 'POST', body: JSON.stringify(payload || {}) }),
 };

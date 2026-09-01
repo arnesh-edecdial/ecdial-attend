@@ -13,12 +13,14 @@ import {
   Alert,
 } from 'react-native';
 import { mobileApi } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AdminEmployeesScreenProps {
   onClose?: () => void;
 }
 
 export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onClose }) => {
+  const insets = useSafeAreaInsets();
   const [employees, setEmployees] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -152,8 +154,8 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header with Safe Inset */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Employee Management</Text>
           <Text style={styles.subtitle}>
@@ -192,7 +194,7 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
 
       {/* Employee Cards List */}
       <ScrollView
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={fetchEmployees} tintColor="#0066CC" />}
       >

@@ -8,21 +8,28 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  Alert,
 } from 'react-native';
-import { mobileApi } from '../services/api';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import { CalendarDay } from '../types';
+import { downloadAndSaveFile } from '../services/fileDownloader';
 
 interface AdminCalendarScreenProps {
   onClose?: () => void;
 }
 
 export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClose }) => {
+  const insets = useSafeAreaInsets();
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [dayDetails, setDayDetails] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
   const [leaveModalVisible, setLeaveModalVisible] = useState<boolean>(false);
   const [holidayName, setHolidayName] = useState<string>('Company Annual Leave');
 
@@ -102,13 +109,51 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
     }
   };
 
+  const handleExportMonthExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      const mStr = String(month).padStart(2, '0');
+      const url = mobileApi.getMonthExportUrl(year, month);
+      const token = getAuthToken();
+      const localFilename = `ECDIAL_Attendance_Month_${year}-${mStr}.xlsx`;
+
+      const result = await downloadAndSaveFile({
+        url,
+        rawFilename: localFilename,
+        extension: 'xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'x-employee-id': getActiveEmployeeId(),
+        },
+        dialogTitle: `Export Monthly Attendance (${year}-${mStr})`,
+        showShareFallbackOnAndroid: true,
+      });
+
+      if (result.success) {
+        Alert.alert('✓ Excel Exported', `${result.filename} is downloaded and ready to view.`);
+      } else {
+        Alert.alert('Export Failed', result.error || 'Unable to download monthly attendance report.');
+      }
+    } catch (err: any) {
+      console.error('[Calendar Month Excel Export Error]', err);
+      Alert.alert('Export Error', err.message || 'Failed to export attendance report.');
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 14), paddingBottom: 130 + insets.bottom }]}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Company Calendar</Text>
@@ -132,10 +177,33 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
         </TouchableOpacity>
       </View>
 
+      {/* Monthly Excel Export Banner */}
+      <TouchableOpacity
+        style={styles.monthExportBanner}
+        onPress={handleExportMonthExcel}
+        disabled={isExportingExcel}
+        activeOpacity={0.8}
+      >
+        <Text style={{ fontSize: 18 }}>📊</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.monthExportBannerTitle}>
+            {isExportingExcel ? 'Generating Monthly Excel...' : `Export ${monthNames[month - 1]} Attendance`}
+          </Text>
+          <Text style={styles.monthExportBannerSub}>Download full employee attendance spreadsheet (.xlsx)</Text>
+        </View>
+        {isExportingExcel ? (
+          <ActivityIndicator size="small" color="#0066CC" />
+        ) : (
+          <Text style={{ fontSize: 16, color: '#0066CC', fontWeight: '800' }}>📥</Text>
+        )}
+      </TouchableOpacity>
+
       {/* Days Header */}
       <View style={styles.daysHeader}>
         {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
-          <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#8B5CF6' }]}>{d}</Text>
+          <Text key={i} style={[styles.dayHeaderText, i === 0 && { color: '#8B5CF6' }]}>
+            {d}
+          </Text>
         ))}
       </View>
 
@@ -151,7 +219,7 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
 
           {days.map((day) => {
             const isSelected = selectedDay?.date === day.date;
-            const isSunday = new Date(day.date).getDay() === 0;
+            const isSunday = new Date(year, month - 1, day.dayNumber).getDay() === 0;
             const isCompanyLeave = (day as any).isCompanyLeave || day.holidayName;
             const isPresent = day.colorCode === 'GREEN';
             const isAbsent = day.colorCode === 'RED';
@@ -783,5 +851,33 @@ const styles = StyleSheet.create({
   },
   statusOptTextActive: {
     color: '#FFFFFF',
+  },
+  monthExportBanner: {
+    backgroundColor: '#EFF6FF',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  monthExportBannerTitle: {
+    color: '#0066CC',
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  monthExportBannerSub: {
+    color: '#64748B',
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  monthExportBannerText: {
+    color: '#0066CC',
+    fontSize: 12,
+    fontWeight: '800',
   },
 });

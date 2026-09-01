@@ -77,7 +77,7 @@ export async function authMiddleware(req: AuthenticatedRequest, res: Response, n
   }
 }
 
-export function requireRole(allowedRoles: Role[]) {
+export function requireRole(allowedRoles: (Role | string)[] | readonly (Role | string)[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Authentication required.' });

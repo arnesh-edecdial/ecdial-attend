@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { Quotation } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface QuotationListScreenProps {
   onNewQuotation: () => void;
@@ -23,6 +24,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
   onSelectQuotation,
   userRole = 'SALES',
 }) => {
+  const insets = useSafeAreaInsets();
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [creators, setCreators] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -88,7 +90,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>
             {userRole === 'ADMIN' ? 'All Quotations' : 'My Quotations'}
@@ -145,7 +147,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
       )}
 
       <ScrollView
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={fetchQuotations} tintColor="#0066CC" />}
       >

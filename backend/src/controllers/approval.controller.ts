@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { calculateDurationMinutes, formatMinutesToDuration, formatTime12h } from '../utils/calculations';
+import { notificationService } from '../services/notification.service';
 
 export const approvalController = {
   // 1. List All Pending Approvals (Attendance Requests & Pending Overtime)
@@ -135,6 +136,17 @@ export const approvalController = {
           },
         });
 
+        if (action === 'APPROVE') {
+          await prisma.appNotification.create({
+            data: {
+              userId: attendance.employeeId,
+              title: 'Overtime Approved',
+              message: `Your overtime request for ${attendance.date} was approved.`,
+              type: 'OVERTIME_APPROVED',
+            },
+          });
+        }
+
         res.json({
           success: true,
           message: `Overtime ${action === 'APPROVE' ? 'Approved' : 'Rejected'} successfully.`,
@@ -206,7 +218,7 @@ export const approvalController = {
               workingDurationMinutes: durMins || null,
               status: 'PRESENT',
               notes: isEdited
-                ? `Approved with updated time by Admin (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
+                ? `Approved with updated time by ${reviewerName} (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
                 : `Approved via Attendance Request (${request.reason})`,
             },
             create: {
@@ -218,11 +230,39 @@ export const approvalController = {
               workingDurationMinutes: durMins || null,
               status: 'PRESENT',
               notes: isEdited
-                ? `Approved with updated time by Admin (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
+                ? `Approved with updated time by ${reviewerName} (Requested: ${request.checkInTime || '—'}, Approved: ${inTimeStr})`
                 : `Approved via Attendance Request (${request.reason})`,
             },
           });
+
+          // Dispatch Push & In-App Notification to Employee
+          notificationService.notifyEmployeeOfRequestDecision({
+            employeeId: request.employeeId,
+            requestId: request.id,
+            date: dateStr,
+            isApproved: true,
+            isEdited: !!isEdited,
+            inTime: inTimeStr,
+            outTime: outTimeStr,
+            reviewerName: reviewerName || 'Admin',
+          }).catch((err) => console.error('[Notify Employee Decision Error]', err));
         }
+      } else {
+        // Rejected
+        let parsedDates: string[] = [];
+        try {
+          parsedDates = typeof request.dates === 'string' ? JSON.parse(request.dates) : request.dates;
+        } catch {
+          parsedDates = [request.dates];
+        }
+        notificationService.notifyEmployeeOfRequestDecision({
+          employeeId: request.employeeId,
+          requestId: request.id,
+          date: parsedDates[0] || 'requested date',
+          isApproved: false,
+          isEdited: false,
+          reviewerName: reviewerName || 'Admin',
+        }).catch((err) => console.error('[Notify Employee Rejection Error]', err));
       }
 
       // Log Audit

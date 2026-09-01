@@ -189,15 +189,18 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
             {/* 3. Section A: MAIN UNIT */}
             <div style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                <span style={{ background: '#0052A3', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '3px', fontSize: '11px' }}>A</span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#0A1E3F' }}>MAIN UNIT</span>
-                <div style={{ flex: 1, height: '2px', background: '#0052A3' }} />
+                <span style={{ background: '#0A1E3F', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>A</span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#0A1E3F' }}>MAIN UNITS</span>
+                {mainItems.length > 0 && (
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#EA580C' }}>( {mainItems.length} ITEMS )</span>
+                )}
+                <div style={{ flex: 1, height: '1px', background: '#CBD5E1' }} />
               </div>
 
               <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #CBD5E1', fontSize: '11px' }}>
                 <thead>
-                  <tr style={{ background: '#0052A3', color: '#FFFFFF' }}>
-                    <th style={{ padding: '8px', width: '45px', textAlign: 'center' }}>Sl.No</th>
+                  <tr style={{ background: '#0A1E3F', color: '#FFFFFF' }}>
+                    <th style={{ padding: '8px', width: '45px', textAlign: 'center' }}>SL.No</th>
                     <th style={{ padding: '8px', textAlign: 'left' }}>Description</th>
                     <th style={{ padding: '8px', width: '50px', textAlign: 'center' }}>Qty</th>
                     <th style={{ padding: '8px', width: '60px', textAlign: 'center' }}>Unit</th>
@@ -207,7 +210,7 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
                 </thead>
                 <tbody>
                   {mainItems.map((item, idx) => (
-                    <tr key={idx} style={{ background: idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                    <tr key={idx} style={{ background: idx % 2 === 0 ? '#FFFFFF' : '#F9FBFC', borderBottom: '1px solid #E2E8F0' }}>
                       <td style={{ padding: '8px', textAlign: 'center', color: '#64748B' }}>{idx + 1}</td>
                       <td style={{ padding: '8px', fontWeight: 700, color: '#0A1E3F' }}>{item.description}</td>
                       <td style={{ padding: '8px', textAlign: 'center' }}>{item.quantity}</td>
@@ -220,6 +223,15 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
                       </td>
                     </tr>
                   ))}
+                  {/* Total (A) Subtotal Row */}
+                  <tr style={{ background: '#F1F5F9', borderTop: '1px solid #CBD5E1' }}>
+                    <td colSpan={5} style={{ padding: '8px 12px', fontWeight: 800, color: '#0A1E3F' }}>
+                      Total (A)
+                    </td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 900, fontFamily: 'monospace', color: '#0A1E3F' }}>
+                      ₹ {Number(quotation.mainUnitTotal || mainItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -228,15 +240,16 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
             {quotation.hasLowSide && lowSideItems.length > 0 && (
               <div style={{ marginBottom: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <span style={{ background: '#0052A3', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '3px', fontSize: '11px' }}>B</span>
+                  <span style={{ background: '#0A1E3F', color: '#FFFFFF', fontWeight: 800, padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>B</span>
                   <span style={{ fontSize: '12px', fontWeight: 800, color: '#0A1E3F' }}>LOW SIDE (B) IF NEED EXTRA MATERIALS</span>
-                  <div style={{ flex: 1, height: '2px', background: '#0052A3' }} />
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#EA580C' }}>( {lowSideItems.length} ITEMS )</span>
+                  <div style={{ flex: 1, height: '1px', background: '#CBD5E1' }} />
                 </div>
 
                 <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #CBD5E1', fontSize: '11px' }}>
                   <thead>
-                    <tr style={{ background: '#0052A3', color: '#FFFFFF' }}>
-                      <th style={{ padding: '8px', width: '45px', textAlign: 'center' }}>Sl.No</th>
+                    <tr style={{ background: '#0A1E3F', color: '#FFFFFF' }}>
+                      <th style={{ padding: '8px', width: '45px', textAlign: 'center' }}>SL.No</th>
                       <th style={{ padding: '8px', textAlign: 'left' }}>Description</th>
                       <th style={{ padding: '8px', width: '50px', textAlign: 'center' }}>Qty</th>
                       <th style={{ padding: '8px', width: '60px', textAlign: 'center' }}>Unit</th>
@@ -246,7 +259,7 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
                   </thead>
                   <tbody>
                     {lowSideItems.map((item, idx) => (
-                      <tr key={idx} style={{ background: idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                      <tr key={idx} style={{ background: idx % 2 === 0 ? '#FFFFFF' : '#F9FBFC', borderBottom: '1px solid #E2E8F0' }}>
                         <td style={{ padding: '8px', textAlign: 'center', color: '#64748B' }}>{idx + 1}</td>
                         <td style={{ padding: '8px', color: '#1E293B' }}>{item.description}</td>
                         <td style={{ padding: '8px', textAlign: 'center' }}>{item.quantity}</td>
@@ -259,6 +272,15 @@ export const QuotationPreviewModal: React.FC<QuotationPreviewModalProps> = ({
                         </td>
                       </tr>
                     ))}
+                    {/* Total (B) Subtotal Row */}
+                    <tr style={{ background: '#F1F5F9', borderTop: '1px solid #CBD5E1' }}>
+                      <td colSpan={5} style={{ padding: '8px 12px', fontWeight: 800, color: '#0A1E3F' }}>
+                        Total (B)
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right', fontWeight: 900, fontFamily: 'monospace', color: '#0A1E3F' }}>
+                        ₹ {Number(quotation.lowSideTotal || lowSideItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>

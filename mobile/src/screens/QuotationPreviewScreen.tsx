@@ -17,6 +17,8 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Quotation } from '../types';
 import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
 
 interface QuotationPreviewScreenProps {
   quotation: Quotation | null;
@@ -29,6 +31,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
   onClose,
   onEdit,
 }) => {
+  const insets = useSafeAreaInsets();
   const [currentQuote, setCurrentQuote] = useState<Quotation | null>(quotation);
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
@@ -72,42 +75,6 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
     return clean;
   };
 
-  const downloadPdfFile = async (rawFilename?: string): Promise<{ uri: string | null; error?: string; cleanName: string }> => {
-    const cleanName = sanitizeFilename(rawFilename || getDefaultFilename());
-    try {
-      const pdfUrl = mobileApi.getPdfUrl(currentQuote.id);
-      const docDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-      const localFileUri = `${docDir}${cleanName}.pdf`;
-
-      const token = getAuthToken();
-      const empId = getActiveEmployeeId();
-      const headers: Record<string, string> = {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(empId ? { 'x-employee-id': empId } : {}),
-      };
-
-      const result = await FileSystem.downloadAsync(pdfUrl, localFileUri, { headers });
-      if (result && result.status === 200 && result.uri) {
-        const info = await FileSystem.getInfoAsync(result.uri);
-        if (info.exists && typeof (info as any).size === 'number' && (info as any).size > 100) {
-          return { uri: result.uri, cleanName };
-        }
-      }
-
-      if (result && result.status === 404) {
-        return { uri: null, cleanName, error: 'Quotation not found on the server (404). Please ensure the quotation is saved to the live backend.' };
-      }
-      if (result && result.status === 401) {
-        return { uri: null, cleanName, error: 'Authentication expired (401). Please log in again.' };
-      }
-
-      return { uri: null, cleanName, error: `Server returned HTTP ${result?.status || 'error'}` };
-    } catch (err: any) {
-      console.error('[Download PDF Error]', err);
-      return { uri: null, cleanName, error: err.message || 'Network request failed' };
-    }
-  };
-
   const handleOpenDownloadModal = () => {
     setCustomFilename(getDefaultFilename());
     setFilenameModalMode('DOWNLOAD');
@@ -125,22 +92,39 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
     const cleanName = sanitizeFilename(rawName);
     setFilenameModalVisible(false);
 
+    const pdfUrl = mobileApi.getPdfUrl(currentQuote.id);
+    const token = getAuthToken();
+    const empId = getActiveEmployeeId();
+    const headers: Record<string, string> = {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(empId ? { 'x-employee-id': empId } : {}),
+    };
+
     if (filenameModalMode === 'DOWNLOAD') {
       setIsDownloading(true);
       try {
-        const { uri: localUri, error } = await downloadPdfFile(cleanName);
-        if (localUri) {
+        const result = await downloadAndSaveFile({
+          url: pdfUrl,
+          rawFilename: cleanName,
+          extension: 'pdf',
+          mimeType: 'application/pdf',
+          headers,
+          dialogTitle: `Save Quotation (${cleanName}.pdf)`,
+          showShareFallbackOnAndroid: true,
+        });
+
+        if (result.success && result.uri) {
           Alert.alert(
-            '✓ Quotation downloaded successfully',
-            `${cleanName}.pdf is saved on your device.`,
+            '✓ Quotation downloaded',
+            `${result.filename} is saved on your device.`,
             [
               {
-                text: 'Open / View File',
+                text: 'Open / View PDF',
                 onPress: async () => {
                   if (await Sharing.isAvailableAsync()) {
-                    await Sharing.shareAsync(localUri, {
+                    await Sharing.shareAsync(result.uri!, {
                       mimeType: 'application/pdf',
-                      dialogTitle: `${cleanName}.pdf`,
+                      dialogTitle: `${result.filename}`,
                       UTI: 'com.adobe.pdf',
                     });
                   }
@@ -150,10 +134,10 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             ]
           );
         } else {
-          Alert.alert('Download Failed', error || 'Unable to download quotation. Please check server connection.');
+          Alert.alert('Download Failed', result.error || 'Unable to download quotation. Please check server connection.');
         }
       } catch (err: any) {
-        Alert.alert('Error', err.message || 'Unable to download quotation PDF.');
+        Alert.alert('Download Error', err.message || 'Unable to download quotation PDF.');
       } finally {
         setIsDownloading(false);
       }
@@ -161,20 +145,16 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
       // SHARE mode
       setIsSharing(true);
       try {
-        const { uri: localUri, error } = await downloadPdfFile(cleanName);
-        if (localUri && (await Sharing.isAvailableAsync())) {
-          await Sharing.shareAsync(localUri, {
-            mimeType: 'application/pdf',
-            dialogTitle: `${cleanName}.pdf`,
-            UTI: 'com.adobe.pdf',
-          });
-        } else if (localUri) {
-          await Share.share({
-            title: `ECDIAL Quotation - ${currentQuote.quotationNumber}`,
-            message: `ECDIAL Commercial Offer for ${currentQuote.customerName || 'Customer'}\nQuote: ${currentQuote.quotationNumber}\nTotal: ₹${Number(currentQuote.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nDate: ${currentQuote.date}`,
-          });
-        } else {
-          Alert.alert('Share Failed', error || 'Unable to generate quotation PDF for sharing. Please check server connection.');
+        const shareResult = await shareDocument({
+          url: pdfUrl,
+          rawFilename: cleanName,
+          extension: 'pdf',
+          mimeType: 'application/pdf',
+          headers,
+        });
+
+        if (!shareResult.success && shareResult.error) {
+          Alert.alert('Share Failed', shareResult.error);
         }
       } catch (err: any) {
         console.error('[Share Error]', err);
@@ -219,8 +199,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header */}
-      <View style={styles.header}>
+      {/* Top Header with Safe Top Inset */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Quotation Offer</Text>
           <Text style={styles.subtitle}>{currentQuote.quotationNumber} • {currentQuote.date}</Text>
@@ -244,7 +224,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
       <ScrollView
         style={styles.scrollArea}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 110 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
         {isLoadingDetails && (
@@ -326,17 +306,21 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
           {/* 3. DYNAMIC SECTION A: MAIN UNIT TABLE */}
           <View style={styles.sectionHeader}>
             <View style={styles.sectionBadge}><Text style={styles.sectionBadgeText}>A</Text></View>
-            <Text style={styles.sectionTitle}>MAIN UNIT</Text>
+            <Text style={styles.sectionTitle}>MAIN UNITS</Text>
+            {mainItems.length > 0 && (
+              <Text style={styles.itemCountBadgeText}> ( {mainItems.length} ITEMS )</Text>
+            )}
             <View style={styles.sectionLine} />
           </View>
 
           <View style={styles.tableBox}>
             <View style={styles.tableHeader}>
-              <Text style={[styles.thText, { width: 26, textAlign: 'center' }]}>#</Text>
+              <Text style={[styles.thText, { width: 28, textAlign: 'center' }]}>SL.No</Text>
               <Text style={[styles.thText, { flex: 1 }]}>Description</Text>
               <Text style={[styles.thText, { width: 32, textAlign: 'center' }]}>Qty</Text>
-              <Text style={[styles.thText, { width: 36, textAlign: 'center' }]}>Unit</Text>
-              <Text style={[styles.thText, { width: 75, textAlign: 'right' }]}>Amount</Text>
+              <Text style={[styles.thText, { width: 34, textAlign: 'center' }]}>Unit</Text>
+              <Text style={[styles.thText, { width: 68, textAlign: 'right' }]}>Price (₹)</Text>
+              <Text style={[styles.thText, { width: 72, textAlign: 'right' }]}>Amount (₹)</Text>
             </View>
 
             {mainItems.length === 0 ? (
@@ -345,17 +329,28 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
               </View>
             ) : (
               mainItems.map((item, idx) => (
-                <View key={idx} style={[styles.tableRow, idx % 2 === 1 && { backgroundColor: '#F8FAFC' }]}>
-                  <Text style={[styles.tdText, { width: 26, textAlign: 'center', color: '#64748B' }]}>{idx + 1}</Text>
+                <View key={idx} style={[styles.tableRow, idx % 2 === 1 && { backgroundColor: '#F9FBFC' }]}>
+                  <Text style={[styles.tdText, { width: 28, textAlign: 'center', color: '#64748B' }]}>{idx + 1}</Text>
                   <Text style={[styles.tdText, { flex: 1, fontWeight: '700', color: '#0A1E3F' }]}>{item.description}</Text>
                   <Text style={[styles.tdText, { width: 32, textAlign: 'center' }]}>{item.quantity}</Text>
-                  <Text style={[styles.tdText, { width: 36, textAlign: 'center' }]}>{item.unit}</Text>
-                  <Text style={[styles.tdText, { width: 75, textAlign: 'right', fontWeight: '800' }]}>
-                    ₹{Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  <Text style={[styles.tdText, { width: 34, textAlign: 'center' }]}>{item.unit}</Text>
+                  <Text style={[styles.tdText, { width: 68, textAlign: 'right', color: '#334155' }]}>
+                    {Number(item.unitPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </Text>
+                  <Text style={[styles.tdText, { width: 72, textAlign: 'right', fontWeight: '800', color: '#0F172A' }]}>
+                    {Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </Text>
                 </View>
               ))
             )}
+
+            {/* Total (A) Subtotal Row */}
+            <View style={styles.subtotalRow}>
+              <Text style={styles.subtotalLabel}>Total (A)</Text>
+              <Text style={styles.subtotalVal}>
+                ₹{Number(currentQuote.mainUnitTotal || mainItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
           </View>
 
           {/* 4. DYNAMIC SECTION B: LOW SIDE EXTRA MATERIALS */}
@@ -363,35 +358,61 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             <View style={{ marginTop: 14 }}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionBadge}><Text style={styles.sectionBadgeText}>B</Text></View>
-                <Text style={styles.sectionTitle}>LOW SIDE (B) EXTRA MATERIALS</Text>
+                <Text style={styles.sectionTitle}>LOW SIDE (B) IF NEED EXTRA MATERIALS</Text>
+                <Text style={styles.itemCountBadgeText}> ( {lowSideItems.length} ITEMS )</Text>
                 <View style={styles.sectionLine} />
               </View>
 
               <View style={styles.tableBox}>
                 <View style={styles.tableHeader}>
-                  <Text style={[styles.thText, { width: 26, textAlign: 'center' }]}>#</Text>
+                  <Text style={[styles.thText, { width: 28, textAlign: 'center' }]}>SL.No</Text>
                   <Text style={[styles.thText, { flex: 1 }]}>Description</Text>
                   <Text style={[styles.thText, { width: 32, textAlign: 'center' }]}>Qty</Text>
-                  <Text style={[styles.thText, { width: 36, textAlign: 'center' }]}>Unit</Text>
-                  <Text style={[styles.thText, { width: 75, textAlign: 'right' }]}>Amount</Text>
+                  <Text style={[styles.thText, { width: 34, textAlign: 'center' }]}>Unit</Text>
+                  <Text style={[styles.thText, { width: 68, textAlign: 'right' }]}>Price (₹)</Text>
+                  <Text style={[styles.thText, { width: 72, textAlign: 'right' }]}>Amount (₹)</Text>
                 </View>
 
                 {lowSideItems.map((item, idx) => (
-                  <View key={idx} style={[styles.tableRow, idx % 2 === 1 && { backgroundColor: '#F8FAFC' }]}>
-                    <Text style={[styles.tdText, { width: 26, textAlign: 'center', color: '#64748B' }]}>{idx + 1}</Text>
+                  <View key={idx} style={[styles.tableRow, idx % 2 === 1 && { backgroundColor: '#F9FBFC' }]}>
+                    <Text style={[styles.tdText, { width: 28, textAlign: 'center', color: '#64748B' }]}>{idx + 1}</Text>
                     <Text style={[styles.tdText, { flex: 1, color: '#334155' }]}>{item.description}</Text>
                     <Text style={[styles.tdText, { width: 32, textAlign: 'center' }]}>{item.quantity}</Text>
-                    <Text style={[styles.tdText, { width: 36, textAlign: 'center' }]}>{item.unit}</Text>
-                    <Text style={[styles.tdText, { width: 75, textAlign: 'right', fontWeight: '800' }]}>
-                      ₹{Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    <Text style={[styles.tdText, { width: 34, textAlign: 'center' }]}>{item.unit}</Text>
+                    <Text style={[styles.tdText, { width: 68, textAlign: 'right', color: '#334155' }]}>
+                      {Number(item.unitPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </Text>
+                    <Text style={[styles.tdText, { width: 72, textAlign: 'right', fontWeight: '800', color: '#0F172A' }]}>
+                      {Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </Text>
                   </View>
                 ))}
+
+                {/* Total (B) Subtotal Row */}
+                <View style={styles.subtotalRow}>
+                  <Text style={styles.subtotalLabel}>Total (B)</Text>
+                  <Text style={styles.subtotalVal}>
+                    ₹{Number(currentQuote.lowSideTotal || lowSideItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </Text>
+                </View>
               </View>
             </View>
           )}
 
-          {/* 5. FIXED TERMS & CONDITIONS + PAYMENT METHOD IMAGE ASSET */}
+          {/* 5. MULTI-PAGE NOTE OR CONTINUATION (If large quotation) */}
+          {mainItems.length >= 4 && (
+            <View style={styles.continuationNoteBox}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={styles.noteTag}>NOTE:</Text>
+                <Text style={styles.noteText} numberOfLines={2}>
+                  Low side / additional materials (If added), Terms & Conditions, Payment Method & Other details on next page.
+                </Text>
+              </View>
+              <Text style={styles.continuationText}>Continued on next page →</Text>
+            </View>
+          )}
+
+          {/* 6. FIXED TERMS & CONDITIONS + PAYMENT METHOD IMAGE ASSET */}
           <View style={styles.fixedTermsContainer}>
             <Image
               source={require('../../assets/quotation_terms_payment.png')}
@@ -400,7 +421,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             />
           </View>
 
-          {/* 6. FIXED FOOTER IMAGE ASSET */}
+          {/* 7. FIXED FOOTER IMAGE ASSET */}
           <View style={styles.fixedFooterContainer}>
             <Image
               source={require('../../assets/quotation_footer.png')}
@@ -411,8 +432,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
         </View>
       </ScrollView>
 
-      {/* Fixed Sticky Action Bar at Bottom */}
-      <View style={styles.stickyFooterBar}>
+      {/* Fixed Sticky Action Bar at Bottom with Safe Bottom Inset */}
+      <View style={[styles.stickyFooterBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
         <TouchableOpacity
           style={[styles.downloadBtn, isDownloading && { opacity: 0.7 }]}
           onPress={handleOpenDownloadModal}
@@ -766,6 +787,11 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#005A96',
   },
+  itemCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#EA580C',
+  },
   sectionLine: {
     flex: 1,
     height: 1,
@@ -779,27 +805,74 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#005A96',
+    backgroundColor: '#0A1E3F',
     paddingVertical: 6,
     paddingHorizontal: 6,
     alignItems: 'center',
   },
   thText: {
     color: '#FFFFFF',
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '800',
   },
   tableRow: {
     flexDirection: 'row',
-    paddingVertical: 6,
+    paddingVertical: 7,
     paddingHorizontal: 6,
     alignItems: 'center',
     borderTopWidth: 1,
     borderColor: '#E2E8F0',
   },
   tdText: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#0F172A',
+  },
+  subtotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  subtotalLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  subtotalVal: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  continuationNoteBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    borderRadius: 6,
+    padding: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  noteTag: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#EA580C',
+  },
+  noteText: {
+    fontSize: 8.5,
+    color: '#7C2D12',
+    flex: 1,
+  },
+  continuationText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#0A1E3F',
   },
   termsPaymentCard: {
     backgroundColor: '#F8FAFC',

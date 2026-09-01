@@ -8,13 +8,16 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { mobileApi } from '../services/api';
+import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import * as Location from 'expo-location';
 import { TodayAttendanceStatus } from '../types';
 import { DynamicQRCode } from '../components/DynamicQRCode';
+import { NotificationCenterModal } from '../components/NotificationCenterModal';
+import { downloadAndSaveFile } from '../services/fileDownloader';
 
 interface AttendanceScreenProps {
   onOpenDrawer: () => void;
@@ -27,7 +30,9 @@ interface AttendanceScreenProps {
   onOpenAdminCalendar?: () => void;
   onOpenStock?: () => void;
   onOpenEmployees?: () => void;
+  onOpenCustomers?: () => void;
   onOpenLocationCalibration?: () => void;
+  onNavigateNotification?: (screen: string, entityId?: string | null, metadata?: any) => void;
   userName?: string;
   userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
 }
@@ -43,7 +48,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenAdminCalendar,
   onOpenStock,
   onOpenEmployees,
+  onOpenCustomers,
   onOpenLocationCalibration,
+  onNavigateNotification,
   userName = 'Employee',
   userRole = 'EMPLOYEE',
 }) => {
@@ -55,6 +62,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDownloadingQR, setIsDownloadingQR] = useState<boolean>(false);
   const [currentMonthName, setCurrentMonthName] = useState<string>('August 2026');
+
+  // In-App Notification Center State
+  const [notifModalVisible, setNotifModalVisible] = useState<boolean>(false);
+  const [unreadNotifsCount, setUnreadNotifsCount] = useState<number>(0);
+
+  // Excel Attendance Export State (Admin Only)
+  const [isExportingToday, setIsExportingToday] = useState<boolean>(false);
+  const [isExportingMonth, setIsExportingMonth] = useState<boolean>(false);
+  const [monthExportModalVisible, setMonthExportModalVisible] = useState<boolean>(false);
+  const [exportYear, setExportYear] = useState<number>(new Date().getFullYear());
+  const [exportMonth, setExportMonth] = useState<number>(new Date().getMonth() + 1);
 
   // Live Device Coordinates & Geofence Distance
   const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -79,12 +97,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     try {
       setIsLoading(true);
       const d = new Date();
-      const [statusRes, dashRes, qrRes, calRes, officeRes] = await Promise.all([
+      const [statusRes, dashRes, qrRes, calRes, officeRes, notifRes] = await Promise.all([
         mobileApi.getTodayStatus(),
         userRole === 'ADMIN' ? mobileApi.getTodayDashboard() : Promise.resolve(null),
         userRole === 'ADMIN' ? mobileApi.getTodayQR() : Promise.resolve(null),
         mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
         mobileApi.getOfficeConfig().catch(() => null),
+        mobileApi.listNotifications().catch(() => null),
       ]);
 
       if (statusRes && statusRes.success) setStatusData(statusRes.data);
@@ -92,6 +111,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       if (qrRes && qrRes.success) setOfficeQR(qrRes.data);
       if (calRes && calRes.success) setCalendarDays(calRes.data.days);
       if (officeRes && officeRes.success && officeRes.data) setOfficeConfig(officeRes.data);
+      if (notifRes && notifRes.success && notifRes.data) {
+        setUnreadNotifsCount(notifRes.data.unreadCount || 0);
+      }
 
       // Check device GPS location
       try {
@@ -113,27 +135,26 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
+  const [isSharingQR, setIsSharingQR] = useState<boolean>(false);
+
   const handleDownloadOfficeQR = async () => {
     setIsDownloadingQR(true);
     try {
-      const qrValue = officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
-      const qrImageUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qrValue)}&size=600&caption=${encodeURIComponent('ECDIAL OFFICE - Attendance QR')}&margin=2`;
+      const qrImageUrl = mobileApi.getOfficeQrImageUrl();
       const docDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
       const localFileUri = `${docDir}ECDIAL_Office_Attendance_QR.png`;
 
-      const result = await FileSystem.downloadAsync(qrImageUrl, localFileUri);
+      let result = await FileSystem.downloadAsync(qrImageUrl, localFileUri).catch(() => null);
+      if (!result || result.status !== 200) {
+        const qrValue = officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
+        const fallbackUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qrValue)}&size=600&caption=${encodeURIComponent('ECDIAL - Official Attendance QR')}&margin=2`;
+        result = await FileSystem.downloadAsync(fallbackUrl, localFileUri);
+      }
+
       if (result && result.status === 200 && result.uri) {
         const info = await FileSystem.getInfoAsync(result.uri);
         if (info.exists && typeof (info as any).size === 'number' && (info as any).size > 100) {
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(result.uri, {
-              mimeType: 'image/png',
-              dialogTitle: 'ECDIAL Office Attendance QR',
-              UTI: 'public.png',
-            });
-          } else {
-            Alert.alert('✓ QR Downloaded', 'ECDIAL_Office_Attendance_QR.png saved successfully.');
-          }
+          Alert.alert('✓ QR Downloaded', 'ECDIAL_Office_Attendance_QR.png saved to device.');
           return;
         }
       }
@@ -143,6 +164,114 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       Alert.alert('Error', err.message || 'Failed to download QR image.');
     } finally {
       setIsDownloadingQR(false);
+    }
+  };
+
+  const handleShareOfficeQR = async () => {
+    setIsSharingQR(true);
+    try {
+      const qrImageUrl = mobileApi.getOfficeQrImageUrl();
+      const docDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+      const localFileUri = `${docDir}ECDIAL_Office_Attendance_QR.png`;
+
+      let result = await FileSystem.downloadAsync(qrImageUrl, localFileUri).catch(() => null);
+      if (!result || result.status !== 200) {
+        const qrValue = officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
+        const fallbackUrl = `https://quickchart.io/qr?text=${encodeURIComponent(qrValue)}&size=600&caption=${encodeURIComponent('ECDIAL - Official Attendance QR')}&margin=2`;
+        result = await FileSystem.downloadAsync(fallbackUrl, localFileUri);
+      }
+
+      if (result && result.status === 200 && result.uri) {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(result.uri, {
+            mimeType: 'image/png',
+            dialogTitle: 'ECDIAL Office Attendance QR',
+            UTI: 'public.png',
+          });
+        } else {
+          Alert.alert('Sharing Unavailable', 'Native sharing is not supported on this device.');
+        }
+      } else {
+        Alert.alert('Unable to Share', 'Unable to generate QR image. Please try again.');
+      }
+    } catch (err: any) {
+      console.error('[Share QR Error]', err);
+      Alert.alert('Unable to Share QR', 'Please try again.');
+    } finally {
+      setIsSharingQR(false);
+    }
+  };
+
+  const handleExportTodayExcel = async () => {
+    try {
+      setIsExportingToday(true);
+      const url = mobileApi.getTodayExportUrl();
+      const token = getAuthToken();
+      const d = new Date();
+      const dateStr = d.toISOString().substring(0, 10);
+      const localFilename = `ECDIAL_Attendance_Today_${dateStr}.xlsx`;
+
+      const result = await downloadAndSaveFile({
+        url,
+        rawFilename: localFilename,
+        extension: 'xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'x-employee-id': getActiveEmployeeId(),
+        },
+        dialogTitle: `Export Today's Attendance (${dateStr})`,
+        showShareFallbackOnAndroid: true,
+      });
+
+      if (result.success) {
+        Alert.alert('✓ Excel Exported', `${result.filename} is downloaded and ready to view.`);
+      } else {
+        Alert.alert('Export Failed', result.error || 'Unable to download today\'s attendance report.');
+      }
+    } catch (err: any) {
+      console.error('[Export Today Excel]', err);
+      Alert.alert('Export Error', err.message || 'Failed to export attendance report.');
+    } finally {
+      setIsExportingToday(false);
+    }
+  };
+
+  const handleExportMonthExcel = async (yearNum?: number, monthNum?: number) => {
+    try {
+      setIsExportingMonth(true);
+      const y = yearNum || exportYear;
+      const m = monthNum || exportMonth;
+      const mStr = String(m).padStart(2, '0');
+
+      const url = mobileApi.getMonthExportUrl(y, m);
+      const token = getAuthToken();
+      const localFilename = `ECDIAL_Attendance_Month_${y}-${mStr}.xlsx`;
+
+      const result = await downloadAndSaveFile({
+        url,
+        rawFilename: localFilename,
+        extension: 'xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'x-employee-id': getActiveEmployeeId(),
+        },
+        dialogTitle: `Export Monthly Attendance (${y}-${mStr})`,
+        showShareFallbackOnAndroid: true,
+      });
+
+      if (result.success) {
+        setMonthExportModalVisible(false);
+        Alert.alert('✓ Excel Exported', `${result.filename} is downloaded and ready to view.`);
+      } else {
+        Alert.alert('Export Failed', result.error || 'Unable to download monthly attendance report.');
+      }
+    } catch (err: any) {
+      console.error('[Export Month Excel]', err);
+      Alert.alert('Export Error', err.message || 'Failed to export monthly attendance report.');
+    } finally {
+      setIsExportingMonth(false);
     }
   };
 
@@ -214,13 +343,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           {/* Notification Bell */}
           <TouchableOpacity
             style={styles.bellButton}
-            onPress={userRole === 'ADMIN' ? onOpenApprovals : onOpenCalendar}
+            onPress={() => setNotifModalVisible(true)}
           >
             <Text style={{ fontSize: 18 }}>🔔</Text>
-            {userRole === 'ADMIN' && (
+            {(unreadNotifsCount > 0 || (userRole === 'ADMIN' && (dashboardData?.summary?.pending ?? 0) > 0)) && (
               <View style={styles.bellBadge}>
                 <Text style={styles.bellBadgeText}>
-                  {dashboardData?.summary?.pending ?? 0}
+                  {unreadNotifsCount > 0 ? unreadNotifsCount : (dashboardData?.summary?.pending ?? 0)}
                 </Text>
               </View>
             )}
@@ -266,43 +395,74 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* 2. STATIC OFFICE ATTENDANCE QR DISPLAY */}
-          <View style={styles.adminQrCard}>
-            <View style={styles.rowBetween}>
-              <View>
-                <Text style={styles.qrCardTitle}>OFFICE ATTENDANCE</Text>
-                <View style={styles.activeQrPill}>
+          {/* 2. GOOGLE PAY STYLE STATIC OFFICE ATTENDANCE QR DISPLAY (REFERENCE 1) */}
+          <View style={styles.gpayQrCard}>
+            {/* Top Identity Header */}
+            <View style={styles.gpayCardHeader}>
+              <View style={styles.gpayAvatarCircle}>
+                <Text style={{ fontSize: 24 }}>🏢</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.gpayOfficeName}>
+                  {officeConfig?.officeName || officeQR?.officeName || 'ECDIAL Headquarters'}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
                   <View style={styles.activeDot} />
-                  <Text style={styles.activeQrPillText}>Active Office QR</Text>
+                  <Text style={styles.gpayBadgeText}>Official Attendance QR</Text>
                 </View>
               </View>
+            </View>
+
+            {/* Large Clean QR Card Box */}
+            <View style={styles.gpayQrWrapper}>
+              <DynamicQRCode
+                value={officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE'}
+                size={220}
+              />
+            </View>
+
+            {/* Instruction text */}
+            <Text style={styles.gpayScanInstruction}>
+              Scan to mark attendance with ECDIAL app
+            </Text>
+            <Text style={styles.gpayPerimeterNote}>
+              Valid within {allowedRadius}m office perimeter
+            </Text>
+
+            {/* Download & Share Actions Row */}
+            <View style={styles.gpayActionRow}>
               <TouchableOpacity
-                style={styles.downloadQrBtn}
+                style={styles.gpayDownloadBtn}
                 onPress={handleDownloadOfficeQR}
                 disabled={isDownloadingQR}
+                activeOpacity={0.85}
               >
                 {isDownloadingQR ? (
                   <ActivityIndicator color="#0066CC" size="small" />
                 ) : (
-                  <Text style={styles.downloadQrBtnText}>📥 Download QR</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 16 }}>📥</Text>
+                    <Text style={styles.gpayDownloadBtnText}>Download QR</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gpayShareBtn}
+                onPress={handleShareOfficeQR}
+                disabled={isSharingQR}
+                activeOpacity={0.85}
+              >
+                {isSharingQR ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 16 }}>📤</Text>
+                    <Text style={styles.gpayShareBtnText}>Share QR</Text>
+                  </View>
                 )}
               </TouchableOpacity>
             </View>
-
-            {/* Rendered Scannable Vector QR Code */}
-            <View style={styles.qrVisualContainer}>
-              <DynamicQRCode
-                value={officeQR?.token || 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE'}
-                size={180}
-              />
-            </View>
-
-            <Text style={styles.qrHelperText}>
-              📱 Employees scan this QR code for attendance
-            </Text>
-            <Text style={styles.qrOfficeLabel}>
-              {officeConfig?.officeName || officeQR?.officeName || 'ECDIAL Headquarters'} • Official Attendance QR
-            </Text>
           </View>
 
           {/* 3. LOCATION & GEOFENCE CALIBRATION ACTION CARD */}
@@ -328,10 +488,24 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           {/* 4. TODAY'S EMPLOYEE ATTENDANCE LIST (Rule 4, 5) */}
           <View style={styles.employeeListCard}>
             <View style={styles.rowBetween}>
-              <Text style={styles.sectionHeaderTitle}>Today's Employees</Text>
-              <Text style={styles.employeeCountText}>
-                {dashboardData?.employees?.length || 0} Total
-              </Text>
+              <View>
+                <Text style={styles.sectionHeaderTitle}>Today's Employees</Text>
+                <Text style={styles.employeeCountText}>
+                  {dashboardData?.employees?.length || 0} Total
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.exportTodaySmallBtn}
+                onPress={handleExportTodayExcel}
+                disabled={isExportingToday}
+                activeOpacity={0.8}
+              >
+                {isExportingToday ? (
+                  <ActivityIndicator size="small" color="#0066CC" />
+                ) : (
+                  <Text style={styles.exportTodaySmallBtnText}>📊 Export (Excel)</Text>
+                )}
+              </TouchableOpacity>
             </View>
 
             <View style={styles.employeeList}>
@@ -357,7 +531,64 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </View>
           </View>
 
-          {/* 4. ADMIN QUICK ACTIONS (Rule 27) */}
+          {/* 5. EXCEL ATTENDANCE EXPORTS (ADMIN ONLY) */}
+          <View style={styles.exportSectionCard}>
+            <View style={styles.rowBetween}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={styles.exportIconCircle}>
+                  <Text style={{ fontSize: 18 }}>📊</Text>
+                </View>
+                <View>
+                  <Text style={styles.exportSectionTitle}>Attendance Excel Exports</Text>
+                  <Text style={styles.exportSectionSubtitle}>Official spreadsheet reports (.xlsx)</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.exportButtonsRow}>
+              {/* Today Export Button */}
+              <TouchableOpacity
+                style={styles.exportActionBtnPrimary}
+                onPress={handleExportTodayExcel}
+                disabled={isExportingToday}
+                activeOpacity={0.85}
+              >
+                {isExportingToday ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
+                    <Text style={{ fontSize: 20 }}>📥</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.exportActionBtnTitle}>Today's Attendance</Text>
+                      <Text style={styles.exportActionBtnSub}>Full daily breakdown</Text>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {/* Monthly Export Button */}
+              <TouchableOpacity
+                style={styles.exportActionBtnSecondary}
+                onPress={() => setMonthExportModalVisible(true)}
+                disabled={isExportingMonth}
+                activeOpacity={0.85}
+              >
+                {isExportingMonth ? (
+                  <ActivityIndicator color="#0A1E3F" size="small" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
+                    <Text style={{ fontSize: 20 }}>📅</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.exportActionBtnTitleSec}>Overall Month</Text>
+                      <Text style={styles.exportActionBtnSubSec}>Summary & logs</Text>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* 6. ADMIN QUICK ACTIONS (Rule 27) */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Quick Management</Text>
           </View>
@@ -396,6 +627,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 <Text style={{ fontSize: 20 }}>❄️</Text>
               </View>
               <Text style={styles.actionCardTitle}>Machines</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenCustomers}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#FEF2F2' }]}>
+                <Text style={{ fontSize: 20 }}>🏢</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Customers</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionCard} onPress={onOpenQuotations}>
@@ -640,6 +878,109 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* MONTHLY EXCEL EXPORT MODAL (ADMIN ONLY) */}
+      <Modal
+        visible={monthExportModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMonthExportModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.monthModalCard}>
+            <View style={styles.rowBetween}>
+              <View>
+                <Text style={styles.monthModalTitle}>Export Monthly Attendance</Text>
+                <Text style={styles.monthModalSubtitle}>Download overall month spreadsheet (.xlsx)</Text>
+              </View>
+              <TouchableOpacity onPress={() => setMonthExportModalVisible(false)} style={{ padding: 4 }}>
+                <Text style={{ fontSize: 18, color: '#94A3B8', fontWeight: '800' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Year Selector */}
+            <View style={styles.yearSelectorRow}>
+              <TouchableOpacity
+                style={styles.yearBtn}
+                onPress={() => setExportYear((y) => y - 1)}
+              >
+                <Text style={styles.yearBtnText}>‹</Text>
+              </TouchableOpacity>
+              <Text style={styles.yearDisplay}>{exportYear}</Text>
+              <TouchableOpacity
+                style={styles.yearBtn}
+                onPress={() => setExportYear((y) => y + 1)}
+              >
+                <Text style={styles.yearBtnText}>›</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Month Grid */}
+            <View style={styles.monthGrid}>
+              {[
+                'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+              ].map((mName, idx) => {
+                const mNum = idx + 1;
+                const isSelected = exportMonth === mNum;
+                return (
+                  <TouchableOpacity
+                    key={mName}
+                    style={[styles.monthChip, isSelected && styles.monthChipSelected]}
+                    onPress={() => setExportMonth(mNum)}
+                  >
+                    <Text style={[styles.monthChipText, isSelected && styles.monthChipTextSelected]}>
+                      {mName}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Export Action Button */}
+            <TouchableOpacity
+              style={styles.modalExportBtn}
+              onPress={() => handleExportMonthExcel(exportYear, exportMonth)}
+              disabled={isExportingMonth}
+            >
+              {isExportingMonth ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.modalExportBtnText}>
+                  📥 Download {exportYear}-{String(exportMonth).padStart(2, '0')} Report (Excel)
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* In-App Notification Center Modal */}
+      <NotificationCenterModal
+        visible={notifModalVisible}
+        onClose={() => setNotifModalVisible(false)}
+        onUnreadCountChange={setUnreadNotifsCount}
+        onNavigateToScreen={(screen, entityId, metadata) => {
+          setNotifModalVisible(false);
+          if (onNavigateNotification) {
+            onNavigateNotification(screen, entityId, metadata);
+          } else {
+            if (screen === 'ADMIN_APPROVALS') {
+              onOpenApprovals?.();
+            } else if (screen === 'ATTENDANCE_REQUEST') {
+              onOpenRequest?.(metadata?.date, metadata?.mode || 'MISSED');
+            } else if (screen === 'QUOTATION_PREVIEW' || screen === 'QUOTATION') {
+              onOpenQuotations?.();
+            } else if (screen === 'STOCK') {
+              onOpenStock?.();
+            } else if (screen === 'CUSTOMERS') {
+              onOpenCustomers?.();
+            } else if (screen === 'CALENDAR') {
+              onOpenCalendar?.();
+            }
+          }
+        }}
+      />
     </ScrollView>
   );
 };
@@ -789,33 +1130,47 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 2,
   },
-  adminQrCard: {
-    backgroundColor: '#0F1E36',
-    borderRadius: 20,
-    padding: 18,
+  gpayQrCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
     marginBottom: 14,
     alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     shadowColor: '#000',
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.06,
     shadowRadius: 10,
-    elevation: 4,
+    elevation: 3,
   },
-  qrCardTitle: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
-  },
-  activeQrPill: {
+  gpayCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 99,
-    marginTop: 3,
-    alignSelf: 'flex-start',
+    width: '100%',
+    gap: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  gpayAvatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  gpayOfficeName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  gpayBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
   },
   activeDot: {
     width: 6,
@@ -823,40 +1178,69 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: '#10B981',
   },
-  activeQrPillText: {
-    color: '#10B981',
-    fontSize: 9.5,
-    fontWeight: '800',
-  },
-  downloadQrBtn: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+  gpayQrWrapper: {
+    marginVertical: 16,
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  downloadQrBtnText: {
-    color: '#0066CC',
-    fontSize: 11.5,
-    fontWeight: '800',
-  },
-  qrVisualContainer: {
-    marginVertical: 14,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  qrHelperText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  gpayScanInstruction: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
     textAlign: 'center',
   },
-  qrOfficeLabel: {
-    fontSize: 10.5,
-    color: '#94A3B8',
+  gpayPerimeterNote: {
+    fontSize: 11,
+    color: '#64748B',
     textAlign: 'center',
-    marginTop: 4,
+    marginTop: 3,
+    marginBottom: 16,
+  },
+  gpayActionRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+  },
+  gpayDownloadBtn: {
+    flex: 1,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+  },
+  gpayDownloadBtnText: {
+    color: '#0066CC',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  gpayShareBtn: {
+    flex: 1,
+    backgroundColor: '#0066CC',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0066CC',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  gpayShareBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   employeeListCard: {
     backgroundColor: '#FFFFFF',
@@ -1382,5 +1766,186 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 3,
+  },
+  exportTodaySmallBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  exportTodaySmallBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0066CC',
+  },
+  exportSectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  exportIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  exportSectionTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  exportSectionSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  exportButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  exportActionBtnPrimary: {
+    flex: 1,
+    backgroundColor: '#0066CC',
+    borderRadius: 10,
+    padding: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exportActionBtnSecondary: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exportActionBtnTitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  exportActionBtnSub: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  exportActionBtnTitleSec: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  exportActionBtnSubSec: {
+    color: '#64748B',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  monthModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    width: '100%',
+    maxWidth: 380,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  monthModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  monthModalSubtitle: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  yearSelectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 14,
+    gap: 16,
+  },
+  yearBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  yearBtnText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  yearDisplay: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0066CC',
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  monthChip: {
+    width: '22%',
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  monthChipSelected: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  monthChipText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  monthChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  modalExportBtn: {
+    backgroundColor: '#0066CC',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalExportBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

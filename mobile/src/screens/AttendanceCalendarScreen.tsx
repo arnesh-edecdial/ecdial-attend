@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AttendanceCalendarScreenProps {
   onClose?: () => void;
@@ -21,6 +22,7 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
   onRequestCorrection,
   employeeId,
 }) => {
+  const insets = useSafeAreaInsets();
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -74,7 +76,11 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
   ];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 14), paddingBottom: 130 + insets.bottom }]}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>{monthNames[month - 1]} {year}</Text>
@@ -142,7 +148,7 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
 
           {days.map((day) => {
             const isSelected = selectedDay?.date === day.date;
-            const isSunday = new Date(day.date).getDay() === 0;
+            const isSunday = new Date(year, month - 1, day.dayNumber).getDay() === 0;
             const isHoliday = !!day.holidayName || !!(day as any).isCompanyLeave;
             const dotColor = getColorDot(day.colorCode, isSunday, isHoliday);
 

@@ -3,6 +3,7 @@ import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { calculateQuotationTotals, getTodayDateString, roundCurrency } from '../utils/calculations';
 import { generateQuotationPDF } from '../services/pdf.service';
+import { notificationService } from '../services/notification.service';
 
 async function generateNextQuotationNumber(): Promise<string> {
   const currentYear = new Date().getFullYear();
@@ -75,6 +76,7 @@ export const quotationController = {
     }
 
     const {
+      customerId,
       customerName,
       customerAddress,
       customerPhone,
@@ -139,6 +141,8 @@ export const quotationController = {
       }
 
       const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst);
+      const finalCustName = customerName ? String(customerName).trim() : '';
+      const finalCustAddr = customerAddress ? String(customerAddress).trim() : '';
 
       // Create Quotation with Items in Supabase DB
       const newQuotation = await prisma.quotation.create({
@@ -146,11 +150,12 @@ export const quotationController = {
           quotationNumber,
           revisionNumber: 1,
           date: todayStr,
-          customerName: customerName.trim(),
-          customerAddress: customerAddress.trim(),
-          customerPhone: customerPhone ? customerPhone.trim() : null,
-          customerEmail: customerEmail ? customerEmail.trim() : null,
-          customerLocation: customerLocation ? customerLocation.trim() : customerAddress.trim(),
+          customerId: customerId || null,
+          customerName: finalCustName,
+          customerAddress: finalCustAddr,
+          customerPhone: customerPhone ? String(customerPhone).trim() : null,
+          customerEmail: customerEmail ? String(customerEmail).trim() : null,
+          customerLocation: customerLocation ? String(customerLocation).trim() : finalCustAddr,
           createdById: req.user.id,
           hasLowSide: Boolean(hasLowSide),
           mainUnitTotal: totals.mainUnitTotal,
@@ -171,11 +176,20 @@ export const quotationController = {
         },
         include: {
           items: true,
+          customer: true,
           createdBy: {
             select: { id: true, name: true, email: true, role: true },
           },
         },
       });
+
+      // Dispatch notification to creator
+      notificationService.notifyQuotationCreated({
+        userId: req.user.id,
+        quotationId: newQuotation.id,
+        quotationNumber: newQuotation.quotationNumber,
+        customerName: newQuotation.customerName || undefined,
+      }).catch((err) => console.error('[Notify Quotation Error]', err));
 
       res.json({
         success: true,
@@ -207,6 +221,7 @@ export const quotationController = {
         },
         include: {
           createdBy: { select: { id: true, name: true, email: true, role: true } },
+          customer: true,
           items: true,
         },
         orderBy: { createdAt: 'desc' },
@@ -217,11 +232,13 @@ export const quotationController = {
         quotationNumber: q.quotationNumber,
         revisionNumber: q.revisionNumber,
         date: q.date,
-        customerName: q.customerName,
-        customerAddress: q.customerAddress,
-        customerPhone: q.customerPhone,
-        customerEmail: q.customerEmail,
-        customerLocation: q.customerLocation,
+        customerId: q.customerId,
+        customer: q.customer,
+        customerName: q.customerName || q.customer?.name || '',
+        customerAddress: q.customerAddress || q.customer?.address || '',
+        customerPhone: q.customerPhone || q.customer?.mobile || '',
+        customerEmail: q.customerEmail || q.customer?.email || '',
+        customerLocation: q.customerLocation || q.customer?.address || '',
         createdById: q.createdById,
         createdByName: q.createdBy?.name || 'Sales Rep',
         hasLowSide: q.hasLowSide,

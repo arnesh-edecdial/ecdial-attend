@@ -39,6 +39,8 @@ model User {
   quotations         Quotation[]
   auditLogs          AttendanceAuditLog[] @relation("AuditUser")
   performedAudits    AttendanceAuditLog[] @relation("AuditPerformer")
+  notifications      AppNotification[]
+  deviceTokens       DevicePushToken[]
 }
 
 model EmployeeSchedule {
@@ -158,14 +160,31 @@ model Product {
   updatedAt      DateTime @updatedAt
 }
 
+model Customer {
+  id        String      @id @default(uuid())
+  name      String?
+  address   String?     @db.Text
+  mobile    String?
+  email     String?
+  notes     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  quotations Quotation[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([mobile])
+}
+
 model Quotation {
   id                  String          @id @default(uuid())
   quotationNumber     String          @unique // e.g. "ECD-Q-2026-00124"
   revisionNumber      Int             @default(1)
   originalQuotationId String?
   date                String          // YYYY-MM-DD
-  customerName        String
-  customerAddress     String          @db.Text
+  customerId          String?
+  customerName        String          @default("")
+  customerAddress     String          @default("") @db.Text
   customerPhone       String?
   customerEmail       String?
   customerLocation    String?
@@ -186,6 +205,7 @@ model Quotation {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
+  customer            Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   createdBy           User            @relation(fields: [createdById], references: [id])
   items               QuotationItem[]
 }
@@ -216,4 +236,41 @@ model QuotationConfig {
   defaultPaymentMethod String   @db.Text
   availableUnits       String   @default("Nos,Mtr,Sqft,Kg,Set,Box,Piece,Hour,Service,Other")
   updatedAt            DateTime @updatedAt
+}
+
+model AppNotification {
+  id           String   @id @default(uuid())
+  userId       String
+  title        String
+  message      String   @db.Text
+  type         String   // "ATTENDANCE_NOT_MARKED", "ATTENDANCE_REQUEST_CREATED", "ATTENDANCE_REQUEST_ACCEPTED", "ATTENDANCE_TIME_EDITED", "ATTENDANCE_CLOSING_REQUIRED", "QUOTATION_CREATED", "SYSTEM_NOTIFICATION"
+  entityId     String?  // ID of related entity (e.g. attendanceRequestId, quotationId)
+  entityType   String?  // "ATTENDANCE_REQUEST", "QUOTATION", "ATTENDANCE", "STOCK", "CUSTOMER"
+  targetScreen String?  // Deep-link screen key (e.g. "ADMIN_APPROVALS", "ATTENDANCE_REQUEST", "QUOTATION_PREVIEW")
+  metadata     String?  @db.Text // JSON string for extra payload parameters
+  isRead       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, isRead])
+}
+
+model DevicePushToken {
+  id          String   @id @default(uuid())
+  userId      String
+  token       String   // Expo Push Token e.g. "ExponentPushToken[xxxxxxxxxxxxxx]"
+  platform    String   @default("android") // "android", "ios", "web"
+  deviceId    String?  // Hardware / installation identifier
+  deviceModel String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([token])
+  @@index([userId, isActive])
 }

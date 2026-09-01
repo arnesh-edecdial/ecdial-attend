@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { QuotationItem } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface QuotationCreateScreenProps {
   onClose: () => void;
@@ -37,12 +38,25 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const insets = useSafeAreaInsets();
   const [machinesList, setMachinesList] = useState<any[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
   const [activeItemIndexForPicker, setActiveItemIndexForPicker] = useState<number>(0);
   const [catalogueSearchQuery, setCatalogueSearchQuery] = useState<string>('');
   const [catalogueBrandFilter, setCatalogueBrandFilter] = useState<string>('ALL');
+
+  // Customer Selection & Quick Inline Creation State
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [customerModalVisible, setCustomerModalVisible] = useState<boolean>(false);
+  const [customerList, setCustomerList] = useState<any[]>([]);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState<string>('');
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState<boolean>(false);
+  const [isAddingCustomerInline, setIsAddingCustomerInline] = useState<boolean>(false);
+  const [inlineName, setInlineName] = useState<string>('');
+  const [inlineAddress, setInlineAddress] = useState<string>('');
+  const [inlineMobile, setInlineMobile] = useState<string>('');
+  const [isSavingCustomerInline, setIsSavingCustomerInline] = useState<boolean>(false);
 
   // 1. Customer Details (Initialized empty for real data entry)
   const [customerName, setCustomerName] = useState<string>('');
@@ -266,6 +280,50 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const sgst = Math.round(((subtotal * 9) / 100 + Number.EPSILON) * 100) / 100;
   const grandTotal = Math.round((subtotal + cgst + sgst + Number.EPSILON) * 100) / 100;
 
+  const fetchCustomersForPicker = async (search?: string) => {
+    try {
+      setIsLoadingCustomers(true);
+      const res = await mobileApi.listCustomers(search);
+      if (res.success && res.data) {
+        setCustomerList(res.data);
+      }
+    } catch (err) {
+      console.error('[Fetch Customers Error]', err);
+    } finally {
+      setIsLoadingCustomers(false);
+    }
+  };
+
+  const handleSelectCustomer = (c: any) => {
+    setSelectedCustomerId(c.id);
+    setCustomerName(c.name || '');
+    setCustomerAddress(c.address || '');
+    setCustomerPhone(c.mobile || '');
+    setCustomerModalVisible(false);
+  };
+
+  const handleCreateCustomerInline = async () => {
+    try {
+      setIsSavingCustomerInline(true);
+      const res = await mobileApi.createCustomer({
+        name: inlineName.trim() || undefined,
+        address: inlineAddress.trim() || undefined,
+        mobile: inlineMobile.trim() || undefined,
+      });
+      if (res.success && res.data) {
+        handleSelectCustomer(res.data);
+        setIsAddingCustomerInline(false);
+        setInlineName('');
+        setInlineAddress('');
+        setInlineMobile('');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to save customer');
+    } finally {
+      setIsSavingCustomerInline(false);
+    }
+  };
+
   const handleSave = async (status: 'DRAFT' | 'FINAL') => {
     setIsLoading(true);
     const allItems = [
@@ -275,6 +333,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
 
     try {
       const res = await mobileApi.createQuotation({
+        customerId: selectedCustomerId || undefined,
         customerName: customerName.trim(),
         customerAddress: customerAddress.trim(),
         customerPhone: customerPhone.trim(),
@@ -296,20 +355,71 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Commercial Quotation</Text>
-        <Text style={styles.subtitle}>All machine & lowside prices are 100% editable</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: Math.max(insets.top, 14), paddingBottom: Math.max(insets.bottom, 24) + 120 },
+      ]}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Commercial Quotation</Text>
+          <Text style={styles.subtitle}>All machine & lowside prices are 100% editable</Text>
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            backgroundColor: '#F1F5F9',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#64748B' }}>✕</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* 1. CUSTOMER INFO */}
+      {/* 1. CUSTOMER INFO (FLOW A WITH CUSTOMER / FLOW B WITHOUT CUSTOMER) */}
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>CUSTOMER INFORMATION (To,)</Text>
+        <View style={styles.rowBetween}>
+          <Text style={styles.cardLabel}>CUSTOMER INFORMATION (To,)</Text>
+          <TouchableOpacity
+            style={styles.pickCustomerBtn}
+            onPress={() => {
+              fetchCustomersForPicker();
+              setCustomerModalVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.pickCustomerBtnText}>👤 Select Customer</Text>
+          </TouchableOpacity>
+        </View>
 
-        <Text style={styles.fieldLabel}>Customer Name (Optional)</Text>
+        {selectedCustomerId && (
+          <View style={styles.selectedCustomerBanner}>
+            <Text style={styles.selectedCustomerText}>✓ Linked to Customer Profile</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedCustomerId(null);
+                setCustomerName('');
+                setCustomerAddress('');
+                setCustomerPhone('');
+              }}
+            >
+              <Text style={styles.clearCustomerText}>✕ Clear</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <Text style={styles.fieldLabel}>Customer / Client Name (Optional)</Text>
         <TextInput
           style={styles.input}
-          placeholder="Customer Name"
+          placeholder="Customer Name (e.g. ABC Enterprises or Mr. Ramesh)"
           placeholderTextColor="#94A3B8"
           value={customerName}
           onChangeText={setCustomerName}
@@ -332,6 +442,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
           placeholderTextColor="#94A3B8"
           value={customerPhone}
           onChangeText={setCustomerPhone}
+          keyboardType="phone-pad"
         />
       </View>
 
@@ -666,6 +777,193 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
           </View>
         </View>
       </Modal>
+
+      {/* CUSTOMER PICKER & QUICK INLINE CREATION MODAL (FLOW A / FLOW B) */}
+      <Modal
+        visible={customerModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCustomerModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Select Customer</Text>
+                <Text style={styles.modalSubtitle}>Pick existing customer or add inline without losing quote draft</Text>
+              </View>
+              <TouchableOpacity onPress={() => setCustomerModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '800' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {isAddingCustomerInline ? (
+              /* Inline Customer Add Form */
+              <ScrollView contentContainerStyle={{ padding: 14, gap: 10 }}>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>Quick Add New Customer</Text>
+                <Text style={{ fontSize: 11, color: '#10B981', fontWeight: '600' }}>* All fields are optional. Entered quotation items will be preserved.</Text>
+
+                <Text style={styles.fieldLabel}>Customer / Company Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. ABC Enterprises or Mr. Ramesh"
+                  placeholderTextColor="#94A3B8"
+                  value={inlineName}
+                  onChangeText={setInlineName}
+                />
+
+                <Text style={styles.fieldLabel}>Mobile Number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 9876543210"
+                  placeholderTextColor="#94A3B8"
+                  value={inlineMobile}
+                  onChangeText={setInlineMobile}
+                  keyboardType="phone-pad"
+                />
+
+                <Text style={styles.fieldLabel}>Address / Location</Text>
+                <TextInput
+                  style={[styles.input, { height: 50, textAlignVertical: 'top' }]}
+                  placeholder="e.g. 42 Cross Street, Coimbatore"
+                  placeholderTextColor="#94A3B8"
+                  value={inlineAddress}
+                  onChangeText={setInlineAddress}
+                  multiline
+                />
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={handleCreateCustomerInline}
+                  disabled={isSavingCustomerInline}
+                >
+                  {isSavingCustomerInline ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Save & Select Customer</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setIsAddingCustomerInline(false)}
+                >
+                  <Text style={styles.cancelBtnText}>Back to Customer List</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            ) : (
+              /* Customer List & Search */
+              <>
+                {/* Search Bar & Quick Add Button */}
+                <View style={{ flexDirection: 'row', paddingHorizontal: 14, gap: 8, marginTop: 10 }}>
+                  <View style={[styles.modalSearchBox, { flex: 1, marginHorizontal: 0, marginTop: 0 }]}>
+                    <Text style={{ fontSize: 15 }}>🔍</Text>
+                    <TextInput
+                      style={styles.modalSearchInput}
+                      placeholder="Search name, phone, address..."
+                      placeholderTextColor="#94A3B8"
+                      value={customerSearchQuery}
+                      onChangeText={(t) => {
+                        setCustomerSearchQuery(t);
+                        fetchCustomersForPicker(t);
+                      }}
+                    />
+                    {customerSearchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => {
+                        setCustomerSearchQuery('');
+                        fetchCustomersForPicker('');
+                      }}>
+                        <Text style={{ fontSize: 13, color: '#94A3B8', fontWeight: '700' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#0066CC',
+                      paddingHorizontal: 12,
+                      borderRadius: 10,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                    onPress={() => setIsAddingCustomerInline(true)}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>+ Add</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Flow B Quick Button: Create Without Customer */}
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#F1F5F9',
+                    marginHorizontal: 14,
+                    marginTop: 8,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    setSelectedCustomerId(null);
+                    setCustomerModalVisible(false);
+                  }}
+                >
+                  <Text style={{ color: '#475569', fontSize: 11.5, fontWeight: '700' }}>
+                    ⚡ Skip / Create Without Customer Profile
+                  </Text>
+                </TouchableOpacity>
+
+                <ScrollView contentContainerStyle={{ padding: 14, gap: 8, paddingBottom: 40 }}>
+                  {isLoadingCustomers ? (
+                    <ActivityIndicator size="small" color="#0066CC" style={{ marginTop: 20 }} />
+                  ) : customerList.length === 0 ? (
+                    <View style={{ padding: 24, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 24, marginBottom: 6 }}>👥</Text>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>No customers found</Text>
+                      <TouchableOpacity
+                        style={{ marginTop: 10, backgroundColor: '#0066CC', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 }}
+                        onPress={() => setIsAddingCustomerInline(true)}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>+ Add New Customer</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    customerList.map((c) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={{
+                          backgroundColor: selectedCustomerId === c.id ? '#EFF6FF' : '#FFFFFF',
+                          borderRadius: 10,
+                          padding: 12,
+                          borderWidth: 1,
+                          borderColor: selectedCustomerId === c.id ? '#0066CC' : '#E2E8F0',
+                        }}
+                        onPress={() => handleSelectCustomer(c)}
+                        activeOpacity={0.75}
+                      >
+                        <View style={styles.rowBetween}>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
+                            {c.name || 'Unnamed Client'}
+                          </Text>
+                          {c.mobile && (
+                            <Text style={{ fontSize: 11, color: '#0066CC', fontWeight: '700' }}>
+                              📞 {c.mobile}
+                            </Text>
+                          )}
+                        </View>
+                        {c.address && (
+                          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }} numberOfLines={1}>
+                            📍 {c.address}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -707,6 +1005,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#0066CC',
+  },
+  pickCustomerBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  pickCustomerBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0066CC',
+  },
+  selectedCustomerBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  selectedCustomerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  clearCustomerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
   },
   badgeLetter: {
     backgroundColor: '#0052A3',

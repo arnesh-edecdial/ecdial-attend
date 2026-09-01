@@ -43,6 +43,14 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow ECDIAL to verify office attendance location"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0066CC",
+          "sounds": []
+        }
       ]
     ],
     "extra": {

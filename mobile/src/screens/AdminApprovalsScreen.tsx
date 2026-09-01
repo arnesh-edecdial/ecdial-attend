@@ -11,12 +11,14 @@ import {
   TextInput,
 } from 'react-native';
 import { mobileApi } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AdminApprovalsScreenProps {
   onClose?: () => void;
 }
 
 export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onClose }) => {
+  const insets = useSafeAreaInsets();
   const [queue, setQueue] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -129,7 +131,7 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View>
           <Text style={styles.title}>Pending Approvals</Text>
           <Text style={styles.subtitle}>Admin Decision Queue ({queue.length} pending)</Text>
@@ -141,7 +143,10 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
         )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.listContent}>
+      <ScrollView
+        contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+      >
         {isLoading ? (
           <ActivityIndicator size="large" color="#0066CC" style={{ marginTop: 40 }} />
         ) : queue.length === 0 ? (

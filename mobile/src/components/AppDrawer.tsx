@@ -31,6 +31,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
       return [
         { id: 'HOME', label: 'Dashboard Home', icon: '🏠' },
         { id: 'ADMIN_EMPLOYEES', label: 'Employee Management', icon: '👥' },
+        { id: 'CUSTOMERS', label: 'Customer Directory', icon: '👤' },
         { id: 'ADMIN_CALENDAR', label: 'Company Calendar & Leave', icon: '📅' },
         { id: 'ADMIN_APPROVALS', label: 'Attendance Requests', icon: '📝' },
         { id: 'STOCK', label: 'Stock & Inventory', icon: '📦' },
@@ -42,6 +43,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
     if (userRole === 'SALES') {
       return [
         { id: 'HOME', label: 'Sales Home', icon: '🏠' },
+        { id: 'CUSTOMERS', label: 'Customer Directory', icon: '👤' },
         { id: 'CALENDAR', label: 'My Attendance Calendar', icon: '📅' },
         { id: 'STOCK', label: 'Stock & Inventory (View Only)', icon: '📦' },
         { id: 'QUOTATIONS', label: 'My Quotations', icon: '📄' },

@@ -178,11 +178,24 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={onClose}>
-          <Text style={styles.backBtnText}>← Back</Text>
+        <View>
+          <Text style={styles.headerTitle}>Location Calibration</Text>
+          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Office GPS coordinates & geofence perimeter</Text>
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            backgroundColor: '#F1F5F9',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#64748B' }}>✕</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Location Calibration</Text>
-        <View style={{ width: 60 }} />
       </View>
 
       {isLoading ? (

@@ -8,7 +8,7 @@ import {
   BackHandler,
   Platform,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { AttendanceScreen } from './src/screens/AttendanceScreen';
 import { QRScannerScreen } from './src/screens/QRScannerScreen';
@@ -18,6 +18,7 @@ import { AdminCalendarScreen } from './src/screens/AdminCalendarScreen';
 import { AdminMachinesScreen } from './src/screens/AdminMachinesScreen';
 import { AdminApprovalsScreen } from './src/screens/AdminApprovalsScreen';
 import { StockScreen } from './src/screens/StockScreen';
+import { CustomerScreen } from './src/screens/CustomerScreen';
 import { QuotationListScreen } from './src/screens/QuotationListScreen';
 import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
@@ -26,14 +27,16 @@ import { AdminLocationCalibrationScreen } from './src/screens/AdminLocationCalib
 import { AppDrawer } from './src/components/AppDrawer';
 import { setActiveEmployeeId, setAuthToken } from './src/services/api';
 import { Quotation } from './src/types';
+import { notificationService, DeepLinkPayload } from './src/services/notificationService';
 
 function MainApp() {
+  const insets = useSafeAreaInsets();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
-    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS'
+    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS'
   >('HOME');
   const [activeModal, setActiveModal] = useState<
-    'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION'
+    'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION' | 'CUSTOMERS_MODAL'
   >('NONE');
 
   const [drawerVisible, setDrawerVisible] = useState<boolean>(false);
@@ -43,6 +46,41 @@ function MainApp() {
   const [activeUserRole, setActiveUserRole] = useState<'ADMIN' | 'SALES' | 'EMPLOYEE'>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
   const [refreshKey, setRefreshKey] = useState<number>(0);
+
+  // Deep Link Navigation Handler
+  const handleDeepLink = (payload: DeepLinkPayload | string, entityId?: string | null, metadata?: any) => {
+    let screen = typeof payload === 'string' ? payload : payload.targetScreen || '';
+    let id = typeof payload === 'string' ? entityId : payload.entityId;
+    let meta = typeof payload === 'string' ? metadata : payload.metadata;
+
+    setDrawerVisible(false);
+    setActiveModal('NONE');
+
+    if (screen === 'ADMIN_APPROVALS' || screen === 'APPROVALS') {
+      setCurrentTab('APPROVALS');
+    } else if (screen === 'ATTENDANCE_REQUEST' || screen === 'REQUEST') {
+      if (meta?.date) setRequestInitialDate(meta.date);
+      if (meta?.mode) setRequestInitialMode(meta.mode);
+      setActiveModal('REQUEST');
+    } else if (screen === 'QUOTATION_PREVIEW' || screen === 'QUOTATIONS') {
+      setCurrentTab('QUOTATIONS');
+    } else if (screen === 'STOCK') {
+      setCurrentTab('STOCK');
+    } else if (screen === 'CUSTOMERS') {
+      setCurrentTab('CUSTOMERS');
+    } else if (screen === 'CALENDAR') {
+      setCurrentTab('CALENDAR');
+    } else {
+      setCurrentTab('HOME');
+    }
+  };
+
+  // Setup Notification Listeners
+  useEffect(() => {
+    notificationService.setNavigationHandler(handleDeepLink);
+    const cleanup = notificationService.setupNotificationListeners();
+    return () => cleanup();
+  }, [isAuthenticated]);
 
   // Android Hardware Back Button Handling
   useEffect(() => {
@@ -88,9 +126,13 @@ function MainApp() {
     setActiveUserRole(roleMap[user.role] || 'EMPLOYEE');
     setIsAuthenticated(true);
     setCurrentTab('HOME');
+
+    // Register Device for Push Notifications
+    notificationService.registerForPushNotifications().catch((e) => console.warn(e));
   };
 
   const handleLogout = () => {
+    notificationService.unregister().catch((e) => console.warn(e));
     setAuthToken(null);
     setActiveEmployeeId('');
     setActiveUserName('');
@@ -116,6 +158,8 @@ function MainApp() {
       setCurrentTab('MACHINES');
     } else if (screenId === 'STOCK') {
       setCurrentTab('STOCK');
+    } else if (screenId === 'CUSTOMERS') {
+      setCurrentTab('CUSTOMERS');
     } else if (screenId === 'QUOTATIONS') {
       setCurrentTab('QUOTATIONS');
     } else if (screenId === 'LOCATION_CALIBRATION') {
@@ -164,7 +208,9 @@ function MainApp() {
             onOpenAdminCalendar={() => setCurrentTab('CALENDAR')}
             onOpenStock={() => setCurrentTab('STOCK')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
+            onOpenCustomers={() => setCurrentTab('CUSTOMERS')}
             onOpenLocationCalibration={() => setActiveModal('LOCATION_CALIBRATION')}
+            onNavigateNotification={handleDeepLink}
           />
         ) : currentTab === 'CALENDAR' ? (
           activeUserRole === 'ADMIN' ? (
@@ -186,6 +232,11 @@ function MainApp() {
           <AdminMachinesScreen />
         ) : currentTab === 'STOCK' ? (
           <StockScreen userRole={activeUserRole} />
+        ) : currentTab === 'CUSTOMERS' ? (
+          <CustomerScreen
+            userRole={activeUserRole}
+            onClose={() => setCurrentTab('HOME')}
+          />
         ) : (
           <QuotationListScreen
             userRole={activeUserRole}
@@ -198,14 +249,23 @@ function MainApp() {
         )}
       </View>
 
-      {/* Role-Aware Bottom Navigation Bar (Always visible across all tabs; hidden only on Scanner modal) */}
+      {/* Production-Grade Role-Aware Bottom Navigation Bar */}
       {activeModal === 'NONE' && (
-        <View style={styles.bottomNavContainer}>
+        <View
+          style={[
+            styles.bottomNavContainer,
+            {
+              paddingBottom: Math.max(insets.bottom, 8),
+              backgroundColor: '#FFFFFF',
+            },
+          ]}
+        >
           <View style={styles.bottomNavBar}>
             {/* 1. Home */}
             <TouchableOpacity
               style={styles.navItem}
               onPress={() => setCurrentTab('HOME')}
+              activeOpacity={0.7}
             >
               <Text style={{ fontSize: 20 }}>🏠</Text>
               <Text style={[styles.navLabel, currentTab === 'HOME' && styles.navLabelActive]}>
@@ -217,6 +277,7 @@ function MainApp() {
             <TouchableOpacity
               style={styles.navItem}
               onPress={() => setCurrentTab('CALENDAR')}
+              activeOpacity={0.7}
             >
               <Text style={{ fontSize: 20 }}>📅</Text>
               <Text style={[styles.navLabel, currentTab === 'CALENDAR' && styles.navLabelActive]}>
@@ -229,7 +290,7 @@ function MainApp() {
               <TouchableOpacity
                 style={[
                   styles.centerGlowButton,
-                  activeUserRole === 'ADMIN' && { backgroundColor: '#0066CC' },
+                  activeUserRole === 'ADMIN' && { backgroundColor: '#0066CC', shadowColor: '#0066CC' },
                 ]}
                 onPress={() => {
                   if (activeUserRole === 'ADMIN') {
@@ -240,7 +301,7 @@ function MainApp() {
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={{ fontSize: 26, color: '#FFFFFF' }}>
+                <Text style={{ fontSize: 24, color: '#FFFFFF' }}>
                   {activeUserRole === 'ADMIN' ? '📝' : '🔲'}
                 </Text>
               </TouchableOpacity>
@@ -250,6 +311,7 @@ function MainApp() {
             <TouchableOpacity
               style={styles.navItem}
               onPress={() => setCurrentTab('STOCK')}
+              activeOpacity={0.7}
             >
               <Text style={{ fontSize: 20 }}>📦</Text>
               <Text style={[styles.navLabel, currentTab === 'STOCK' && styles.navLabelActive]}>
@@ -268,6 +330,7 @@ function MainApp() {
                   setCurrentTab('QUOTATIONS');
                 }
               }}
+              activeOpacity={0.7}
             >
               <Text style={{ fontSize: 20 }}>
                 {activeUserRole === 'EMPLOYEE' ? '📝' : '📄'}
@@ -376,18 +439,17 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'transparent',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 10,
   },
   bottomNavBar: {
     flexDirection: 'row',
-    height: 68,
+    height: 58,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 8,
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 8,
@@ -396,6 +458,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 4,
   },
   navLabel: {
     fontSize: 10,
@@ -404,24 +467,25 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   navLabelActive: {
-    color: '#10B981',
+    color: '#0066CC',
     fontWeight: '800',
   },
   centerBtnWrapper: {
-    top: -20,
+    top: -18,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 20,
   },
   centerGlowButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     backgroundColor: '#10B981',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#10B981',
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
     elevation: 8,
     borderWidth: 3.5,
     borderColor: '#FFFFFF',

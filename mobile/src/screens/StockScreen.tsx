@@ -13,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { mobileApi } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface StockScreenProps {
   onClose?: () => void;
@@ -38,6 +39,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
   onClose,
   userRole = 'SALES',
 }) => {
+  const insets = useSafeAreaInsets();
   const [products, setProducts] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -256,8 +258,8 @@ export const StockScreen: React.FC<StockScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header with Safe Area Inset */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Stock & Inventory</Text>
           <Text style={styles.subtitle}>
@@ -362,7 +364,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
 
       {/* Stock Cards List */}
       <ScrollView
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={fetchStock} tintColor="#0066CC" />}
       >

@@ -10,6 +10,9 @@ import {
   formatTime12h,
   getTodayDateString,
 } from '../utils/calculations';
+import { exportService } from '../services/export.service';
+import { qrService } from '../services/qr.service';
+import { notificationService } from '../services/notification.service';
 
 export const STATIC_OFFICE_QR_TOKEN = 'ECDIAL_OFFICE_ATTENDANCE_QR_HQ_COIMBATORE';
 
@@ -39,6 +42,23 @@ export const attendanceController = {
     } catch (err: any) {
       console.error(err);
       res.status(500).json({ success: false, message: 'Failed to retrieve office QR token.' });
+    }
+  },
+
+  // 1b. Get Static Office QR Image as Direct PNG (Download & Share)
+  getTodayQRImage: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const office = (await prisma.officeConfig.findFirst({ where: { isDefault: true } })) || {
+        officeName: 'ECDIAL Headquarters - Coimbatore',
+      };
+      const qrBuffer = await qrService.generateOfficeQRBuffer(office.officeName);
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Content-Disposition', 'inline; filename="ECDIAL_Office_Attendance_QR.png"');
+      res.setHeader('Content-Length', qrBuffer.length);
+      res.send(qrBuffer);
+    } catch (err: any) {
+      console.error('[Generate QR Image Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to generate QR image.' });
     }
   },
 
@@ -87,7 +107,19 @@ export const attendanceController = {
         },
       });
 
-      // 5. Office configuration
+      // 5. Check incomplete previous day (Checked in previously but never checked out)
+      const incompletePreviousAttendance = await prisma.attendance.findFirst({
+        where: {
+          employeeId,
+          date: { lt: todayStr },
+          checkInTime: { not: null },
+          checkOutTime: null,
+          status: 'PRESENT',
+        },
+        orderBy: { date: 'desc' },
+      });
+
+      // 6. Office configuration
       const office = await prisma.officeConfig.findFirst({ where: { isDefault: true } });
 
       let displayStatus = 'NOT_MARKED';
@@ -95,6 +127,11 @@ export const attendanceController = {
       let checkOutFormatted: string | null = null;
       let durationFormatted: string | null = null;
       let isCurrentlyWorking = false;
+
+      // Authoritative 10:30 AM cutoff rule (Requirement 9)
+      const nowMinutes = todayDate.getHours() * 60 + todayDate.getMinutes();
+      const cutoff1030Minutes = 10 * 60 + 30; // 10:30 AM
+      const isPastCutoff = nowMinutes >= cutoff1030Minutes;
 
       if (holiday) {
         displayStatus = 'COMPANY_LEAVE';
@@ -126,6 +163,11 @@ export const attendanceController = {
         displayStatus = 'WAITING_FOR_APPROVAL';
       } else if (!isWorkingDay) {
         displayStatus = 'WEEKLY_OFF';
+      } else if (isWorkingDay && isPastCutoff) {
+        // Automatically marked ABSENT at or after 10:30 AM (Requirement 9)
+        displayStatus = 'ABSENT';
+      } else {
+        displayStatus = 'NOT_MARKED';
       }
 
       res.json({
@@ -134,6 +176,16 @@ export const attendanceController = {
           date: todayStr,
           displayStatus,
           isCurrentlyWorking,
+          isPastCutoff,
+          cutoffTime: '10:30 AM',
+          incompletePreviousDay: incompletePreviousAttendance
+            ? {
+                date: incompletePreviousAttendance.date,
+                checkInTime: incompletePreviousAttendance.checkInTime
+                  ? formatTime12h(incompletePreviousAttendance.checkInTime)
+                  : '—',
+              }
+            : null,
           activeRequest: activeRequest
             ? {
                 id: activeRequest.id,
@@ -654,6 +706,15 @@ export const attendanceController = {
         },
       });
 
+      // Notify Admins asynchronously via push and in-app
+      notificationService.notifyAdminsOfAttendanceRequest({
+        employeeId: employee.id,
+        employeeName: employee.name,
+        requestId: newRequest.id,
+        dates: requestedDates,
+        requestType: finalType,
+      }).catch((err) => console.error('[Notify Admins Error]', err));
+
       res.json({
         success: true,
         message: 'Attendance request submitted successfully. Status: UNDER APPROVAL.',
@@ -966,6 +1027,43 @@ export const attendanceController = {
     } catch (err: any) {
       console.error(err);
       res.status(500).json({ success: false, message: 'Failed to retrieve dashboard.' });
+    }
+  },
+
+  // 10. Export Today's Attendance in Excel (.xlsx) (Admin Only)
+  exportTodayExcel: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const targetDate = (req.query.date as string) || getTodayDateString();
+    try {
+      const excelBuffer = await exportService.generateTodayAttendanceExcel(targetDate);
+      const filename = `ECDIAL_Attendance_Today_${targetDate}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', excelBuffer.length);
+      res.send(excelBuffer);
+    } catch (err: any) {
+      console.error('[Export Today Excel Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to generate Excel report for today.' });
+    }
+  },
+
+  // 11. Export Overall Monthly Attendance in Excel (.xlsx) (Admin Only)
+  exportMonthlyExcel: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = parseInt(req.query.month as string, 10) || new Date().getMonth() + 1;
+    const monthStr = String(month).padStart(2, '0');
+
+    try {
+      const excelBuffer = await exportService.generateMonthlyAttendanceExcel(year, month);
+      const filename = `ECDIAL_Attendance_Month_${year}-${monthStr}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', excelBuffer.length);
+      res.send(excelBuffer);
+    } catch (err: any) {
+      console.error('[Export Month Excel Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to generate Monthly Excel report.' });
     }
   },
 };

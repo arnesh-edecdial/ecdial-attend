@@ -296,7 +296,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 50,
+    paddingTop: 16,
+    paddingBottom: 24,
   },
   header: {
     alignItems: 'center',

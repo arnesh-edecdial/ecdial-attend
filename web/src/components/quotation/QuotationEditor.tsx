@@ -19,9 +19,9 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
   const [machinesList, setMachinesList] = useState<any[]>([]);
 
   // 1. Customer Details (Minimum: Name + Address)
-  const [customerName, setCustomerName] = useState<string>('Mr. Senthilnathan');
-  const [customerAddress, setCustomerAddress] = useState<string>('Coimbatore, Tamil Nadu');
-  const [customerPhone, setCustomerPhone] = useState<string>('+91 98765 43210');
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerAddress, setCustomerAddress] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
   const [customerEmail, setCustomerEmail] = useState<string>('');
 
   // 2. Main Units Table Items matching Image 2
@@ -372,14 +372,13 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
           <div className="form-group">
-            <label className="form-label">Customer Name *</label>
+            <label className="form-label">Customer Name</label>
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. Mr. Senthilnathan"
+              placeholder="Customer Name"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              required
             />
           </div>
 
@@ -388,7 +387,7 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. +91 98765 43210"
+              placeholder="Mobile Number"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
             />
@@ -396,14 +395,13 @@ export const QuotationEditor: React.FC<QuotationEditorProps> = ({
         </div>
 
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label className="form-label">Customer Address / Site Location *</label>
+          <label className="form-label">Customer Address / Site Location</label>
           <input
             type="text"
             className="form-control"
-            placeholder="e.g. Coimbatore, Tamil Nadu"
+            placeholder="Address / Location"
             value={customerAddress}
             onChange={(e) => setCustomerAddress(e.target.value)}
-            required
           />
         </div>
       </div>

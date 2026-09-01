@@ -11,6 +11,7 @@ import {
   Switch,
 } from 'react-native';
 import { mobileApi } from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AdminMachinesScreenProps {
   onClose?: () => void;
@@ -32,6 +33,7 @@ const DEFAULT_BRANDS = [
 ];
 
 export const AdminMachinesScreen: React.FC<AdminMachinesScreenProps> = ({ onClose }) => {
+  const insets = useSafeAreaInsets();
   const [machines, setMachines] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [modalVisible, setModalVisible] = useState<boolean>(false);
@@ -184,8 +186,8 @@ export const AdminMachinesScreen: React.FC<AdminMachinesScreenProps> = ({ onClos
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header with Safe Area Inset */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Machine Models</Text>
           <Text style={styles.subtitle}>Admin catalogue management for Sales quotations</Text>
@@ -240,7 +242,10 @@ export const AdminMachinesScreen: React.FC<AdminMachinesScreenProps> = ({ onClos
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={styles.listContent}>
+      <ScrollView
+        contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+      >
         {isLoading ? (
           <ActivityIndicator size="large" color="#0066CC" style={{ marginTop: 40 }} />
         ) : filteredMachines.length === 0 ? (
