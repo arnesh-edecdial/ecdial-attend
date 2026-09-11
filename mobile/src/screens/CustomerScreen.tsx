@@ -16,7 +16,7 @@ import { mobileApi } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface CustomerScreenProps {
-  userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
+  userRole?: string;
   onClose?: () => void;
   onSelectCustomer?: (customer: any) => void;
 }

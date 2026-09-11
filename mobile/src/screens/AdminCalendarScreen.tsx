@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import { CalendarDay } from '../types';
 import { downloadAndSaveFile } from '../services/fileDownloader';
+import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
 
 interface AdminCalendarScreenProps {
   onClose?: () => void;
@@ -40,6 +41,7 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
   const [resolveCheckIn, setResolveCheckIn] = useState<string>('09:00');
   const [resolveCheckOut, setResolveCheckOut] = useState<string>('18:00');
   const [resolveRemarks, setResolveRemarks] = useState<string>('Admin direct resolution');
+  const [timePickerTarget, setTimePickerTarget] = useState<'CHECK_IN' | 'CLOSING' | null>(null);
   const [isSubmittingResolve, setIsSubmittingResolve] = useState<boolean>(false);
 
   const fetchCalendar = async () => {
@@ -389,22 +391,26 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.inputLabel}>Check-In Time</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={resolveCheckIn}
-                    onChangeText={setResolveCheckIn}
-                    placeholder="09:00"
-                  />
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                    onPress={() => setTimePickerTarget('CHECK_IN')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{resolveCheckIn}</Text>
+                    <Text style={{ fontSize: 16 }}>🕒</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={{ flex: 1 }}>
                   <Text style={styles.inputLabel}>Closing Time</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={resolveCheckOut}
-                    onChangeText={setResolveCheckOut}
-                    placeholder="18:00"
-                  />
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                    onPress={() => setTimePickerTarget('CLOSING')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{resolveCheckOut}</Text>
+                    <Text style={{ fontSize: 16 }}>🕒</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             )}
@@ -457,6 +463,22 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* WHEEL SCROLL TIME PICKER MODAL */}
+        <ScrollTimePickerModal
+          visible={timePickerTarget !== null}
+          initialTime={timePickerTarget === 'CHECK_IN' ? resolveCheckIn : resolveCheckOut}
+          title={timePickerTarget === 'CHECK_IN' ? 'Select Check-In Time' : 'Select Closing Time'}
+          onConfirm={(val) => {
+            if (timePickerTarget === 'CHECK_IN') {
+              setResolveCheckIn(val.formatted24);
+            } else {
+              setResolveCheckOut(val.formatted24);
+            }
+            setTimePickerTarget(null);
+          }}
+          onCancel={() => setTimePickerTarget(null)}
+        />
       </Modal>
 
       {/* MARK COMPANY LEAVE MODAL */}

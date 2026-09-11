@@ -226,11 +226,13 @@ export const mobileApi = {
     request<any>(`/quotations/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteQuotation: (id: string) =>
     request<any>(`/quotations/${id}`, { method: 'DELETE' }),
-  getPdfUrl: (id: string) => `${getApiBaseUrl()}/quotations/${id}/pdf`,
+  getPdfUrl: (id: string, filename?: string) =>
+    `${getApiBaseUrl()}/quotations/${id}/pdf${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
 
   // Attendance Request Aliases
   submitAttendanceRequest: (payload: any) =>
     request<any>('/attendance/requests', { method: 'POST', body: JSON.stringify(payload) }),
+  getMyAttendanceRequests: () => request<any>('/attendance/requests/my'),
 
   // In-App & Push Notifications
   listNotifications: () => request<any>('/notifications'),

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
 
 interface AdminApprovalsScreenProps {
   onClose?: () => void;
@@ -28,6 +29,7 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
   const [editCheckIn, setEditCheckIn] = useState<string>('09:00');
   const [editCheckOut, setEditCheckOut] = useState<string>('18:00');
   const [editRemarks, setEditRemarks] = useState<string>('Approved with updated time');
+  const [timePickerTarget, setTimePickerTarget] = useState<'CHECK_IN' | 'CHECK_OUT' | null>(null);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState<boolean>(false);
 
   const fetchApprovals = async () => {
@@ -224,22 +226,24 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
               </Text>
 
               <Text style={styles.inputLabel}>Check-In Time (HH:MM / 24h) *</Text>
-              <TextInput
-                style={styles.textInput}
-                value={editCheckIn}
-                onChangeText={setEditCheckIn}
-                placeholder="09:00"
-                placeholderTextColor="#94A3B8"
-              />
+              <TouchableOpacity
+                style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                onPress={() => setTimePickerTarget('CHECK_IN')}
+                activeOpacity={0.8}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{editCheckIn}</Text>
+                <Text style={{ fontSize: 16 }}>🕒</Text>
+              </TouchableOpacity>
 
               <Text style={styles.inputLabel}>Check-Out Time (Optional / leave blank if check-in only)</Text>
-              <TextInput
-                style={styles.textInput}
-                value={editCheckOut}
-                onChangeText={setEditCheckOut}
-                placeholder="18:00"
-                placeholderTextColor="#94A3B8"
-              />
+              <TouchableOpacity
+                style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                onPress={() => setTimePickerTarget('CHECK_OUT')}
+                activeOpacity={0.8}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{editCheckOut}</Text>
+                <Text style={{ fontSize: 16 }}>🕒</Text>
+              </TouchableOpacity>
 
               <Text style={styles.inputLabel}>Admin Note / Remarks</Text>
               <TextInput
@@ -274,6 +278,22 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
             </ScrollView>
           </View>
         </View>
+
+        {/* WHEEL SCROLL TIME PICKER MODAL */}
+        <ScrollTimePickerModal
+          visible={timePickerTarget !== null}
+          initialTime={timePickerTarget === 'CHECK_IN' ? editCheckIn : editCheckOut}
+          title={timePickerTarget === 'CHECK_IN' ? 'Select Check-In Time' : 'Select Check-Out Time'}
+          onConfirm={(val) => {
+            if (timePickerTarget === 'CHECK_IN') {
+              setEditCheckIn(val.formatted24);
+            } else {
+              setEditCheckOut(val.formatted24);
+            }
+            setTimePickerTarget(null);
+          }}
+          onCancel={() => setTimePickerTarget(null)}
+        />
       </Modal>
     </View>
   );

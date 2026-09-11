@@ -17,7 +17,8 @@ import * as Location from 'expo-location';
 import { TodayAttendanceStatus } from '../types';
 import { DynamicQRCode } from '../components/DynamicQRCode';
 import { NotificationCenterModal } from '../components/NotificationCenterModal';
-import { downloadAndSaveFile } from '../services/fileDownloader';
+import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
+import { canSkipAttendance } from '../utils/roles';
 
 interface AttendanceScreenProps {
   onOpenDrawer: () => void;
@@ -34,7 +35,7 @@ interface AttendanceScreenProps {
   onOpenLocationCalibration?: () => void;
   onNavigateNotification?: (screen: string, entityId?: string | null, metadata?: any) => void;
   userName?: string;
-  userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
+  userRole?: string;
 }
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
@@ -69,7 +70,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   // Excel Attendance Export State (Admin Only)
   const [isExportingToday, setIsExportingToday] = useState<boolean>(false);
+  const [isSharingToday, setIsSharingToday] = useState<boolean>(false);
   const [isExportingMonth, setIsExportingMonth] = useState<boolean>(false);
+  const [isSharingMonth, setIsSharingMonth] = useState<boolean>(false);
   const [monthExportModalVisible, setMonthExportModalVisible] = useState<boolean>(false);
   const [exportYear, setExportYear] = useState<number>(new Date().getFullYear());
   const [exportMonth, setExportMonth] = useState<number>(new Date().getMonth() + 1);
@@ -99,8 +102,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       const d = new Date();
       const [statusRes, dashRes, qrRes, calRes, officeRes, notifRes] = await Promise.all([
         mobileApi.getTodayStatus(),
-        userRole === 'ADMIN' ? mobileApi.getTodayDashboard() : Promise.resolve(null),
-        userRole === 'ADMIN' ? mobileApi.getTodayQR() : Promise.resolve(null),
+        canSkipAttendance(userRole) ? mobileApi.getTodayDashboard() : Promise.resolve(null),
+        canSkipAttendance(userRole) ? mobileApi.getTodayQR() : Promise.resolve(null),
         mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
         mobileApi.getOfficeConfig().catch(() => null),
         mobileApi.listNotifications().catch(() => null),
@@ -275,6 +278,72 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
+  const handleShareTodayExcel = async () => {
+    try {
+      setIsSharingToday(true);
+      const url = mobileApi.getTodayExportUrl();
+      const token = getAuthToken();
+      const d = new Date();
+      const dateStr = d.toISOString().substring(0, 10);
+      const localFilename = `ECDIAL_Attendance_Today_${dateStr}.xlsx`;
+
+      const result = await shareDocument({
+        url,
+        rawFilename: localFilename,
+        extension: 'xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'x-employee-id': getActiveEmployeeId(),
+        },
+      });
+
+      if (!result.success && result.error) {
+        Alert.alert('Share Failed', result.error);
+      }
+    } catch (err: any) {
+      console.error('[Share Today Excel]', err);
+      Alert.alert('Share Error', err.message || 'Failed to share attendance report.');
+    } finally {
+      setIsSharingToday(false);
+    }
+  };
+
+  const handleShareMonthExcel = async (yearNum?: number, monthNum?: number) => {
+    try {
+      setIsSharingMonth(true);
+      const y = yearNum || exportYear;
+      const m = monthNum || exportMonth;
+      const mStr = String(m).padStart(2, '0');
+
+      const url = mobileApi.getMonthExportUrl(y, m);
+      const token = getAuthToken();
+      const localFilename = `ECDIAL_Attendance_Month_${y}-${mStr}.xlsx`;
+
+      const result = await shareDocument({
+        url,
+        rawFilename: localFilename,
+        extension: 'xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'x-employee-id': getActiveEmployeeId(),
+        },
+      });
+
+      if (result.success) {
+        setMonthExportModalVisible(false);
+      } else if (result.error) {
+        Alert.alert('Share Failed', result.error);
+      }
+    } catch (err: any) {
+      console.error('[Share Month Excel]', err);
+      Alert.alert('Share Error', err.message || 'Failed to share monthly attendance report.');
+    } finally {
+      setIsSharingMonth(false);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     const d = new Date();
@@ -358,7 +427,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             <Text style={styles.greetingText}>Good Morning, 👋</Text>
             <Text style={styles.userNameText} numberOfLines={1}>{userName}</Text>
             <Text style={styles.subGreeting}>
-              {userRole === 'ADMIN'
+              {canSkipAttendance(userRole)
                 ? 'Admin Management Dashboard'
                 : userRole === 'SALES'
                 ? 'Sales & Quotations Portal'
@@ -374,7 +443,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             onPress={() => setNotifModalVisible(true)}
           >
             <Text style={{ fontSize: 18 }}>🔔</Text>
-            {(unreadNotifsCount > 0 || (userRole === 'ADMIN' && (dashboardData?.summary?.pending ?? 0) > 0)) && (
+            {(unreadNotifsCount > 0 || (canSkipAttendance(userRole) && (dashboardData?.summary?.pending ?? 0) > 0)) && (
               <View style={styles.bellBadge}>
                 <Text style={styles.bellBadgeText}>
                   {unreadNotifsCount > 0 ? unreadNotifsCount : (dashboardData?.summary?.pending ?? 0)}
@@ -387,7 +456,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           <TouchableOpacity style={styles.avatarWrapper} onPress={onOpenDrawer}>
             <View style={styles.avatarCircle}>
               <Text style={{ fontSize: 18 }}>
-                {userRole === 'ADMIN' ? '👨‍💼' : userRole === 'SALES' ? '👩‍💼' : '👷‍♂️'}
+                {canSkipAttendance(userRole) ? '👨‍💼' : userRole === 'SALES' ? '👩‍💼' : '👷‍♂️'}
               </Text>
             </View>
             <View style={styles.onlineDot} />
@@ -398,7 +467,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       {/* ========================================================================= */}
       {/* CASE A: ADMIN ROLE VIEW (Today's Stats + Visible Office QR + Employees)    */}
       {/* ========================================================================= */}
-      {userRole === 'ADMIN' && (
+      {canSkipAttendance(userRole) && (
         <View style={{ marginBottom: 14 }}>
           {/* 1. TODAY'S ATTENDANCE STATS CARDS (Rule 3) */}
           <View style={styles.adminStatsGrid}>
@@ -572,46 +641,54 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 </View>
               </View>
             </View>
+            {/* Today's Attendance Export Card with Download & Share Options */}
+            <View style={styles.dailyExportBox}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.exportItemTitle}>Today's Attendance</Text>
+                <Text style={styles.exportItemSubtitle}>Daily breakdown with logins & hours</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <TouchableOpacity
+                  style={styles.exportMiniBtnPrimary}
+                  onPress={handleExportTodayExcel}
+                  disabled={isExportingToday || isSharingToday}
+                  activeOpacity={0.85}
+                >
+                  {isExportingToday ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.exportMiniBtnText}>📥 Download</Text>
+                  )}
+                </TouchableOpacity>
 
-            <View style={styles.exportButtonsRow}>
-              {/* Today Export Button */}
-              <TouchableOpacity
-                style={styles.exportActionBtnPrimary}
-                onPress={handleExportTodayExcel}
-                disabled={isExportingToday}
-                activeOpacity={0.85}
-              >
-                {isExportingToday ? (
-                  <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
-                    <Text style={{ fontSize: 20 }}>📥</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.exportActionBtnTitle}>Today's Attendance</Text>
-                      <Text style={styles.exportActionBtnSub}>Full daily breakdown</Text>
-                    </View>
-                  </View>
-                )}
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.exportMiniBtnShare}
+                  onPress={handleShareTodayExcel}
+                  disabled={isExportingToday || isSharingToday}
+                  activeOpacity={0.85}
+                >
+                  {isSharingToday ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.exportMiniBtnText}>📤 Share</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
 
-              {/* Monthly Export Button */}
+            {/* Monthly Attendance Card */}
+            <View style={[styles.dailyExportBox, { marginTop: 10, backgroundColor: '#F8FAFC' }]}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.exportItemTitleSec}>Monthly Attendance (.xlsx)</Text>
+                <Text style={styles.exportItemSubtitle}>Summary & individual logs with overtime</Text>
+              </View>
               <TouchableOpacity
-                style={styles.exportActionBtnSecondary}
+                style={styles.exportMiniBtnMonth}
                 onPress={() => setMonthExportModalVisible(true)}
-                disabled={isExportingMonth}
+                disabled={isExportingMonth || isSharingMonth}
                 activeOpacity={0.85}
               >
-                {isExportingMonth ? (
-                  <ActivityIndicator color="#0A1E3F" size="small" />
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' }}>
-                    <Text style={{ fontSize: 20 }}>📅</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.exportActionBtnTitleSec}>Overall Month</Text>
-                      <Text style={styles.exportActionBtnSubSec}>Summary & logs</Text>
-                    </View>
-                  </View>
-                )}
+                <Text style={styles.exportMiniBtnMonthText}>📅 Select & Export</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -677,7 +754,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       {/* ========================================================================= */}
       {/* CASE B: EMPLOYEE & SALES VIEW (Hero Card + Scan Action + Stock/Quotes)    */}
       {/* ========================================================================= */}
-      {userRole !== 'ADMIN' && (
+      {!canSkipAttendance(userRole) && (
         <View>
           {/* COMPANY LEAVE NOTICE */}
           {isCompanyLeave && (
@@ -989,20 +1066,32 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               })}
             </View>
 
-            {/* Export Action Button */}
-            <TouchableOpacity
-              style={styles.modalExportBtn}
-              onPress={() => handleExportMonthExcel(exportYear, exportMonth)}
-              disabled={isExportingMonth}
-            >
-              {isExportingMonth ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.modalExportBtnText}>
-                  📥 Download {exportYear}-{String(exportMonth).padStart(2, '0')} Report (Excel)
-                </Text>
-              )}
-            </TouchableOpacity>
+            {/* Export Action Buttons: Download & Share */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                style={[styles.modalExportBtn, { flex: 1 }]}
+                onPress={() => handleExportMonthExcel(exportYear, exportMonth)}
+                disabled={isExportingMonth || isSharingMonth}
+              >
+                {isExportingMonth ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.modalExportBtnText}>📥 Download</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalExportBtn, { flex: 1, backgroundColor: '#0284C7' }]}
+                onPress={() => handleShareMonthExcel(exportYear, exportMonth)}
+                disabled={isExportingMonth || isSharingMonth}
+              >
+                {isSharingMonth ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.modalExportBtnText}>📤 Share</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1938,6 +2027,60 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 12,
+  },
+  dailyExportBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  exportItemTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0066CC',
+  },
+  exportItemTitleSec: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  exportItemSubtitle: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  exportMiniBtnPrimary: {
+    backgroundColor: '#0066CC',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  exportMiniBtnShare: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  exportMiniBtnMonth: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  exportMiniBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  exportMiniBtnMonthText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   exportActionBtnPrimary: {
     flex: 1,

@@ -17,6 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 interface QuotationCreateScreenProps {
   onClose: () => void;
   onSuccess: (quotation: any) => void;
+  initialQuotationType?: 'DAIKIN' | 'ECDIAL';
+  quotationToEdit?: any | null;
 }
 
 const DEFAULT_BRANDS = [
@@ -34,11 +36,71 @@ const DEFAULT_BRANDS = [
   'Samsung',
 ];
 
+const DEFAULT_LOW_SIDE_ITEMS: QuotationItem[] = [
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 1,
+    description: 'Installation and testing commissioning Charges of Split ac',
+    quantity: 1,
+    unit: 'Nos',
+    unitPrice: 1500.0,
+    amount: 1500.0,
+  },
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 2,
+    description: 'Supply and installation of Copper Pipe',
+    quantity: 1,
+    unit: 'Mtr',
+    unitPrice: 1280.0,
+    amount: 1280.0,
+  },
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 3,
+    description: 'Supply and installation of Communication Cable',
+    quantity: 1,
+    unit: 'Mtr',
+    unitPrice: 290.0,
+    amount: 290.0,
+  },
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 4,
+    description: 'Supply and installation of Supply Cable',
+    quantity: 1,
+    unit: 'Mtr',
+    unitPrice: 190.0,
+    amount: 190.0,
+  },
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 5,
+    description: 'Supply and installation of Outdoor Stand',
+    quantity: 1,
+    unit: 'Nos',
+    unitPrice: 1450.0,
+    amount: 1450.0,
+  },
+  {
+    section: 'LOW_SIDE',
+    itemOrder: 6,
+    description: 'Supply And Installation Of White Packing Tape',
+    quantity: 1,
+    unit: 'Nos',
+    unitPrice: 300.0,
+    amount: 300.0,
+  },
+];
+
 export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   onClose,
   onSuccess,
+  initialQuotationType = 'ECDIAL',
+  quotationToEdit = null,
 }) => {
   const insets = useSafeAreaInsets();
+  const [quotationType, setQuotationType] = useState<'DAIKIN' | 'ECDIAL'>(initialQuotationType);
   const [machinesList, setMachinesList] = useState<any[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
@@ -58,82 +120,48 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const [inlineMobile, setInlineMobile] = useState<string>('');
   const [isSavingCustomerInline, setIsSavingCustomerInline] = useState<boolean>(false);
 
-  // 1. Customer Details (Initialized empty for real data entry)
+  // 1. Customer Details & PDF Name (Clean initial state for production)
   const [customerName, setCustomerName] = useState<string>('');
   const [customerAddress, setCustomerAddress] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [pdfName, setPdfName] = useState<string>('');
 
-  // 2. Section A: Main Units matching Image 2
-  const [mainItems, setMainItems] = useState<QuotationItem[]>([
-    {
-      section: 'MAIN_UNIT',
-      itemOrder: 1,
-      description: 'Daikin 1.5Tr 3Star Inverter Split Ac , 100% Copper (FTKC48XV16)',
-      quantity: 1,
-      unit: 'Nos',
-      unitPrice: 30423.73,
-      amount: 30423.73,
-    },
-  ]);
+  // 2. Section A: Main Units (Clean initial empty state; populated when editing existing quotation)
+  const [mainItems, setMainItems] = useState<QuotationItem[]>([]);
 
-  // 3. Section B: Low-Side Materials matching Image 2
+  // 3. Section B: Low-Side Materials (Preserves standard low-side installation items)
   const [hasLowSide, setHasLowSide] = useState<boolean>(true);
-  const [lowSideItems, setLowSideItems] = useState<QuotationItem[]>([
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 1,
-      description: 'Installation and testing commissioning Charges of Split ac',
-      quantity: 1,
-      unit: 'Nos',
-      unitPrice: 1500.0,
-      amount: 1500.0,
-    },
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 2,
-      description: 'Supply and installation of Copper Pipe',
-      quantity: 1,
-      unit: 'Mtr',
-      unitPrice: 1280.0,
-      amount: 1280.0,
-    },
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 3,
-      description: 'Supply and installation of Communication Cable',
-      quantity: 1,
-      unit: 'Mtr',
-      unitPrice: 290.0,
-      amount: 290.0,
-    },
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 4,
-      description: 'Supply and installation of Supply Cable',
-      quantity: 1,
-      unit: 'Mtr',
-      unitPrice: 190.0,
-      amount: 190.0,
-    },
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 5,
-      description: 'Supply and installation of Outdoor Stand',
-      quantity: 1,
-      unit: 'Nos',
-      unitPrice: 1450.0,
-      amount: 1450.0,
-    },
-    {
-      section: 'LOW_SIDE',
-      itemOrder: 6,
-      description: 'Supply And Installation Of White Packing Tape',
-      quantity: 1,
-      unit: 'Nos',
-      unitPrice: 300.0,
-      amount: 300.0,
-    },
-  ]);
+  const [lowSideItems, setLowSideItems] = useState<QuotationItem[]>(DEFAULT_LOW_SIDE_ITEMS);
+
+  // Sync state when quotationToEdit is passed (or reset for new quotation)
+  useEffect(() => {
+    if (quotationToEdit) {
+      setQuotationType(quotationToEdit.quotationType || initialQuotationType);
+      setSelectedCustomerId(quotationToEdit.customerId || null);
+      setCustomerName(quotationToEdit.customerName || '');
+      setCustomerAddress(quotationToEdit.customerAddress || '');
+      setCustomerPhone(quotationToEdit.customerPhone || '');
+      setPdfName(quotationToEdit.pdfName || '');
+      setHasLowSide(Boolean(quotationToEdit.hasLowSide));
+
+      const rawItems: QuotationItem[] = Array.isArray(quotationToEdit.items) ? quotationToEdit.items : [];
+      const mItems = rawItems.filter((i) => i.section === 'MAIN_UNIT');
+      const lItems = rawItems.filter((i) => i.section === 'LOW_SIDE');
+
+      setMainItems(mItems);
+      setLowSideItems(lItems.length > 0 ? lItems : (Boolean(quotationToEdit.hasLowSide) ? DEFAULT_LOW_SIDE_ITEMS : []));
+    } else {
+      setQuotationType(initialQuotationType);
+      setSelectedCustomerId(null);
+      setCustomerName('');
+      setCustomerAddress('');
+      setCustomerPhone('');
+      setPdfName('');
+      setHasLowSide(true);
+      setMainItems([]);
+      setLowSideItems(DEFAULT_LOW_SIDE_ITEMS);
+    }
+  }, [quotationToEdit]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -143,9 +171,8 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
         const res = await mobileApi.listProducts('MAIN_UNIT');
         if (res.success) {
           setMachinesList(res.data);
-          if (res.data.length > 0) {
-            setSelectedMachineId(res.data[0].id);
-          }
+          // Do not auto-select first item so wrong default item is not shown
+          setSelectedMachineId(null);
         }
       } catch (err) {
         console.error('Failed to load catalogue', err);
@@ -198,7 +225,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       {
         section: 'MAIN_UNIT',
         itemOrder: mainItems.length + 1,
-        description: 'Daikin AC Unit',
+        description: '',
         quantity: 1,
         unit: 'Nos',
         unitPrice: 0,
@@ -213,7 +240,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       {
         section: 'LOW_SIDE',
         itemOrder: lowSideItems.length + 1,
-        description: 'Low-Side Material / Service',
+        description: '',
         quantity: 1,
         unit: 'Mtr',
         unitPrice: 0,
@@ -254,19 +281,31 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const handleSelectMachineModel = (machine: any, targetIdx: number) => {
     setSelectedMachineId(machine.id);
     const updated = [...mainItems];
-    const item = { ...updated[targetIdx] };
-    item.description = `${machine.name} (${machine.model || machine.name})`;
-    item.unitPrice = Number(machine.defaultPrice) || 0;
-    item.unit = machine.defaultUnit || 'Nos';
-    item.amount = Math.round((item.quantity * item.unitPrice + Number.EPSILON) * 100) / 100;
-    updated[targetIdx] = item;
+    if (updated.length === 0 || targetIdx >= updated.length) {
+      updated.push({
+        section: 'MAIN_UNIT',
+        itemOrder: updated.length + 1,
+        description: `${machine.name} (${machine.model || machine.name})`,
+        quantity: 1,
+        unit: machine.defaultUnit || 'Nos',
+        unitPrice: Number(machine.defaultPrice) || 0,
+        amount: Number(machine.defaultPrice) || 0,
+      });
+    } else {
+      const item = { ...updated[targetIdx] };
+      item.description = `${machine.name} (${machine.model || machine.name})`;
+      item.unitPrice = Number(machine.defaultPrice) || 0;
+      item.unit = machine.defaultUnit || 'Nos';
+      item.amount = Math.round((item.quantity * item.unitPrice + Number.EPSILON) * 100) / 100;
+      updated[targetIdx] = item;
+    }
     setMainItems(updated);
     setCatalogueModalVisible(false);
   };
 
   const removeItem = (section: 'MAIN_UNIT' | 'LOW_SIDE', idx: number) => {
     if (section === 'MAIN_UNIT') {
-      if (mainItems.length > 1) setMainItems(mainItems.filter((_, i) => i !== idx));
+      setMainItems(mainItems.filter((_, i) => i !== idx));
     } else {
       setLowSideItems(lowSideItems.filter((_, i) => i !== idx));
     }
@@ -331,21 +370,36 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       ...(hasLowSide ? lowSideItems.map((i, idx) => ({ ...i, section: 'LOW_SIDE', itemOrder: idx + 1 })) : []),
     ];
 
+    const safeCustomer = customerName ? customerName.trim().replace(/[^a-zA-Z0-9_-]/g, '_') : 'Customer';
+    const prefix = quotationType === 'ECDIAL' ? 'ECDIAL' : 'DAIKIN';
+    const finalPdfName = pdfName.trim() || `${prefix}_Quotation_${safeCustomer}`;
+
+    const payload = {
+      customerId: selectedCustomerId || undefined,
+      customerName: customerName.trim(),
+      customerAddress: customerAddress.trim(),
+      customerPhone: customerPhone.trim(),
+      quotationType,
+      hasLowSide,
+      items: allItems,
+      cgstPercent: 9,
+      sgstPercent: 9,
+      status,
+      pdfName: finalPdfName,
+    };
+
     try {
-      const res = await mobileApi.createQuotation({
-        customerId: selectedCustomerId || undefined,
-        customerName: customerName.trim(),
-        customerAddress: customerAddress.trim(),
-        customerPhone: customerPhone.trim(),
-        hasLowSide,
-        items: allItems,
-        cgstPercent: 9,
-        sgstPercent: 9,
-        status,
-      });
+      let res;
+      if (quotationToEdit?.id) {
+        res = await mobileApi.updateQuotation(quotationToEdit.id, payload);
+      } else {
+        res = await mobileApi.createQuotation(payload);
+      }
 
       if (res.success) {
         onSuccess(res.data);
+      } else {
+        alert(res.message || 'Failed to save quotation');
       }
     } catch (err: any) {
       alert(err.message || 'Failed to save quotation');
@@ -382,6 +436,50 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
         >
           <Text style={{ fontSize: 16, fontWeight: '800', color: '#64748B' }}>✕</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* TOP TEMPLATE TYPE SWITCHER */}
+      <View style={styles.templateSwitcherCard}>
+        <Text style={styles.templateSwitcherLabel}>QUOTATION TEMPLATE</Text>
+        <View style={styles.templateSwitcherRow}>
+          <TouchableOpacity
+            style={[
+              styles.templateTabBtn,
+              quotationType === 'ECDIAL' && styles.templateTabBtnActiveEcDial,
+            ]}
+            onPress={() => setQuotationType('ECDIAL')}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 16 }}>⚡</Text>
+            <Text
+              style={[
+                styles.templateTabText,
+                quotationType === 'ECDIAL' && styles.templateTabTextActiveEcDial,
+              ]}
+            >
+              Ec Dial Quotation
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.templateTabBtn,
+              quotationType === 'DAIKIN' && styles.templateTabBtnActiveDaikin,
+            ]}
+            onPress={() => setQuotationType('DAIKIN')}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 16 }}>❄️</Text>
+            <Text
+              style={[
+                styles.templateTabText,
+                quotationType === 'DAIKIN' && styles.templateTabTextActiveDaikin,
+              ]}
+            >
+              Daikin Quotation
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* 1. CUSTOMER INFO (FLOW A WITH CUSTOMER / FLOW B WITHOUT CUSTOMER) */}
@@ -444,6 +542,16 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
           onChangeText={setCustomerPhone}
           keyboardType="phone-pad"
         />
+
+        <Text style={styles.fieldLabel}>Quotation PDF Filename (Saved & Reused Everywhere)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder={customerName ? `${customerName.trim().replace(/[^a-zA-Z0-9_-]/g, '_')}_Quotation` : 'Customer_Quotation'}
+          placeholderTextColor="#94A3B8"
+          value={pdfName}
+          onChangeText={setPdfName}
+          autoCapitalize="none"
+        />
       </View>
 
       {/* 2. SECTION A: MAIN UNIT WITH MACHINE SELECTOR (Rules 16, 17, 18, 19) */}
@@ -458,24 +566,35 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
           </TouchableOpacity>
         </View>
 
-        {mainItems.map((item, idx) => (
-          <View key={idx} style={styles.itemBox}>
-            <View style={styles.rowBetween}>
-              <Text style={{ fontSize: 12, fontWeight: '800', color: '#0066CC' }}>
-                Machine #{idx + 1}
-              </Text>
-              {mainItems.length > 1 && (
+        {mainItems.length === 0 ? (
+          <View style={{ paddingVertical: 18, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 13, color: '#94A3B8', fontWeight: '500' }}>
+              No machines added yet. Tap "+ ADD MACHINE" above to add.
+            </Text>
+          </View>
+        ) : (
+          mainItems.map((item, idx) => (
+            <View key={idx} style={styles.itemBox}>
+              <View style={styles.rowBetween}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#0066CC' }}>
+                  Machine #{idx + 1}
+                </Text>
                 <TouchableOpacity onPress={() => removeItem('MAIN_UNIT', idx)}>
                   <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '700' }}>Remove</Text>
                 </TouchableOpacity>
-              )}
-            </View>
+              </View>
 
             {/* Tap to Pick Machine Model from Catalogue Modal */}
             <TouchableOpacity
               style={styles.selectModelBtn}
               onPress={() => {
                 setActiveItemIndexForPicker(idx);
+                const matching = machinesList.find(
+                  (m) =>
+                    item.description &&
+                    (item.description.includes(m.name) || (m.model && item.description.includes(m.model)))
+                );
+                setSelectedMachineId(matching ? matching.id : null);
                 setCatalogueModalVisible(true);
               }}
             >
@@ -491,7 +610,9 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
                 <View style={{ flexDirection: 'row', gap: 6 }}>
                   {machinesList.map((m) => {
-                    const isSelected = selectedMachineId === m.id;
+                    const isSelected =
+                      Boolean(item.description) &&
+                      (item.description.includes(m.name) || (m.model && item.description.includes(m.model)));
                     return (
                       <TouchableOpacity
                         key={m.id}
@@ -552,7 +673,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
               Amount: ₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </Text>
           </View>
-        ))}
+        )))}
       </View>
 
       {/* 3. SECTION B: LOW-SIDE MATERIALS */}
@@ -567,14 +688,21 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
 
         {hasLowSide && (
           <View style={{ marginTop: 10 }}>
-            {lowSideItems.map((item, idx) => (
-              <View key={idx} style={styles.itemBox}>
-                <View style={styles.rowBetween}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0066CC' }}>Material #{idx + 1}</Text>
-                  <TouchableOpacity onPress={() => removeItem('LOW_SIDE', idx)}>
-                    <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '700' }}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
+            {lowSideItems.length === 0 ? (
+              <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                <Text style={{ fontSize: 13, color: '#94A3B8' }}>
+                  No extra materials added. Tap "+ ADD MATERIAL" below to add items.
+                </Text>
+              </View>
+            ) : (
+              lowSideItems.map((item, idx) => (
+                <View key={idx} style={styles.itemBox}>
+                  <View style={styles.rowBetween}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#0066CC' }}>Material #{idx + 1}</Text>
+                    <TouchableOpacity onPress={() => removeItem('LOW_SIDE', idx)}>
+                      <Text style={{ color: '#EF4444', fontSize: 11, fontWeight: '700' }}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
 
                 <TextInput
                   style={[styles.input, { marginVertical: 6 }]}
@@ -619,7 +747,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
                   Amount: ₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </Text>
               </View>
-            ))}
+            )))}
 
             <TouchableOpacity style={{ alignSelf: 'flex-end', marginTop: 8 }} onPress={addLowSideItem}>
               <Text style={styles.addText}>+ ADD MATERIAL</Text>
@@ -731,7 +859,15 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
                 </View>
               ) : (
                 filteredMachines.map((m) => {
-                  const isSelected = selectedMachineId === m.id;
+                  const currentItem = mainItems[activeItemIndexForPicker];
+                  const isSelected =
+                    (selectedMachineId === m.id) ||
+                    Boolean(
+                      currentItem &&
+                        currentItem.description &&
+                        (currentItem.description.includes(m.name) ||
+                          (m.model && currentItem.description.includes(m.model)))
+                    );
                   const brand = extractBrand(m);
                   return (
                     <TouchableOpacity
@@ -988,6 +1124,62 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 12,
     color: '#64748B',
+  },
+  templateSwitcherCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  templateSwitcherLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  templateSwitcherRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  templateTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  templateTabBtnActiveEcDial: {
+    backgroundColor: '#FFF7ED',
+    borderColor: '#EA580C',
+  },
+  templateTabBtnActiveDaikin: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0066CC',
+  },
+  templateTabText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  templateTabTextActiveEcDial: {
+    color: '#EA580C',
+    fontWeight: '900',
+  },
+  templateTabTextActiveDaikin: {
+    color: '#0066CC',
+    fontWeight: '900',
   },
   card: {
     backgroundColor: '#FFFFFF',

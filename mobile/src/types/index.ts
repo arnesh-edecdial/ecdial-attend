@@ -49,6 +49,7 @@ export interface QuotationItem {
   id?: string;
   section: 'MAIN_UNIT' | 'LOW_SIDE';
   productId?: string | null;
+  brand?: string | null;
   itemOrder: number;
   description: string;
   quantity: number;
@@ -62,6 +63,7 @@ export interface Quotation {
   quotationNumber: string;
   revisionNumber: number;
   date: string;
+  quotationType?: 'DAIKIN' | 'ECDIAL';
   customerName: string;
   customerAddress: string;
   customerPhone?: string | null;
@@ -78,6 +80,8 @@ export interface Quotation {
   termsAndConditions: string;
   paymentMethod: string;
   status: string;
+  pdfName?: string | null;
+  notes?: string | null;
   createdById?: string | null;
   createdByName?: string | null;
   items?: QuotationItem[];

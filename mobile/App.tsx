@@ -25,9 +25,10 @@ import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
 import { AdminEmployeesScreen } from './src/screens/AdminEmployeesScreen';
 import { AdminLocationCalibrationScreen } from './src/screens/AdminLocationCalibrationScreen';
 import { AppDrawer } from './src/components/AppDrawer';
-import { setActiveEmployeeId, setAuthToken } from './src/services/api';
 import { Quotation } from './src/types';
 import { notificationService, DeepLinkPayload } from './src/services/notificationService';
+import { canSkipAttendance } from './src/utils/roles';
+import { setAuthToken, setActiveEmployeeId } from './src/services/api';
 
 function MainApp() {
   const insets = useSafeAreaInsets();
@@ -43,7 +44,9 @@ function MainApp() {
   const [requestInitialDate, setRequestInitialDate] = useState<string | undefined>();
   const [requestInitialMode, setRequestInitialMode] = useState<'TODAY' | 'MISSED' | 'CLOSING'>('TODAY');
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
-  const [activeUserRole, setActiveUserRole] = useState<'ADMIN' | 'SALES' | 'EMPLOYEE'>('ADMIN');
+  const [editingQuotation, setEditingQuotation] = useState<any | null>(null);
+  const [newQuoteType, setNewQuoteType] = useState<'DAIKIN' | 'ECDIAL'>('ECDIAL');
+  const [activeUserRole, setActiveUserRole] = useState<string>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
   const [refreshKey, setRefreshKey] = useState<number>(0);
 
@@ -112,18 +115,8 @@ function MainApp() {
     setAuthToken(token);
     setActiveEmployeeId(user.id);
     setActiveUserName(user.name);
-    const roleMap: Record<string, 'ADMIN' | 'SALES' | 'EMPLOYEE'> = {
-      ADMIN: 'ADMIN',
-      IT_ADMIN: 'ADMIN',
-      MANAGER: 'ADMIN',
-      SERVICE_MANAGER: 'ADMIN',
-      HR: 'ADMIN',
-      CRM: 'SALES',
-      SALES: 'SALES',
-      TECHNICIAN: 'EMPLOYEE',
-      ACCOUNTANT: 'EMPLOYEE',
-    };
-    setActiveUserRole(roleMap[user.role] || 'EMPLOYEE');
+    // Preserve exact database role: Only ADMIN skips attendance
+    setActiveUserRole(user.role || 'TECHNICIAN');
     setIsAuthenticated(true);
     setCurrentTab('HOME');
 
@@ -136,10 +129,11 @@ function MainApp() {
     setAuthToken(null);
     setActiveEmployeeId('');
     setActiveUserName('');
-    setActiveUserRole('EMPLOYEE');
+    setActiveUserRole('TECHNICIAN');
     setIsAuthenticated(false);
     setDrawerVisible(false);
     setSelectedQuotation(null);
+    setEditingQuotation(null);
     setActiveModal('NONE');
     setCurrentTab('HOME');
   };
@@ -240,7 +234,11 @@ function MainApp() {
         ) : (
           <QuotationListScreen
             userRole={activeUserRole}
-            onNewQuotation={() => setActiveModal('NEW_QUOTE')}
+            onNewQuotation={(type) => {
+              setEditingQuotation(null);
+              setNewQuoteType(type || 'ECDIAL');
+              setActiveModal('NEW_QUOTE');
+            }}
             onSelectQuotation={(q) => {
               setSelectedQuotation(q);
               setActiveModal('PREVIEW_QUOTE');
@@ -281,7 +279,7 @@ function MainApp() {
             >
               <Text style={{ fontSize: 20 }}>📅</Text>
               <Text style={[styles.navLabel, currentTab === 'CALENDAR' && styles.navLabelActive]}>
-                {activeUserRole === 'ADMIN' ? 'Calendar' : 'Attendance'}
+                {canSkipAttendance(activeUserRole) ? 'Calendar' : 'Attendance'}
               </Text>
             </TouchableOpacity>
 
@@ -290,10 +288,10 @@ function MainApp() {
               <TouchableOpacity
                 style={[
                   styles.centerGlowButton,
-                  activeUserRole === 'ADMIN' && { backgroundColor: '#0066CC', shadowColor: '#0066CC' },
+                  canSkipAttendance(activeUserRole) && { backgroundColor: '#0066CC', shadowColor: '#0066CC' },
                 ]}
                 onPress={() => {
-                  if (activeUserRole === 'ADMIN') {
+                  if (canSkipAttendance(activeUserRole)) {
                     setCurrentTab('APPROVALS');
                   } else {
                     setActiveModal('SCANNER');
@@ -302,7 +300,7 @@ function MainApp() {
                 activeOpacity={0.85}
               >
                 <Text style={{ fontSize: 24, color: '#FFFFFF' }}>
-                  {activeUserRole === 'ADMIN' ? '📝' : '🔲'}
+                  {canSkipAttendance(activeUserRole) ? '📝' : '🔲'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -323,20 +321,20 @@ function MainApp() {
             <TouchableOpacity
               style={styles.navItem}
               onPress={() => {
-                if (activeUserRole === 'EMPLOYEE') {
+                if (['SALES', 'CRM'].includes(activeUserRole) || canSkipAttendance(activeUserRole)) {
+                  setCurrentTab('QUOTATIONS');
+                } else {
                   setRequestInitialMode('TODAY');
                   setActiveModal('REQUEST');
-                } else {
-                  setCurrentTab('QUOTATIONS');
                 }
               }}
               activeOpacity={0.7}
             >
               <Text style={{ fontSize: 20 }}>
-                {activeUserRole === 'EMPLOYEE' ? '📝' : '📄'}
+                {['SALES', 'CRM'].includes(activeUserRole) || canSkipAttendance(activeUserRole) ? '📄' : '📝'}
               </Text>
               <Text style={[styles.navLabel, currentTab === 'QUOTATIONS' && styles.navLabelActive]}>
-                {activeUserRole === 'EMPLOYEE' ? 'Requests' : 'Quotations'}
+                {['SALES', 'CRM'].includes(activeUserRole) || canSkipAttendance(activeUserRole) ? 'Quotations' : 'Requests'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -387,8 +385,14 @@ function MainApp() {
       {activeModal === 'NEW_QUOTE' && (
         <View style={StyleSheet.absoluteFillObject}>
           <QuotationCreateScreen
-            onClose={() => setActiveModal('NONE')}
+            initialQuotationType={newQuoteType}
+            quotationToEdit={editingQuotation}
+            onClose={() => {
+              setEditingQuotation(null);
+              setActiveModal('NONE');
+            }}
             onSuccess={(created) => {
+              setEditingQuotation(null);
               setSelectedQuotation(created);
               setActiveModal('PREVIEW_QUOTE');
             }}
@@ -400,8 +404,14 @@ function MainApp() {
         <View style={StyleSheet.absoluteFillObject}>
           <QuotationPreviewScreen
             quotation={selectedQuotation}
-            onClose={() => setActiveModal('NONE')}
-            onEdit={() => setActiveModal('NEW_QUOTE')}
+            onClose={() => {
+              setEditingQuotation(null);
+              setActiveModal('NONE');
+            }}
+            onEdit={(quote) => {
+              setEditingQuotation(quote || selectedQuotation);
+              setActiveModal('NEW_QUOTE');
+            }}
           />
         </View>
       )}

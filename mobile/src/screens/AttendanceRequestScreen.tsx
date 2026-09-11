@@ -8,12 +8,11 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Modal,
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialAnalogClockPicker } from '../components/MaterialAnalogClockPicker';
+import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
 
 interface AttendanceRequestScreenProps {
   onClose: () => void;
@@ -34,7 +33,10 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   const currentHour24 = today.getHours();
   const isAfternoonEligible = currentHour24 >= 13; // 1:00 PM Afternoon threshold
 
-  // Single Date Selection State (Requirement 7 & 12: Each date is handled individually)
+  // Sub-Tab Switch: NEW Request vs All My Requests History
+  const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY'>('NEW');
+
+  // Single Date Selection State
   const [selectedDate, setSelectedDate] = useState<string>(initialDate || todayStr);
   const [requestType, setRequestType] = useState<'ATTENDANCE' | 'CLOSING'>(
     initialMode === 'CLOSING' ? 'CLOSING' : 'ATTENDANCE'
@@ -47,14 +49,24 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   const [isLoadingCalendar, setIsLoadingCalendar] = useState<boolean>(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<string>('2026-01-01');
 
-  // Alarm-Style Time Picker State
-  const [checkInHour, setCheckInHour] = useState<number>(9);
-  const [checkInMinute, setCheckInMinute] = useState<number>(0);
-  const [checkInPeriod, setCheckInPeriod] = useState<'AM' | 'PM'>('AM');
+  // Employee Requests History & SLA
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
 
-  const [closingHour, setClosingHour] = useState<number>(6);
-  const [closingMinute, setClosingMinute] = useState<number>(0);
-  const [closingPeriod, setClosingPeriod] = useState<'AM' | 'PM'>('PM');
+  // Time Picker State (Initialized responsibly based on current time)
+  const [checkInHour, setCheckInHour] = useState<number>(() => {
+    let h = today.getHours() % 12;
+    return h === 0 ? 12 : h;
+  });
+  const [checkInMinute, setCheckInMinute] = useState<number>(() => today.getMinutes());
+  const [checkInPeriod, setCheckInPeriod] = useState<'AM' | 'PM'>(() => (today.getHours() >= 12 ? 'PM' : 'AM'));
+
+  const [closingHour, setClosingHour] = useState<number>(() => {
+    let h = today.getHours() % 12;
+    return h === 0 ? 12 : h;
+  });
+  const [closingMinute, setClosingMinute] = useState<number>(() => today.getMinutes());
+  const [closingPeriod, setClosingPeriod] = useState<'AM' | 'PM'>(() => (today.getHours() >= 12 ? 'PM' : 'AM'));
 
   const [timePickerTarget, setTimePickerTarget] = useState<'IN' | 'OUT' | null>(null);
 
@@ -62,8 +74,6 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   const [reason, setReason] = useState<string>('Customer Site Visit');
   const [remarks, setRemarks] = useState<string>('');
   const [isLoadingSubmit, setIsLoadingSubmit] = useState<boolean>(false);
-  const [hasActiveRequest, setHasActiveRequest] = useState<boolean>(false);
-  const [activeRequestMsg, setActiveRequestMsg] = useState<string | null>(null);
 
   const reasonPresets = [
     'Customer Site Visit',
@@ -101,26 +111,48 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     }
   };
 
+  // Fetch Employee's Requests History
+  const fetchMyRequests = async () => {
+    try {
+      setIsLoadingRequests(true);
+      const res = await mobileApi.getMyAttendanceRequests();
+      if (res && res.success && Array.isArray(res.data)) {
+        setMyRequests(res.data);
+      }
+    } catch (err) {
+      console.error('[Fetch My Requests Error]', err);
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  };
+
   useEffect(() => {
     fetchCalendar();
   }, [year, month]);
 
-  // Check Active Request
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await mobileApi.getTodayStatus();
-        if (res.success && res.data.activeRequest) {
-          setHasActiveRequest(true);
-          setActiveRequestMsg(
-            `You already have an attendance request (${res.data.activeRequest.requestType}) under approval.`
-          );
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    })();
+    fetchMyRequests();
   }, []);
+
+  // Check if a specific date has a pending request
+  const checkPendingRequestForDate = (dateStr: string) => {
+    return myRequests.find((r) => {
+      const isPending = r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL';
+      if (!isPending) return false;
+      let dArr: string[] = [];
+      try {
+        dArr = r.parsedDates || (typeof r.dates === 'string' ? JSON.parse(r.dates) : (r.dates || []));
+      } catch {
+        dArr = [];
+      }
+      return Array.isArray(dArr) && dArr.includes(dateStr);
+    });
+  };
+
+  // Check if currently selected date has a pending request
+  const pendingRequestForSelectedDate = useMemo(() => {
+    return checkPendingRequestForDate(selectedDate);
+  }, [myRequests, selectedDate]);
 
   // Selected Day Info
   const selectedDayInfo = useMemo(() => {
@@ -150,8 +182,48 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${period}`;
   };
 
+  // Format SLA time remaining or elapsed
+  const formatSlaCountdown = (createdAt: string, slaHours: number = 5) => {
+    const created = new Date(createdAt).getTime();
+    const deadline = created + slaHours * 60 * 60 * 1000;
+    const now = Date.now();
+    const diffMs = deadline - now;
+
+    if (diffMs <= 0) {
+      return 'SLA target crossed (escalated to Admin)';
+    }
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    return `${diffHours}h ${diffMins}m remaining`;
+  };
+
+  const formatSubmittedTime = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch {
+      return '';
+    }
+  };
+
+  // Future Time Limit for Today
+  const isSelectedDateToday = selectedDate === todayStr;
+  const maxAllowedTime = useMemo(() => {
+    if (!isSelectedDateToday) return undefined;
+    const now = new Date();
+    return { hour24: now.getHours(), minute: now.getMinutes() };
+  }, [isSelectedDateToday]);
+
   // Submit Handler
   const handleSubmit = async () => {
+    if (pendingRequestForSelectedDate) {
+      Alert.alert(
+        'Request Already Pending',
+        `A request for ${selectedDate} is already under review. You cannot submit another request for this date until it is resolved. You can select other dates.`
+      );
+      return;
+    }
+
     if (!reason || reason.trim() === '') {
       Alert.alert('Required Field', 'Please provide a valid reason for this request.');
       return;
@@ -179,9 +251,14 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     const closing24 = formatTime24h(closingHour, closingMinute, closingPeriod);
 
     const payload = {
-      requestType: requestType === 'CLOSING' ? 'CLOSING_REQUEST' : (selectedDate === todayStr ? 'TODAY_ATTENDANCE' : 'MISSED_ATTENDANCE'),
+      requestType:
+        requestType === 'CLOSING'
+          ? 'CLOSING_REQUEST'
+          : selectedDate === todayStr
+          ? 'TODAY_ATTENDANCE'
+          : 'MISSED_ATTENDANCE',
       dates: [selectedDate],
-      checkInTime: requestType === 'CLOSING' ? (selectedDayInfo?.checkIn || checkIn24) : checkIn24,
+      checkInTime: requestType === 'CLOSING' ? selectedDayInfo?.checkIn || checkIn24 : checkIn24,
       checkOutTime: requestType === 'CLOSING' ? closing24 : undefined,
       closingTime: requestType === 'CLOSING' ? closing24 : undefined,
       reason: reason.trim(),
@@ -194,8 +271,24 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
       if (res.success) {
         Alert.alert(
           '✓ Request Submitted',
-          'Your attendance request was submitted and is now under approval.',
-          [{ text: 'OK', onPress: () => { onSuccess(); onClose(); } }]
+          'Your attendance request was submitted successfully. Resolution SLA: within 5 hours by Admin.',
+          [
+            {
+              text: 'View Requests',
+              onPress: () => {
+                fetchMyRequests();
+                setActiveTab('HISTORY');
+                onSuccess();
+              },
+            },
+            {
+              text: 'Done',
+              onPress: () => {
+                onSuccess();
+                onClose();
+              },
+            },
+          ]
         );
       } else {
         Alert.alert('Submission Error', res.message || 'Failed to submit request.');
@@ -209,16 +302,16 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+    'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
   return (
     <View style={styles.container}>
-      {/* Top Header with Safe Area Inset */}
+      {/* Top Header */}
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Attendance Request</Text>
-          <Text style={styles.subtitle}>Submit single-day attendance correction or closing time</Text>
+          <Text style={styles.title}>Attendance Requests</Text>
+          <Text style={styles.subtitle}>Submit corrections or monitor resolution SLA</Text>
         </View>
         <TouchableOpacity
           onPress={onClose}
@@ -229,312 +322,468 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        style={styles.scrollArea}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingBottom: Math.max(insets.bottom, 24) + 90 },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Active Request Warning Banner */}
-        {hasActiveRequest && (
-          <View style={styles.activeRequestBanner}>
-            <Text style={{ fontSize: 18 }}>⏳</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.activeRequestTitle}>Request Under Approval</Text>
-              <Text style={styles.activeRequestSub}>{activeRequestMsg}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* STEP 1: SELECT DATE */}
-        <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.cardLabel}>1. SELECT DATE</Text>
-            <View style={styles.monthNav}>
-              <TouchableOpacity onPress={() => setMonth((m) => (m === 1 ? 12 : m - 1))}>
-                <Text style={styles.monthNavBtn}>‹</Text>
-              </TouchableOpacity>
-              <Text style={styles.monthNavText}>{monthNames[month - 1]} {year}</Text>
-              <TouchableOpacity onPress={() => setMonth((m) => (m === 12 ? 1 : m + 1))}>
-                <Text style={styles.monthNavBtn}>›</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Calendar Grid Header */}
-          <View style={styles.daysHeaderRow}>
-            {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
-              <Text key={i} style={[styles.dayHeaderCell, i === 0 && { color: '#8B5CF6' }]}>
-                {d}
-              </Text>
-            ))}
-          </View>
-
-          {/* Calendar Days */}
-          {isLoadingCalendar ? (
-            <ActivityIndicator size="small" color="#0066CC" style={{ marginVertical: 20 }} />
-          ) : (
-            <View style={styles.calendarGrid}>
-              {/* Leading Blanks */}
-              {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
-                <View key={`b-${i}`} style={styles.calendarDayCell} />
-              ))}
-
-              {calendarDays.map((d) => {
-                const isSelected = selectedDate === d.date;
-                const isFuture = d.date > todayStr;
-                const isPreJoin = d.date < employeeStartDate;
-                const isSun = new Date(year, month - 1, d.dayNumber).getDay() === 0;
-
-                return (
-                  <TouchableOpacity
-                    key={d.date}
-                    style={[
-                      styles.calendarDayCell,
-                      isSelected && styles.dayCellSelected,
-                      isFuture && styles.dayCellDisabled,
-                      isPreJoin && styles.dayCellDisabled,
-                    ]}
-                    disabled={isFuture || isPreJoin}
-                    onPress={() => setSelectedDate(d.date)}
-                  >
-                    <Text
-                      style={[
-                        styles.dayNumberText,
-                        isSelected && styles.dayNumberSelected,
-                        isSun && !isSelected && { color: '#8B5CF6' },
-                        (isFuture || isPreJoin) && styles.dayNumberDisabled,
-                      ]}
-                    >
-                      {d.dayNumber}
-                    </Text>
-                    {/* Status Dot */}
-                    <View
-                      style={[
-                        styles.miniDot,
-                        {
-                          backgroundColor:
-                            d.status === 'PRESENT'
-                              ? '#10B981'
-                              : d.status === 'ABSENT'
-                              ? '#EF4444'
-                              : d.status === 'UNDER_APPROVAL'
-                              ? '#F59E0B'
-                              : isSun
-                              ? '#8B5CF6'
-                              : '#CBD5E1',
-                        },
-                      ]}
-                    />
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Selected Date Status Badge */}
-          <View style={styles.dateStatusBox}>
-            <View style={styles.rowBetween}>
-              <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }}>
-                Selected: {selectedDate} {selectedDate === todayStr ? '(Today)' : ''}
-              </Text>
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '800',
-                  color:
-                    selectedDayInfo?.status === 'PRESENT'
-                      ? '#059669'
-                      : selectedDayInfo?.status === 'ABSENT'
-                      ? '#DC2626'
-                      : '#64748B',
-                }}
-              >
-                {selectedDayInfo?.status || 'NOT MARKED'}
-              </Text>
-            </View>
-            {selectedDayInfo?.checkIn && (
-              <Text style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
-                Check-in logged: {selectedDayInfo.checkIn} {selectedDayInfo.checkOut ? `• Check-out: ${selectedDayInfo.checkOut}` : '• (Missing Closing Time)'}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* STEP 2: REQUEST TYPE (ATTENDANCE vs CLOSING) */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>2. REQUEST TYPE</Text>
-          <View style={styles.typeSelectorRow}>
-            <TouchableOpacity
-              style={[
-                styles.typeOption,
-                requestType === 'ATTENDANCE' && styles.typeOptionActive,
-              ]}
-              onPress={() => setRequestType('ATTENDANCE')}
-            >
-              <Text style={{ fontSize: 18 }}>⏱️</Text>
-              <Text
-                style={[
-                  styles.typeOptionText,
-                  requestType === 'ATTENDANCE' && styles.typeOptionTextActive,
-                ]}
-              >
-                Attendance Check-In
-              </Text>
-              <Text style={styles.typeOptionSub}>Mark attendance start time</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.typeOption,
-                requestType === 'CLOSING' && styles.typeOptionActive,
-              ]}
-              onPress={() => setRequestType('CLOSING')}
-            >
-              <Text style={{ fontSize: 18 }}>🏁</Text>
-              <Text
-                style={[
-                  styles.typeOptionText,
-                  requestType === 'CLOSING' && styles.typeOptionTextActive,
-                ]}
-              >
-                Closing Time
-              </Text>
-              <Text style={styles.typeOptionSub}>End of day checkout</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* STEP 3: TIME SELECTION */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>
-            3. {requestType === 'ATTENDANCE' ? 'START / CHECK-IN TIME' : 'CLOSING / CHECK-OUT TIME'}
-          </Text>
-
-          {requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && (
-            <View style={styles.disabledTimeNotice}>
-              <Text style={{ fontSize: 14 }}>🔒</Text>
-              <Text style={styles.disabledTimeNoticeText}>
-                Closing time request is disabled before afternoon. It will automatically unlock at 1:00 PM.
-              </Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={[
-              styles.timeDisplayCard,
-              requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && { opacity: 0.5 },
-            ]}
-            disabled={requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible}
-            onPress={() => setTimePickerTarget(requestType === 'ATTENDANCE' ? 'IN' : 'OUT')}
-          >
-            <View>
-              <Text style={styles.timeDisplayLabel}>
-                {requestType === 'ATTENDANCE' ? 'Requested Check-In' : 'Requested Closing'}
-              </Text>
-              <Text style={styles.timeDisplayVal}>
-                {requestType === 'ATTENDANCE'
-                  ? formatDisplayTime(checkInHour, checkInMinute, checkInPeriod)
-                  : formatDisplayTime(closingHour, closingMinute, closingPeriod)}
-              </Text>
-            </View>
-            <View style={styles.changeTimeBadge}>
-              <Text style={styles.changeTimeBadgeText}>Change Time ✏️</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* STEP 4: REASON & DETAILS */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>4. REASON FOR REQUEST</Text>
-          <View style={styles.presetRow}>
-            {reasonPresets.map((p, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={[styles.presetChip, reason === p && styles.presetChipActive]}
-                onPress={() => setReason(p)}
-              >
-                <Text
-                  style={[
-                    styles.presetChipText,
-                    reason === p && styles.presetChipTextActive,
-                  ]}
-                >
-                  {p}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <TextInput
-            style={styles.reasonInput}
-            placeholder="Provide specific details / reason for request..."
-            placeholderTextColor="#94A3B8"
-            value={reason}
-            onChangeText={setReason}
-          />
-
-          <Text style={[styles.cardLabel, { marginTop: 12 }]}>OPTIONAL REMARKS</Text>
-          <TextInput
-            style={[styles.reasonInput, { height: 60, textAlignVertical: 'top' }]}
-            placeholder="Additional notes for manager..."
-            placeholderTextColor="#94A3B8"
-            value={remarks}
-            onChangeText={setRemarks}
-            multiline
-          />
-        </View>
-      </ScrollView>
-
-      {/* STICKY BOTTOM ACTION BAR */}
-      <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+      {/* Sub-Tab Navigation Bar */}
+      <View style={styles.tabBar}>
         <TouchableOpacity
-          style={styles.cancelBtn}
-          onPress={onClose}
-          disabled={isLoadingSubmit}
+          style={[styles.tabButton, activeTab === 'NEW' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('NEW')}
+          activeOpacity={0.8}
         >
-          <Text style={styles.cancelBtnText}>Cancel</Text>
+          <Text style={[styles.tabButtonText, activeTab === 'NEW' && styles.tabButtonTextActive]}>
+            ➕ New Request
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[
-            styles.submitBtn,
-            (hasActiveRequest || (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)) &&
-              styles.submitBtnDisabled,
-          ]}
-          onPress={handleSubmit}
-          disabled={
-            isLoadingSubmit ||
-            hasActiveRequest ||
-            (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)
-          }
+          style={[styles.tabButton, activeTab === 'HISTORY' && styles.tabButtonActive]}
+          onPress={() => {
+            fetchMyRequests();
+            setActiveTab('HISTORY');
+          }}
+          activeOpacity={0.8}
         >
-          {isLoadingSubmit ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <Text style={styles.submitBtnText}>Submit Request</Text>
-          )}
+          <Text style={[styles.tabButtonText, activeTab === 'HISTORY' && styles.tabButtonTextActive]}>
+            📋 My Requests {myRequests.length > 0 ? `(${myRequests.length})` : ''}
+          </Text>
         </TouchableOpacity>
       </View>
 
-      {/* MATERIAL ANALOG CLOCK TIME PICKER (Image 5 Reference) */}
-      <MaterialAnalogClockPicker
+      {/* VIEW 1: NEW REQUEST FLOW */}
+      {activeTab === 'NEW' ? (
+        <>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: Math.max(insets.bottom, 24) + 90 },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Pending Request Banner for Selected Date */}
+            {pendingRequestForSelectedDate && (
+              <View style={styles.pendingDateWarningCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 18 }}>⏳</Text>
+                  <Text style={styles.pendingDateWarningTitle}>
+                    Request Under Review for {selectedDate}
+                  </Text>
+                </View>
+                <Text style={styles.pendingDateWarningSubtitle}>
+                  You already submitted an attendance correction for this date.
+                  It is currently pending approval.
+                </Text>
+                <View style={styles.slaBadgeRow}>
+                  <Text style={styles.slaBadgeText}>
+                    ⏱️ Admin SLA: Resolves within 5 hrs (
+                    {formatSlaCountdown(pendingRequestForSelectedDate.createdAt, 5)})
+                  </Text>
+                </View>
+                <Text style={styles.pendingDateInstruction}>
+                  💡 Select another date above to submit a request for other dates!
+                </Text>
+              </View>
+            )}
+
+            {/* STEP 1: SELECT DATE */}
+            <View style={styles.card}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.cardLabel}>1. SELECT DATE</Text>
+                <View style={styles.monthNav}>
+                  <TouchableOpacity onPress={() => setMonth((m) => (m === 1 ? 12 : m - 1))}>
+                    <Text style={styles.monthNavBtn}>‹</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.monthNavText}>
+                    {monthNames[month - 1]} {year}
+                  </Text>
+                  <TouchableOpacity onPress={() => setMonth((m) => (m === 12 ? 1 : m + 1))}>
+                    <Text style={styles.monthNavBtn}>›</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Calendar Grid Header */}
+              <View style={styles.daysHeaderRow}>
+                {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d, i) => (
+                  <Text key={i} style={[styles.dayHeaderCell, i === 0 && { color: '#8B5CF6' }]}>
+                    {d}
+                  </Text>
+                ))}
+              </View>
+
+              {/* Calendar Days */}
+              {isLoadingCalendar ? (
+                <ActivityIndicator size="small" color="#0066CC" style={{ marginVertical: 20 }} />
+              ) : (
+                <View style={styles.calendarGrid}>
+                  {/* Leading Blanks */}
+                  {Array.from({ length: new Date(year, month - 1, 1).getDay() }).map((_, i) => (
+                    <View key={`b-${i}`} style={styles.calendarDayCell} />
+                  ))}
+
+                  {calendarDays.map((d) => {
+                    const isSelected = selectedDate === d.date;
+                    const isFuture = d.date > todayStr;
+                    const isPreJoin = d.date < employeeStartDate;
+                    const isPending = !!checkPendingRequestForDate(d.date);
+
+                    return (
+                      <TouchableOpacity
+                        key={d.date}
+                        style={[
+                          styles.calendarDayCell,
+                          isSelected && styles.dayCellSelected,
+                          isFuture && styles.dayCellDisabled,
+                          isPreJoin && styles.dayCellDisabled,
+                          isPending && !isSelected && styles.dayCellPending,
+                        ]}
+                        disabled={isFuture || isPreJoin}
+                        onPress={() => setSelectedDate(d.date)}
+                      >
+                        <Text
+                          style={[
+                            styles.dayNumberText,
+                            isSelected && styles.dayNumberSelected,
+                            (isFuture || isPreJoin) && styles.dayNumberDisabled,
+                          ]}
+                        >
+                          {d.dayNumber}
+                        </Text>
+                        {isPending && !isSelected && <View style={styles.pendingDot} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              <View style={styles.dateStatusBox}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }}>
+                  Target Date: <Text style={{ color: '#0066CC' }}>{selectedDate}</Text>{' '}
+                  {selectedDate === todayStr ? '(Today)' : ''}
+                </Text>
+                {pendingRequestForSelectedDate && (
+                  <Text style={{ fontSize: 11, color: '#D97706', fontWeight: '700', marginTop: 4 }}>
+                    ⚠️ This date has a pending request under review.
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* STEP 2: REQUEST TYPE */}
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>2. REQUEST TYPE</Text>
+              <View style={styles.typeSelectorRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.typeOption,
+                    requestType === 'ATTENDANCE' && styles.typeOptionActive,
+                  ]}
+                  onPress={() => setRequestType('ATTENDANCE')}
+                >
+                  <Text style={{ fontSize: 18 }}>⏱️</Text>
+                  <Text
+                    style={[
+                      styles.typeOptionText,
+                      requestType === 'ATTENDANCE' && styles.typeOptionTextActive,
+                    ]}
+                  >
+                    Attendance Check-In
+                  </Text>
+                  <Text style={styles.typeOptionSub}>Mark arrival time</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.typeOption,
+                    requestType === 'CLOSING' && styles.typeOptionActive,
+                  ]}
+                  onPress={() => setRequestType('CLOSING')}
+                >
+                  <Text style={{ fontSize: 18 }}>🏁</Text>
+                  <Text
+                    style={[
+                      styles.typeOptionText,
+                      requestType === 'CLOSING' && styles.typeOptionTextActive,
+                    ]}
+                  >
+                    Closing Time
+                  </Text>
+                  <Text style={styles.typeOptionSub}>End of day checkout</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* STEP 3: TIME SELECTION */}
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>
+                3. {requestType === 'ATTENDANCE' ? 'START / CHECK-IN TIME' : 'CLOSING / CHECK-OUT TIME'}
+              </Text>
+
+              {requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && (
+                <View style={styles.disabledTimeNotice}>
+                  <Text style={{ fontSize: 14 }}>🔒</Text>
+                  <Text style={styles.disabledTimeNoticeText}>
+                    Closing time request is disabled before afternoon. It unlocks at 1:00 PM.
+                  </Text>
+                </View>
+              )}
+
+              {isSelectedDateToday && (
+                <View style={styles.futureNotice}>
+                  <Text style={{ fontSize: 13 }}>ℹ️</Text>
+                  <Text style={styles.futureNoticeText}>
+                    Future times beyond current local time are disabled in the scroll wheel.
+                  </Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[
+                  styles.timeDisplayCard,
+                  requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && { opacity: 0.5 },
+                ]}
+                disabled={requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible}
+                onPress={() => setTimePickerTarget(requestType === 'ATTENDANCE' ? 'IN' : 'OUT')}
+              >
+                <View>
+                  <Text style={styles.timeDisplayLabel}>
+                    {requestType === 'ATTENDANCE' ? 'Requested Check-In' : 'Requested Closing'}
+                  </Text>
+                  <Text style={styles.timeDisplayVal}>
+                    {requestType === 'ATTENDANCE'
+                      ? formatDisplayTime(checkInHour, checkInMinute, checkInPeriod)
+                      : formatDisplayTime(closingHour, closingMinute, closingPeriod)}
+                  </Text>
+                </View>
+                <View style={styles.changeTimeBadge}>
+                  <Text style={styles.changeTimeBadgeText}>Scroll Time Wheel ⏱️</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* STEP 4: REASON & DETAILS */}
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>4. REASON FOR REQUEST</Text>
+              <View style={styles.presetRow}>
+                {reasonPresets.map((p, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[styles.presetChip, reason === p && styles.presetChipActive]}
+                    onPress={() => setReason(p)}
+                  >
+                    <Text
+                      style={[
+                        styles.presetChipText,
+                        reason === p && styles.presetChipTextActive,
+                      ]}
+                    >
+                      {p}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TextInput
+                style={styles.reasonInput}
+                placeholder="Provide specific details / reason for request..."
+                placeholderTextColor="#94A3B8"
+                value={reason}
+                onChangeText={setReason}
+              />
+
+              <Text style={[styles.cardLabel, { marginTop: 12 }]}>OPTIONAL REMARKS</Text>
+              <TextInput
+                style={[styles.reasonInput, { height: 60, textAlignVertical: 'top' }]}
+                placeholder="Additional notes for manager..."
+                placeholderTextColor="#94A3B8"
+                value={remarks}
+                onChangeText={setRemarks}
+                multiline
+              />
+            </View>
+          </ScrollView>
+
+          {/* STICKY BOTTOM ACTION BAR */}
+          <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={onClose}
+              disabled={isLoadingSubmit}
+            >
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.submitBtn,
+                (!!pendingRequestForSelectedDate ||
+                  (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)) &&
+                  styles.submitBtnDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={
+                isLoadingSubmit ||
+                !!pendingRequestForSelectedDate ||
+                (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)
+              }
+            >
+              {isLoadingSubmit ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.submitBtnText}>
+                  {pendingRequestForSelectedDate ? 'Pending Approval (Locked)' : 'Submit Request'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        /* VIEW 2: ALL SUBMITTED REQUESTS & SLA STATUS */
+        <ScrollView
+          style={styles.scrollArea}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Math.max(insets.bottom, 24) + 40 },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Top Info Banner */}
+          <View style={styles.slaGlobalInfoCard}>
+            <Text style={styles.slaGlobalInfoTitle}>⏱️ Admin SLA Policy</Text>
+            <Text style={styles.slaGlobalInfoSub}>
+              All attendance requests submitted by employees are resolved by Admin within 5 hours.
+            </Text>
+          </View>
+
+          {isLoadingRequests ? (
+            <ActivityIndicator size="large" color="#0066CC" style={{ marginTop: 40 }} />
+          ) : myRequests.length === 0 ? (
+            <View style={styles.emptyRequestsBox}>
+              <Text style={{ fontSize: 32, marginBottom: 8 }}>📭</Text>
+              <Text style={styles.emptyRequestsTitle}>No Requests Yet</Text>
+              <Text style={styles.emptyRequestsSub}>
+                You haven't submitted any attendance correction requests.
+              </Text>
+              <TouchableOpacity
+                style={styles.newReqShortcutBtn}
+                onPress={() => setActiveTab('NEW')}
+              >
+                <Text style={styles.newReqShortcutText}>+ Submit New Request</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            myRequests.map((req: any) => {
+              const isPending =
+                req.status === 'WAITING_FOR_APPROVAL' || req.status === 'UNDER_APPROVAL';
+              const isApproved = req.status === 'APPROVED';
+              const isRejected = req.status === 'REJECTED';
+
+              let datesList = '';
+              try {
+                const parsed =
+                  req.parsedDates ||
+                  (typeof req.dates === 'string' ? JSON.parse(req.dates) : (req.dates || []));
+                datesList = Array.isArray(parsed) ? parsed.join(', ') : String(parsed);
+              } catch {
+                datesList = String(req.dates || '');
+              }
+
+              return (
+                <View key={req.id} style={styles.requestItemCard}>
+                  {/* Card Header: Type & Status Pill */}
+                  <View style={styles.requestCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.requestCardType}>
+                        {req.requestType === 'CLOSING_REQUEST'
+                          ? '🏁 Closing Request'
+                          : req.requestType === 'TODAY_ATTENDANCE'
+                          ? '⏱️ Check-In (Today)'
+                          : '📅 Missed Attendance'}
+                      </Text>
+                      <Text style={styles.requestCardDate}>{datesList}</Text>
+                    </View>
+
+                    {isPending && (
+                      <View style={styles.statusPillPending}>
+                        <Text style={styles.statusPillPendingText}>⏳ Under Review</Text>
+                      </View>
+                    )}
+                    {isApproved && (
+                      <View style={styles.statusPillApproved}>
+                        <Text style={styles.statusPillApprovedText}>✅ Approved</Text>
+                      </View>
+                    )}
+                    {isRejected && (
+                      <View style={styles.statusPillRejected}>
+                        <Text style={styles.statusPillRejectedText}>❌ Rejected</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Times Requested */}
+                  <View style={styles.requestTimesRow}>
+                    {req.checkInTime && (
+                      <View style={styles.timeTag}>
+                        <Text style={styles.timeTagLabel}>Check-In:</Text>
+                        <Text style={styles.timeTagValue}>{req.checkInTime}</Text>
+                      </View>
+                    )}
+                    {req.checkOutTime && (
+                      <View style={styles.timeTag}>
+                        <Text style={styles.timeTagLabel}>Check-Out:</Text>
+                        <Text style={styles.timeTagValue}>{req.checkOutTime}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Reason & Remarks */}
+                  {req.reason && (
+                    <Text style={styles.requestReasonText}>
+                      <Text style={{ fontWeight: '700' }}>Reason: </Text>
+                      {req.reason}
+                    </Text>
+                  )}
+                  {req.remarks && (
+                    <Text style={styles.requestRemarksText}>
+                      <Text style={{ fontWeight: '700' }}>Note: </Text>
+                      {req.remarks}
+                    </Text>
+                  )}
+
+                  {/* SLA Countdown Badge if Pending */}
+                  {isPending && (
+                    <View style={styles.requestSlaCard}>
+                      <Text style={styles.requestSlaText}>
+                        ⏱️ Admin SLA (5h): {formatSlaCountdown(req.createdAt, req.slaHours || 5)}
+                      </Text>
+                      <Text style={styles.requestSubmittedAtText}>
+                        Submitted at {formatSubmittedTime(req.createdAt)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
+
+      {/* UNIFIED WHEEL SCROLL TIME PICKER */}
+      <ScrollTimePickerModal
         visible={timePickerTarget !== null}
         initialHour={timePickerTarget === 'IN' ? checkInHour : closingHour}
         initialMinute={timePickerTarget === 'IN' ? checkInMinute : closingMinute}
         initialPeriod={timePickerTarget === 'IN' ? checkInPeriod : closingPeriod}
-        title={timePickerTarget === 'IN' ? 'Set Check-In Time' : 'Set Closing Time'}
-        onConfirm={(h, m, p) => {
+        title={timePickerTarget === 'IN' ? 'Select Check-In Time' : 'Select Closing Time'}
+        maxTime={maxAllowedTime}
+        onConfirm={(val) => {
           if (timePickerTarget === 'IN') {
-            setCheckInHour(h);
-            setCheckInMinute(m);
-            setCheckInPeriod(p);
+            setCheckInHour(val.hour12);
+            setCheckInMinute(val.minute);
+            setCheckInPeriod(val.period);
           } else {
-            setClosingHour(h);
-            setClosingMinute(m);
-            setClosingPeriod(p);
+            setClosingHour(val.hour12);
+            setClosingMinute(val.minute);
+            setClosingPeriod(val.period);
           }
           setTimePickerTarget(null);
         }}
@@ -554,7 +803,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 10,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderColor: '#E2E8F0',
@@ -582,6 +831,37 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#64748B',
   },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#0066CC',
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tabButtonTextActive: {
+    color: '#0066CC',
+    fontWeight: '800',
+  },
   scrollArea: {
     flex: 1,
   },
@@ -589,24 +869,42 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 12,
   },
-  activeRequestBanner: {
-    flexDirection: 'row',
-    gap: 10,
-    backgroundColor: '#FEF3C7',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
+  pendingDateWarningCard: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
     borderColor: '#FCD34D',
+    gap: 6,
   },
-  activeRequestTitle: {
-    fontSize: 13,
+  pendingDateWarningTitle: {
+    fontSize: 14,
     fontWeight: '800',
     color: '#92400E',
   },
-  activeRequestSub: {
-    fontSize: 11,
+  pendingDateWarningSubtitle: {
+    fontSize: 12,
     color: '#78350F',
+    lineHeight: 17,
+  },
+  slaBadgeRow: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
     marginTop: 2,
+  },
+  slaBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  pendingDateInstruction: {
+    fontSize: 11,
+    color: '#92400E',
+    fontWeight: '600',
+    marginTop: 4,
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -677,6 +975,18 @@ const styles = StyleSheet.create({
   dayCellDisabled: {
     opacity: 0.25,
   },
+  dayCellPending: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  pendingDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D97706',
+    marginTop: 2,
+  },
   dayNumberText: {
     fontSize: 12,
     fontWeight: '700',
@@ -688,12 +998,6 @@ const styles = StyleSheet.create({
   },
   dayNumberDisabled: {
     color: '#94A3B8',
-  },
-  miniDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    marginTop: 2,
   },
   dateStatusBox: {
     backgroundColor: '#F8FAFC',
@@ -749,6 +1053,22 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 11,
     color: '#B91C1C',
+    fontWeight: '600',
+  },
+  futureNotice: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#EFF6FF',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginBottom: 8,
+  },
+  futureNoticeText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#1D4ED8',
     fontWeight: '600',
   },
   timeDisplayCard: {
@@ -857,91 +1177,173 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  timeModalCard: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  modalSub: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 2,
-    marginBottom: 14,
-  },
-  pickerSectionLabel: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#0066CC',
-    marginTop: 8,
+
+  // View 2 (History) Styles
+  slaGlobalInfoCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
     marginBottom: 6,
   },
-  pickerRow: {
-    gap: 8,
-    paddingVertical: 4,
-  },
-  pickerPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  pickerPillActive: {
-    backgroundColor: '#0066CC',
-    borderColor: '#0066CC',
-  },
-  pickerPillText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  pickerPillTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  periodBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  periodBtnActive: {
-    backgroundColor: '#0066CC',
-    borderColor: '#0066CC',
-  },
-  periodBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  periodBtnTextActive: {
-    color: '#FFFFFF',
-  },
-  doneTimeBtn: {
-    marginTop: 16,
-    backgroundColor: '#0066CC',
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  doneTimeBtnText: {
-    color: '#FFFFFF',
+  slaGlobalInfoTitle: {
     fontSize: 14,
     fontWeight: '800',
+    color: '#1E40AF',
+    marginBottom: 4,
+  },
+  slaGlobalInfoSub: {
+    fontSize: 12,
+    color: '#1E3A8A',
+    lineHeight: 16,
+  },
+  emptyRequestsBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 20,
+  },
+  emptyRequestsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  emptyRequestsSub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  newReqShortcutBtn: {
+    backgroundColor: '#0066CC',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  newReqShortcutText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  requestItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 2,
+    gap: 8,
+  },
+  requestCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  requestCardType: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  requestCardDate: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  statusPillPending: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  statusPillPendingText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  statusPillApproved: {
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  statusPillApprovedText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  statusPillRejected: {
+    backgroundColor: '#FEE2E2',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  statusPillRejectedText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  requestTimesRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  timeTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+  },
+  timeTagLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  timeTagValue: {
+    fontSize: 11.5,
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  requestReasonText: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 17,
+  },
+  requestRemarksText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontStyle: 'italic',
+  },
+  requestSlaCard: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  requestSlaText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  requestSubmittedAtText: {
+    fontSize: 10,
+    color: '#92400E',
+    marginTop: 2,
   },
 });

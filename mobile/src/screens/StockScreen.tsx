@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface StockScreenProps {
   onClose?: () => void;
-  userRole?: 'ADMIN' | 'SALES' | 'EMPLOYEE';
+  userRole?: string;
 }
 
 const DEFAULT_BRANDS = [

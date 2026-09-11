@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { mobileApi } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
 
 interface AdminEmployeesScreenProps {
   onClose?: () => void;
@@ -36,6 +37,7 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
   const [password, setPassword] = useState<string>('Password@123');
   const [startTime, setStartTime] = useState<string>('09:00');
   const [endTime, setEndTime] = useState<string>('18:00');
+  const [timePickerTarget, setTimePickerTarget] = useState<'START' | 'END' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const fetchEmployees = async () => {
@@ -348,23 +350,25 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.timeSubLabel}>Start Time (24h)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="09:00"
-                    placeholderTextColor="#94A3B8"
-                    value={startTime}
-                    onChangeText={setStartTime}
-                  />
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                    onPress={() => setTimePickerTarget('START')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{startTime}</Text>
+                    <Text style={{ fontSize: 16 }}>🕒</Text>
+                  </TouchableOpacity>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.timeSubLabel}>Expected End Time (24h)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="18:00"
-                    placeholderTextColor="#94A3B8"
-                    value={endTime}
-                    onChangeText={setEndTime}
-                  />
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                    onPress={() => setTimePickerTarget('END')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{endTime}</Text>
+                    <Text style={{ fontSize: 16 }}>🕒</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </ScrollView>
@@ -382,6 +386,22 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* WHEEL SCROLL TIME PICKER MODAL */}
+        <ScrollTimePickerModal
+          visible={timePickerTarget !== null}
+          initialTime={timePickerTarget === 'START' ? startTime : endTime}
+          title={timePickerTarget === 'START' ? 'Select Shift Start Time' : 'Select Expected End Time'}
+          onConfirm={(val) => {
+            if (timePickerTarget === 'START') {
+              setStartTime(val.formatted24);
+            } else {
+              setEndTime(val.formatted24);
+            }
+            setTimePickerTarget(null);
+          }}
+          onCancel={() => setTimePickerTarget(null)}
+        />
       </Modal>
     </View>
   );

@@ -38,9 +38,16 @@ export async function downloadAndSaveFile(options: {
   const targetFilename = cleanName.endsWith(`.${extension}`) ? cleanName : `${cleanName}.${extension}`;
 
   try {
-    // 1. Download to local cache sandbox first
+    // 1. Download to dedicated local cache sandbox first
     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
-    const tempUri = `${cacheDir}${Date.now()}_${targetFilename}`;
+    const exportsDir = `${cacheDir}exports/`;
+    const dirInfo = await FileSystem.getInfoAsync(exportsDir);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(exportsDir, { intermediates: true }).catch(() => {});
+    }
+    const tempUri = `${exportsDir}${targetFilename}`;
+    // Clear any previous file with the exact name so we always have fresh content
+    await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
 
     const downloadResult = await FileSystem.downloadAsync(url, tempUri, { headers: headers || {} });
 
@@ -172,8 +179,14 @@ export async function shareDocument(options: {
     if (!fileToShare && url) {
       const cleanName = sanitizeDownloadFilename(rawFilename, `ECDIAL_Share_${Date.now()}`);
       const targetFilename = cleanName.endsWith(`.${extension}`) ? cleanName : `${cleanName}.${extension}`;
-      const cacheDir = FileSystem.cacheDirectory || '';
-      const tempPath = `${cacheDir}${Date.now()}_${targetFilename}`;
+      const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+      const exportsDir = `${cacheDir}exports/`;
+      const dirInfo = await FileSystem.getInfoAsync(exportsDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(exportsDir, { intermediates: true }).catch(() => {});
+      }
+      const tempPath = `${exportsDir}${targetFilename}`;
+      await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
 
       const res = await FileSystem.downloadAsync(url, tempPath, { headers: headers || {} });
       if (res && res.status === 200 && res.uri) {

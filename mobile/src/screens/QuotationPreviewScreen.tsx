@@ -20,10 +20,21 @@ import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
 
+const BRAND_LOGOS: Record<string, any> = {
+  DAIKIN: require('../../assets/brands/daikin.png'),
+  MITSUBISHI: require('../../assets/brands/mitsubishi.png'),
+  LG: require('../../assets/brands/lg.png'),
+  GENERAL: require('../../assets/brands/general.png'),
+  GODREJ: require('../../assets/brands/godrej.png'),
+  BLUESTAR: require('../../assets/brands/bluestar.png'),
+  BLUSTAR: require('../../assets/brands/bluestar.png'),
+  ONIDA: require('../../assets/brands/onida.png'),
+};
+
 interface QuotationPreviewScreenProps {
   quotation: Quotation | null;
   onClose: () => void;
-  onEdit?: () => void;
+  onEdit?: (quotation?: Quotation | null) => void;
 }
 
 export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
@@ -36,11 +47,33 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [isSharing, setIsSharing] = useState<boolean>(false);
+  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+  const [newPdfName, setNewPdfName] = useState<string>('');
+  const [isSavingName, setIsSavingName] = useState<boolean>(false);
 
-  // Filename Customization Modal State (Requirement 2)
-  const [filenameModalVisible, setFilenameModalVisible] = useState<boolean>(false);
-  const [filenameModalMode, setFilenameModalMode] = useState<'DOWNLOAD' | 'SHARE'>('DOWNLOAD');
-  const [customFilename, setCustomFilename] = useState<string>('');
+  const handleSavePdfName = async () => {
+    if (!currentQuote) return;
+    if (!newPdfName.trim()) {
+      Alert.alert('Invalid Name', 'Quotation name cannot be empty.');
+      return;
+    }
+    try {
+      setIsSavingName(true);
+      const clean = newPdfName.trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const res = await mobileApi.updateQuotation(currentQuote.id, { pdfName: clean });
+      if (res.success) {
+        setCurrentQuote((prev: any) => ({ ...prev, pdfName: clean }));
+        setIsRenaming(false);
+        Alert.alert('✓ Saved', `Quotation PDF name updated to "${clean}".`);
+      } else {
+        Alert.alert('Error', res.message || 'Failed to update quotation name.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to update quotation name.');
+    } finally {
+      setIsSavingName(false);
+    }
+  };
 
   useEffect(() => {
     setCurrentQuote(quotation);
@@ -60,10 +93,13 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   if (!currentQuote) return null;
 
+  const isEcDial = (currentQuote.quotationType || 'DAIKIN').toUpperCase() === 'ECDIAL';
+
   const getDefaultFilename = () => {
     const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');
     const cleanCust = currentQuote.customerName ? currentQuote.customerName.trim().replace(/[^a-zA-Z0-9_-]/g, '_') : '';
-    return cleanCust ? `ECDIAL_${cleanCust}_${safeQuoteNum}` : `ECDIAL_Quotation_${safeQuoteNum}`;
+    const prefix = isEcDial ? 'ECDIAL' : 'DAIKIN';
+    return cleanCust ? `${prefix}_${cleanCust}_${safeQuoteNum}` : `${prefix}_Quotation_${safeQuoteNum}`;
   };
 
   const sanitizeFilename = (name: string) => {
@@ -75,24 +111,16 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
     return clean;
   };
 
-  const handleOpenDownloadModal = () => {
-    setCustomFilename(getDefaultFilename());
-    setFilenameModalMode('DOWNLOAD');
-    setFilenameModalVisible(true);
+  const getResolvedFilename = () => {
+    if (currentQuote.pdfName && currentQuote.pdfName.trim().length > 0) {
+      return sanitizeFilename(currentQuote.pdfName);
+    }
+    return getDefaultFilename();
   };
 
-  const handleOpenShareModal = () => {
-    setCustomFilename(getDefaultFilename());
-    setFilenameModalMode('SHARE');
-    setFilenameModalVisible(true);
-  };
-
-  const handleConfirmFilenameAction = async () => {
-    const rawName = customFilename.trim();
-    const cleanName = sanitizeFilename(rawName);
-    setFilenameModalVisible(false);
-
-    const pdfUrl = mobileApi.getPdfUrl(currentQuote.id);
+  const handleDownload = async () => {
+    const cleanName = getResolvedFilename();
+    const pdfUrl = mobileApi.getPdfUrl(currentQuote.id, cleanName);
     const token = getAuthToken();
     const empId = getActiveEmployeeId();
     const headers: Record<string, string> = {
@@ -100,70 +128,56 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
       ...(empId ? { 'x-employee-id': empId } : {}),
     };
 
-    if (filenameModalMode === 'DOWNLOAD') {
+    try {
       setIsDownloading(true);
-      try {
-        const result = await downloadAndSaveFile({
-          url: pdfUrl,
-          rawFilename: cleanName,
-          extension: 'pdf',
-          mimeType: 'application/pdf',
-          headers,
-          dialogTitle: `Save Quotation (${cleanName}.pdf)`,
-          showShareFallbackOnAndroid: true,
-        });
+      const res = await downloadAndSaveFile({
+        url: pdfUrl,
+        rawFilename: cleanName,
+        extension: 'pdf',
+        mimeType: 'application/pdf',
+        headers,
+        dialogTitle: 'Save Quotation PDF',
+      });
 
-        if (result.success && result.uri) {
-          Alert.alert(
-            '✓ Quotation downloaded',
-            `${result.filename} is saved on your device.`,
-            [
-              {
-                text: 'Open / View PDF',
-                onPress: async () => {
-                  if (await Sharing.isAvailableAsync()) {
-                    await Sharing.shareAsync(result.uri!, {
-                      mimeType: 'application/pdf',
-                      dialogTitle: `${result.filename}`,
-                      UTI: 'com.adobe.pdf',
-                    });
-                  }
-                },
-              },
-              { text: 'OK', style: 'cancel' },
-            ]
-          );
-        } else {
-          Alert.alert('Download Failed', result.error || 'Unable to download quotation. Please check server connection.');
-        }
-      } catch (err: any) {
-        Alert.alert('Download Error', err.message || 'Unable to download quotation PDF.');
-      } finally {
-        setIsDownloading(false);
+      if (!res.success && res.error) {
+        Alert.alert('Download Error', res.error);
       }
-    } else {
-      // SHARE mode
+    } catch (err: any) {
+      console.error('[Download PDF Error]', err);
+      Alert.alert('Download Error', err.message || 'Failed to download PDF.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleShare = async () => {
+    const cleanName = getResolvedFilename();
+    const pdfUrl = mobileApi.getPdfUrl(currentQuote.id, cleanName);
+    const token = getAuthToken();
+    const empId = getActiveEmployeeId();
+    const headers: Record<string, string> = {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(empId ? { 'x-employee-id': empId } : {}),
+    };
+
+    try {
       setIsSharing(true);
-      try {
-        const shareResult = await shareDocument({
-          url: pdfUrl,
-          rawFilename: cleanName,
-          extension: 'pdf',
-          mimeType: 'application/pdf',
-          headers,
-        });
+      const res = await shareDocument({
+        url: pdfUrl,
+        rawFilename: cleanName,
+        extension: 'pdf',
+        mimeType: 'application/pdf',
+        headers,
+      });
 
-        if (!shareResult.success && shareResult.error) {
-          Alert.alert('Share Failed', shareResult.error);
-        }
-      } catch (err: any) {
-        console.error('[Share Error]', err);
-        if (err.message && !err.message.includes('dismissed') && !err.message.includes('cancel')) {
-          Alert.alert('Share Error', err.message || 'Sharing error');
-        }
-      } finally {
-        setIsSharing(false);
+      if (!res.success && res.error) {
+        Alert.alert('Share Error', res.error);
       }
+    } catch (err: any) {
+      console.error('[Share PDF Error]', err);
+      Alert.alert('Share Error', err.message || 'Failed to share PDF.');
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -197,22 +211,68 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
   const mainItems = currentQuote.items?.filter((i) => i.section === 'MAIN_UNIT') || [];
   const lowSideItems = currentQuote.items?.filter((i) => i.section === 'LOW_SIDE') || [];
 
+  const detectActiveBrands = () => {
+    const brandOrder = ['MITSUBISHI', 'DAIKIN', 'LG', 'GENERAL', 'GODREJ', 'BLUESTAR', 'ONIDA'];
+    const set = new Set<string>();
+    const all = [...mainItems, ...lowSideItems];
+    for (const it of all) {
+      const b = (it.brand || '').toUpperCase();
+      const d = (it.description || '').toUpperCase();
+      if (b === 'DAIKIN' || d.includes('DAIKIN')) set.add('DAIKIN');
+      if (b.includes('MITSUBISHI') || d.includes('MITSUBISHI')) set.add('MITSUBISHI');
+      if (b === 'LG' || d.includes('LG ') || d.includes('LG-') || d.includes('(US-Q') || d.startsWith('LG')) set.add('LG');
+      if (b.includes('GENERAL') || d.includes('GENERAL') || d.includes('O GENERAL') || d.includes('ASGA')) set.add('GENERAL');
+      if (b.includes('GODREJ') || d.includes('GODREJ') || d.includes('GIC18')) set.add('GODREJ');
+      if (b.includes('BLUE') || b.includes('STAR') || b.includes('BLUSTAR') || d.includes('BLUE STAR') || d.includes('BLUESTAR') || d.includes('BLUSTAR')) set.add('BLUESTAR');
+      if (b.includes('ONIDA') || d.includes('ONIDA')) set.add('ONIDA');
+    }
+    const detected = brandOrder.filter((br) => set.has(br));
+    return detected.length > 0 ? detected : ['DAIKIN'];
+  };
+
+  const activeBrands = detectActiveBrands();
+
   return (
     <View style={styles.container}>
       {/* Top Header with Safe Top Inset */}
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Quotation Offer</Text>
+        <View style={{ flex: 1, paddingRight: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.title}>Quotation Offer</Text>
+            <View style={[styles.previewTypeTag, isEcDial ? styles.previewTypeTagEcDial : styles.previewTypeTagDaikin]}>
+              <Text style={[styles.previewTypeTagText, isEcDial ? styles.previewTypeTagEcDialText : styles.previewTypeTagDaikinText]}>
+                {isEcDial ? 'EC DIAL' : 'DAIKIN'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Quotation Name with Edit Button (Rule: user can click pencil to edit filename) */}
+          <TouchableOpacity
+            style={styles.quoteNameRow}
+            onPress={() => {
+              setNewPdfName(currentQuote.pdfName || getDefaultFilename());
+              setIsRenaming(true);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.quoteNameText} numberOfLines={1}>
+              📄 {currentQuote.pdfName || getDefaultFilename()}
+            </Text>
+            <View style={styles.editPencilBadge}>
+              <Text style={{ fontSize: 10 }}>✏️</Text>
+            </View>
+          </TouchableOpacity>
+
           <Text style={styles.subtitle}>{currentQuote.quotationNumber} • {currentQuote.date}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {onEdit && (
-            <TouchableOpacity style={styles.editBtn} onPress={onEdit}>
-              <Text style={styles.editBtnText}>✏️ Edit</Text>
+            <TouchableOpacity style={styles.editBtn} onPress={() => onEdit(currentQuote)}>
+              <Text style={styles.editBtnText}>Edit</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={styles.deleteHeaderBtn} onPress={handleDeleteQuotation}>
-            <Text style={styles.deleteHeaderBtnText}>🗑️ Delete</Text>
+            <Text style={styles.deleteHeaderBtnText}>Delete</Text>
           </TouchableOpacity>
           {onClose && (
             <TouchableOpacity style={styles.closeIconBtn} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -231,12 +291,16 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
           <ActivityIndicator size="small" color="#0066CC" style={{ marginBottom: 10 }} />
         )}
 
-        {/* Official Printable Sheet (Preserving Daikin ECDIAL Design) */}
+        {/* Official Printable Sheet (Preserving Selected Template Design) */}
         <View style={styles.previewSheet}>
           {/* 1. FIXED HEADER IMAGE ASSET */}
           <View style={styles.fixedHeaderContainer}>
             <Image
-              source={require('../../assets/quotation_header.png')}
+              source={
+                isEcDial
+                  ? require('../../assets/ecdial_quotation_header.png')
+                  : require('../../assets/daikin_quotation_header.png')
+              }
               style={styles.fixedHeaderImg}
               resizeMode="contain"
             />
@@ -250,7 +314,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
                 <Text style={styles.toLabel}>To,</Text>
                 <Text style={styles.customerNameText}>{currentQuote.customerName}</Text>
                 {currentQuote.customerAddress && currentQuote.customerAddress.trim().length > 0 ? (
-                  <Text style={styles.customerAddressText}>📍 {currentQuote.customerAddress}</Text>
+                  <Text style={styles.customerAddressText}>Address: {currentQuote.customerAddress}</Text>
                 ) : null}
                 {currentQuote.customerPhone ? (
                   <Text style={styles.customerPhoneText}>Phone: {currentQuote.customerPhone}</Text>
@@ -270,7 +334,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
               </View>
               <View style={styles.quoteCardMeta}>
                 <Text style={styles.quoteCardDate}>Date: {currentQuote.date}</Text>
-                <Text style={styles.quoteCardNum}>{currentQuote.quotationNumber}</Text>
+                <Text style={styles.quoteCardDate}>Page 1 of {((mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 10)) ? 2 : 1)}</Text>
               </View>
 
               <View style={styles.quoteCardBody}>
@@ -387,44 +451,71 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
                     </Text>
                   </View>
                 ))}
-
-                {/* Total (B) Subtotal Row */}
-                <View style={styles.subtotalRow}>
-                  <Text style={styles.subtotalLabel}>Total (B)</Text>
-                  <Text style={styles.subtotalVal}>
-                    ₹{Number(currentQuote.lowSideTotal || lowSideItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                  </Text>
-                </View>
               </View>
             </View>
           )}
 
-          {/* 5. MULTI-PAGE NOTE OR CONTINUATION (If large quotation) */}
-          {mainItems.length >= 4 && (
+          {/* 5. MULTI-PAGE NOTE OR CONTINUATION (If 4+ main units or >10 items) */}
+          {(mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 10)) && (
             <View style={styles.continuationNoteBox}>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text style={styles.noteTag}>NOTE:</Text>
                 <Text style={styles.noteText} numberOfLines={2}>
-                  Low side / additional materials (If added), Terms & Conditions, Payment Method & Other details on next page.
+                  Low side materials, Terms & Conditions & Payment Details continued on next page.
                 </Text>
               </View>
-              <Text style={styles.continuationText}>Continued on next page →</Text>
+              <Text style={styles.continuationText}>Continued on next page -{'>'}</Text>
             </View>
           )}
 
           {/* 6. FIXED TERMS & CONDITIONS + PAYMENT METHOD IMAGE ASSET */}
-          <View style={styles.fixedTermsContainer}>
+          <View style={[styles.fixedTermsContainer, { aspectRatio: isEcDial ? (1024 / 421) : (572 / 176) }]}>
             <Image
-              source={require('../../assets/quotation_terms_payment.png')}
+              source={
+                isEcDial
+                  ? require('../../assets/ecdial_quotation_terms_payment.png')
+                  : require('../../assets/daikin_quotation_terms_payment.png')
+              }
               style={styles.fixedTermsPaymentImg}
               resizeMode="contain"
             />
           </View>
 
-          {/* 7. FIXED FOOTER IMAGE ASSET */}
+          {/* 7. PROMINENT AUTHORIZED SALES & SERVICE DEALER STRIP FOR EC DIAL (Image 3 Style) */}
+          {isEcDial && (
+            <View style={styles.dealerStripContainer}>
+              <View style={styles.dealerHeadingRow}>
+                <View style={styles.dealerRule} />
+                <Text style={styles.dealerHeadingText}>AUTHORIZED SALES & SERVICE DEALER</Text>
+                <View style={styles.dealerRule} />
+              </View>
+              <View style={styles.dealerLogosRow}>
+                {activeBrands.map((bKey, idx) => (
+                  <React.Fragment key={bKey}>
+                    <View style={styles.dealerLogoBox}>
+                      <Image
+                        source={BRAND_LOGOS[bKey] || BRAND_LOGOS.DAIKIN}
+                        style={styles.dealerBrandLogo}
+                        resizeMode="contain"
+                      />
+                    </View>
+                    {idx < activeBrands.length - 1 && (
+                      <View style={styles.dealerVerticalDivider} />
+                    )}
+                  </React.Fragment>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* 8. FIXED FOOTER IMAGE ASSET */}
           <View style={styles.fixedFooterContainer}>
             <Image
-              source={require('../../assets/quotation_footer.png')}
+              source={
+                isEcDial
+                  ? require('../../assets/ecdial_quotation_footer.png')
+                  : require('../../assets/daikin_quotation_footer.png')
+              }
               style={styles.fixedFooterImg}
               resizeMode="contain"
             />
@@ -436,81 +527,76 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
       <View style={[styles.stickyFooterBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
         <TouchableOpacity
           style={[styles.downloadBtn, isDownloading && { opacity: 0.7 }]}
-          onPress={handleOpenDownloadModal}
+          onPress={handleDownload}
           disabled={isDownloading || isSharing}
         >
           {isDownloading ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
           ) : (
-            <Text style={styles.btnTextWhite}>📥 Download PDF</Text>
+            <Text style={styles.btnTextWhite}>Download PDF</Text>
           )}
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.shareBtn, isSharing && { opacity: 0.7 }]}
-          onPress={handleOpenShareModal}
+          onPress={handleShare}
           disabled={isDownloading || isSharing}
         >
           {isSharing ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
           ) : (
-            <Text style={styles.btnTextWhite}>📤 Share PDF</Text>
+            <Text style={styles.btnTextWhite}>Share PDF</Text>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* Filename Customization Modal */}
-      <Modal visible={filenameModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {filenameModalMode === 'DOWNLOAD' ? 'SAVE QUOTATION AS' : 'SHARE QUOTATION AS'}
-              </Text>
-              <TouchableOpacity onPress={() => setFilenameModalVisible(false)}>
-                <Text style={styles.modalClose}>✕</Text>
+      {/* EDIT QUOTATION PDF NAME MODAL */}
+      <Modal
+        visible={isRenaming}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsRenaming(false)}
+      >
+        <View style={styles.renameOverlay}>
+          <View style={styles.renameCard}>
+            <View style={styles.renameHeader}>
+              <Text style={styles.renameTitle}>Rename Quotation PDF</Text>
+              <TouchableOpacity onPress={() => setIsRenaming(false)} disabled={isSavingName}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '800' }}>✕</Text>
               </TouchableOpacity>
             </View>
-
-            <Text style={styles.modalSub}>
-              Specify filename for this PDF export. The .pdf extension is added automatically.
+            <Text style={styles.renameSubtitle}>
+              This filename will be saved and reused for all PDF downloads and shares.
             </Text>
 
-            <Text style={styles.inputLabel}>Filename</Text>
-            <View style={styles.filenameInputContainer}>
-              <TextInput
-                style={styles.filenameInput}
-                value={customFilename}
-                onChangeText={setCustomFilename}
-                placeholder="ECDIAL_Quotation_001"
-                placeholderTextColor="#94A3B8"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <View style={styles.extensionBadge}>
-                <Text style={styles.extensionBadgeText}>.pdf</Text>
-              </View>
-            </View>
+            <TextInput
+              style={styles.renameInput}
+              value={newPdfName}
+              onChangeText={setNewPdfName}
+              placeholder="e.g. ECDIAL_Quotation_Arun"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+              autoFocus
+            />
 
-            <View style={styles.modalActions}>
+            <View style={styles.renameActions}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setFilenameModalVisible(false)}
+                style={styles.renameCancelBtn}
+                onPress={() => setIsRenaming(false)}
+                disabled={isSavingName}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={styles.renameCancelText}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.modalSubmitBtn, (isDownloading || isSharing) && { opacity: 0.7 }]}
-                onPress={handleConfirmFilenameAction}
-                disabled={isDownloading || isSharing}
+                style={styles.renameSaveBtn}
+                onPress={handleSavePdfName}
+                disabled={isSavingName}
               >
-                {isDownloading || isSharing ? (
+                {isSavingName ? (
                   <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
-                  <Text style={styles.modalSubmitText}>
-                    {filenameModalMode === 'DOWNLOAD' ? 'Download' : 'Share'}
-                  </Text>
+                  <Text style={styles.renameSaveText}>Save Name</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -525,6 +611,103 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  quoteNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginVertical: 3,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  quoteNameText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+    flexShrink: 1,
+  },
+  editPencilBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  renameOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  renameCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  renameHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  renameTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  renameSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  renameInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#0066CC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+    marginBottom: 18,
+  },
+  renameActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  renameCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  renameCancelText: {
+    color: '#64748B',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  renameSaveBtn: {
+    backgroundColor: '#0066CC',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  renameSaveText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   header: {
     flexDirection: 'row',
@@ -1042,5 +1225,82 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  previewTypeTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  previewTypeTagEcDial: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+  },
+  previewTypeTagDaikin: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  previewTypeTagText: {
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  previewTypeTagEcDialText: {
+    color: '#EA580C',
+  },
+  previewTypeTagDaikinText: {
+    color: '#0066CC',
+  },
+  dealerStripContainer: {
+    marginTop: 12,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  dealerHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  dealerRule: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#CBD5E1',
+  },
+  dealerHeadingText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#0A1E3F',
+    letterSpacing: 0.5,
+  },
+  dealerLogosRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  dealerLogoBox: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  dealerBrandLogo: {
+    width: 80,
+    height: 28,
+  },
+  dealerVerticalDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 4,
   },
 });

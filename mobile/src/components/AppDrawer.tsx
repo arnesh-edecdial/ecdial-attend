@@ -8,11 +8,12 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { canSkipAttendance } from '../utils/roles';
 
 interface AppDrawerProps {
   visible: boolean;
   onClose: () => void;
-  userRole: 'ADMIN' | 'SALES' | 'EMPLOYEE';
+  userRole: string;
   userName: string;
   onNavigate: (screen: string) => void;
   onLogout: () => void;
@@ -27,7 +28,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
   onLogout,
 }) => {
   const getMenuItems = () => {
-    if (userRole === 'ADMIN') {
+    if (canSkipAttendance(userRole)) {
       return [
         { id: 'HOME', label: 'Dashboard Home', icon: '🏠' },
         { id: 'ADMIN_EMPLOYEES', label: 'Employee Management', icon: '👥' },
@@ -40,7 +41,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'LOCATION_CALIBRATION', label: 'Location & Geofence Calibration', icon: '📍' },
       ];
     }
-    if (userRole === 'SALES') {
+    if (['SALES', 'CRM'].includes((userRole || '').toUpperCase())) {
       return [
         { id: 'HOME', label: 'Sales Home', icon: '🏠' },
         { id: 'CUSTOMERS', label: 'Customer Directory', icon: '👤' },
@@ -75,7 +76,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
           <View style={styles.profileHeader}>
             <View style={styles.avatarCircle}>
               <Text style={{ fontSize: 26 }}>
-                {userRole === 'ADMIN' ? '👨‍💼' : userRole === 'SALES' ? '👩‍💼' : '👷‍♂️'}
+                {canSkipAttendance(userRole) ? '👨‍💼' : ['SALES', 'CRM'].includes((userRole || '').toUpperCase()) ? '👩‍💼' : '👷‍♂️'}
               </Text>
             </View>
             <View style={{ flex: 1 }}>
