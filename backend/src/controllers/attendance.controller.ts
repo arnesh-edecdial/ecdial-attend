@@ -613,27 +613,40 @@ export const attendanceController = {
         return;
       }
 
-      // Enforce ONE ACTIVE REQUEST rule
-      const existingActiveRequest = await prisma.attendanceRequest.findFirst({
+      const { requestType, dates, checkInTime, checkOutTime, reason, remarks, closingTime } = req.body;
+      const todayStr = getTodayDateString();
+      let requestedDates = Array.isArray(dates) && dates.length > 0 ? dates : [todayStr];
+
+      // Enforce ONE ACTIVE REQUEST PER DATE rule
+      // If a request for date D is already under review, employee cannot submit another for D,
+      // but CAN submit requests for other dates!
+      const activeRequests = await prisma.attendanceRequest.findMany({
         where: {
           employeeId: employee.id,
           status: { in: ['WAITING_FOR_APPROVAL', 'UNDER_APPROVAL'] },
         },
       });
 
-      if (existingActiveRequest) {
-        res.status(400).json({
-          success: false,
-          errorType: 'ACTIVE_REQUEST_EXISTS',
-          message: 'You already have an attendance request under approval. Please wait until it is reviewed.',
-          activeRequestId: existingActiveRequest.id,
-        });
-        return;
-      }
+      for (const ar of activeRequests) {
+        let activeDates: string[] = [];
+        try {
+          activeDates = typeof ar.dates === 'string' ? JSON.parse(ar.dates) : (ar.dates || []);
+        } catch {
+          activeDates = [];
+        }
 
-      const { requestType, dates, checkInTime, checkOutTime, reason, remarks, closingTime } = req.body;
-      const todayStr = getTodayDateString();
-      let requestedDates = Array.isArray(dates) && dates.length > 0 ? dates : [todayStr];
+        const conflictDate = requestedDates.find((d: string) => activeDates.includes(d));
+        if (conflictDate) {
+          res.status(400).json({
+            success: false,
+            errorType: 'ACTIVE_REQUEST_EXISTS_FOR_DATE',
+            message: `A request for date (${conflictDate}) is already under review. You cannot submit another request for this date until it is resolved.`,
+            activeRequestId: ar.id,
+            conflictDate,
+          });
+          return;
+        }
+      }
 
       // Block future date requests (Rule 15)
       for (const d of requestedDates) {
@@ -886,7 +899,7 @@ export const attendanceController = {
       const users = await prisma.user.findMany({
         where: {
           isActive: true,
-          ...(roleFilter ? { role: (roleFilter as any) } : {}),
+          ...(roleFilter ? { role: (roleFilter as any) } : { role: { not: 'ADMIN' } }),
           ...(searchFilter
             ? {
                 OR: [
@@ -1064,6 +1077,53 @@ export const attendanceController = {
     } catch (err: any) {
       console.error('[Export Month Excel Error]', err);
       res.status(500).json({ success: false, message: 'Failed to generate Monthly Excel report.' });
+    }
+  },
+
+  // 12. Get Current Employee's Submitted Requests with SLA status
+  getMyAttendanceRequests: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Authentication required.' });
+      return;
+    }
+
+    try {
+      const requests = await prisma.attendanceRequest.findMany({
+        where: { employeeId: req.user.id },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+
+      const SLA_HOURS = 5;
+      const formatted = requests.map((r) => {
+        let datesArr: string[] = [];
+        try {
+          datesArr = typeof r.dates === 'string' ? JSON.parse(r.dates) : (r.dates || []);
+        } catch {
+          datesArr = [];
+        }
+
+        const createdTime = new Date(r.createdAt).getTime();
+        const slaDeadline = new Date(createdTime + SLA_HOURS * 60 * 60 * 1000);
+        const isPending = r.status === 'WAITING_FOR_APPROVAL' || r.status === 'UNDER_APPROVAL';
+
+        return {
+          ...r,
+          parsedDates: datesArr,
+          slaHours: SLA_HOURS,
+          slaDeadline: slaDeadline.toISOString(),
+          isPending,
+        };
+      });
+
+      res.json({
+        success: true,
+        data: formatted,
+        slaHours: SLA_HOURS,
+      });
+    } catch (err: any) {
+      console.error('[Get My Requests Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to retrieve attendance requests.' });
     }
   },
 };

@@ -202,6 +202,7 @@ model Quotation {
   termsAndConditions  String          @db.Text
   paymentMethod       String          @db.Text
   status              String          @default("DRAFT") // DRAFT, FINAL, SENT, ACCEPTED, REJECTED, EXPIRED
+  pdfName             String?
   notes               String?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt

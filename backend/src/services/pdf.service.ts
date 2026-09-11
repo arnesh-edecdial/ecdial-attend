@@ -6,6 +6,7 @@ export interface PDFQuotationData {
   quotationNumber: string;
   revisionNumber?: number;
   date: string;
+  quotationType?: 'DAIKIN' | 'ECDIAL';
   customerName?: string | null;
   customerAddress?: string | null;
   customerPhone?: string | null;
@@ -25,6 +26,7 @@ export interface PDFQuotationData {
   paymentMethod?: string;
   mainItems: Array<{
     description: string;
+    brand?: string;
     quantity: number;
     unit: string;
     unitPrice: number;
@@ -32,6 +34,7 @@ export interface PDFQuotationData {
   }>;
   lowSideItems: Array<{
     description: string;
+    brand?: string;
     quantity: number;
     unit: string;
     unitPrice: number;
@@ -52,15 +55,26 @@ function getAssetPath(filename: string): string | null {
   const possiblePaths = [
     path.join(__dirname, '../../assets', filename),
     path.join(__dirname, '../assets', filename),
+    path.join(__dirname, '../../assets/brands', filename),
+    path.join(__dirname, '../assets/brands', filename),
     path.join(process.cwd(), 'assets', filename),
     path.join(process.cwd(), 'backend/assets', filename),
+    path.join(process.cwd(), 'backend/assets/brands', filename),
     path.join(
       'C:/Users/arnes/.gemini/antigravity-ide/brain/78cac626-56d1-4691-80a3-c0cd8bcebf5c/.user_uploaded',
-      filename === 'quotation_header.png'
+      filename === 'daikin_quotation_header.png' || filename === 'quotation_header.png'
         ? 'media_1788114894031.png'
-        : filename === 'quotation_terms_payment.png'
+        : filename === 'daikin_quotation_terms_payment.png' || filename === 'quotation_terms_payment.png'
         ? 'media_1788114894051.png'
-        : 'media_1788114894076.png'
+        : filename === 'daikin_quotation_footer.png' || filename === 'quotation_footer.png'
+        ? 'media_1788114894076.png'
+        : filename === 'ecdial_quotation_header.png'
+        ? 'media_1788282241529.png'
+        : filename === 'ecdial_quotation_footer.png'
+        ? 'media_1788282241446.png'
+        : filename === 'ecdial_quotation_terms_payment.png'
+        ? 'media_1788282241614.png'
+        : filename
     ),
   ];
   for (const p of possiblePaths) {
@@ -69,17 +83,42 @@ function getAssetPath(filename: string): string | null {
   return null;
 }
 
+// Helper to detect unique brands in quotation items
+function detectQuotationBrands(items: Array<{ description?: string; brand?: string }>): string[] {
+  const brandOrder = ['MITSUBISHI', 'DAIKIN', 'LG', 'GENERAL', 'GODREJ', 'BLUESTAR', 'ONIDA'];
+  const brandSet = new Set<string>();
+
+  for (const item of items) {
+    const rawBrand = (item.brand || '').trim().toUpperCase();
+    const desc = (item.description || '').toUpperCase();
+
+    if (rawBrand === 'DAIKIN' || desc.includes('DAIKIN')) brandSet.add('DAIKIN');
+    if (rawBrand.includes('MITSUBISHI') || desc.includes('MITSUBISHI')) brandSet.add('MITSUBISHI');
+    if (rawBrand === 'LG' || desc.includes('LG ') || desc.includes('LG-') || desc.includes('(US-Q') || desc.startsWith('LG')) brandSet.add('LG');
+    if (rawBrand.includes('GENERAL') || desc.includes('GENERAL') || desc.includes('O GENERAL') || desc.includes('ASGA')) brandSet.add('GENERAL');
+    if (rawBrand.includes('GODREJ') || desc.includes('GODREJ') || desc.includes('GIC18')) brandSet.add('GODREJ');
+    if (rawBrand.includes('BLUE') || rawBrand.includes('STAR') || rawBrand.includes('BLUSTAR') || desc.includes('BLUE STAR') || desc.includes('BLUESTAR') || desc.includes('BLUSTAR')) brandSet.add('BLUESTAR');
+    if (rawBrand.includes('ONIDA') || desc.includes('ONIDA')) brandSet.add('ONIDA');
+  }
+
+  // Preserve canonical display order matching reference Image 3
+  const detected = brandOrder.filter((b) => brandSet.has(b));
+  return detected.length > 0 ? detected : ['DAIKIN'];
+}
+
 export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
+      const isEcDial = (data.quotationType || 'DAIKIN').toUpperCase() === 'ECDIAL';
+
       // Standard A4 dimensions: 595.28 x 841.89 pt
       const doc = new PDFDocument({
         size: 'A4',
         margin: 0,
         autoFirstPage: true,
         info: {
-          Title: `Quotation_${sanitizePdfText(data.quotationNumber) || 'Offer'}`,
-          Author: 'ECDIAL - Authorized Sales & Service Dealer',
+          Title: `Quotation_${sanitizePdfText(data.customerName) || 'Offer'}`,
+          Author: isEcDial ? 'EC DIAL - Electrical & HVAC Solutions' : 'ECDIAL - Authorized Daikin Dealer',
         },
       });
 
@@ -88,12 +127,16 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       doc.on('end', () => resolve(Buffer.concat(buffers)));
       doc.on('error', (err) => reject(err));
 
-      // Brand Color Palette matching Reference Images
+      // Theme Colors
       const daikinDarkNavy = '#0A1E3F';
-      const daikinDarkBlue = '#004080';
       const daikinBrightBlue = '#0066CC';
+      const ecDialOrange = '#FF5722';
+      const ecDialNavy = '#0A1E3F';
+      
+      const themePrimary = isEcDial ? ecDialNavy : daikinDarkNavy;
+      const themeAccent = isEcDial ? ecDialOrange : daikinBrightBlue;
+
       const ruleGray = '#CBD5E1';
-      const lightBgGray = '#F8FAFC';
       const rowAltBg = '#F9FBFC';
       const textDark = '#0F172A';
       const textMuted = '#475569';
@@ -108,368 +151,533 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       const mainItems = data.mainItems || [];
       const lowSideItems = data.hasLowSide && data.lowSideItems ? data.lowSideItems : [];
 
-      // Asset Paths & Dimensions
-      const headerPath = getAssetPath('quotation_header.png');
-      const footerPath = getAssetPath('quotation_footer.png');
-      const termsPaymentPath = getAssetPath('quotation_terms_payment.png');
+      // Asset Paths
+      const headerFilename = isEcDial ? 'ecdial_quotation_header.png' : 'daikin_quotation_header.png';
+      const footerFilename = isEcDial ? 'ecdial_quotation_footer.png' : 'daikin_quotation_footer.png';
+      const termsPaymentFilename = isEcDial ? 'ecdial_quotation_terms_payment.png' : 'daikin_quotation_terms_payment.png';
+
+      const headerPath = getAssetPath(headerFilename) || getAssetPath(isEcDial ? 'quotation_header.png' : 'daikin_quotation_header.png');
+      const footerPath = getAssetPath(footerFilename) || getAssetPath(isEcDial ? 'quotation_footer.png' : 'daikin_quotation_footer.png');
+      const termsPaymentPath = getAssetPath(termsPaymentFilename) || getAssetPath('quotation_terms_payment.png');
 
       const headerWidth = 595.28;
       const headerHeight = headerWidth * (119 / 637); // ~111.2 pt
       const footerWidth = 595.28;
-      const footerHeight = footerWidth * (106 / 1024); // ~61.6 pt
-      const footerY = 841.89 - footerHeight; // ~780.29 pt
+      const footerHeight = isEcDial ? (footerWidth * (120 / 1024)) : (footerWidth * (106 / 1024)); // ~70 pt
+      const footerY = 841.89 - footerHeight;
 
-      const termsWidth = contentWidth;
-      const termsHeight = termsWidth * (176 / 572); // ~163.4 pt
+      // Extract brands for Authorized Dealer Strip
+      const allItems = [...mainItems, ...lowSideItems];
+      const activeBrands = detectQuotationBrands(allItems);
 
-      // Helper to format date as DD-MM-YYYY
-      const formatDisplayDate = (dateStr?: string): string => {
-        if (!dateStr) return '18-05-2026';
-        const parts = dateStr.split('-');
-        if (parts.length === 3 && parts[0].length === 4) {
-          return `${parts[2]}-${parts[1]}-${parts[0]}`;
-        }
-        return dateStr;
+      // Brand Logo Filenames
+      const brandLogoFiles: Record<string, string> = {
+        MITSUBISHI: 'mitsubishi.png',
+        DAIKIN: 'daikin.png',
+        LG: 'lg.png',
+        GENERAL: 'general.png',
+        GODREJ: 'godrej.png',
+        BLUESTAR: 'bluestar.png',
+        ONIDA: 'onida.png',
       };
 
-      const displayDate = formatDisplayDate(sanitizePdfText(data.date));
-
-      // Space available between Customer Summary Card and Terms block
-      const termsY1Page = footerY - termsHeight - 8; // ~608.89 pt
-
-      // If Main Units >= 4 or total items > 7, use 2 pages. Otherwise, use 1 page.
-      const isTwoPages = mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 7);
+      // Space Management:
+      // 1 to 3 Main Units + up to 7 Low Side items comfortably fit on 1 Page!
+      // Only trigger 2-page mode if mainItems >= 4 OR (mainItems.length + lowSideItems.length > 10)
+      const isTwoPages = mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 10);
       const totalPages = isTwoPages ? 2 : 1;
 
-      // Helper to draw the Top Header on any page
+      const formattedDate = (() => {
+        const raw = sanitizePdfText(data.date);
+        if (!raw) return '18-05-2026';
+        if (raw.includes('-') && raw.split('-')[0].length === 4) {
+          const [yyyy, mm, dd] = raw.split('-');
+          return `${dd}-${mm}-${yyyy}`;
+        }
+        return raw;
+      })();
+
+      // Function to draw Top Header
       const drawHeaderBanner = () => {
         if (headerPath) {
-          doc.image(headerPath, 0, 0, { width: headerWidth });
+          try {
+            doc.image(headerPath, 0, 0, { width: headerWidth, height: headerHeight });
+          } catch {
+            drawFallbackHeader();
+          }
         } else {
-          doc.rect(0, 0, headerWidth, headerHeight).fill('#F8FAFC');
-          doc.fillColor(daikinBrightBlue).fontSize(22).font('Helvetica-Bold').text('DAIKIN', 34, 28);
-          doc.fillColor(daikinDarkNavy).fontSize(9).font('Helvetica-Bold').text('AIR CONDITIONERS', 34, 52);
+          drawFallbackHeader();
         }
       };
 
-      // Helper to draw Footer Banner on any page
+      const drawFallbackHeader = () => {
+        doc.rect(0, 0, headerWidth, headerHeight).fill('#FFFFFF');
+        doc.rect(0, 0, headerWidth, 6).fill(themeAccent);
+        doc.fillColor(themePrimary).fontSize(20).font('Helvetica-Bold')
+          .text(isEcDial ? 'Ec Dial' : 'DAIKIN AIR CONDITIONERS', leftMargin, 20);
+        doc.fillColor(themeAccent).fontSize(10).font('Helvetica-Bold')
+          .text(isEcDial ? 'Electrical & HVAC Solutions' : 'Authorized Sales & Service Dealer', leftMargin, 46);
+      };
+
+      // Function to draw Footer Banner
       const drawFooterBanner = () => {
         if (footerPath) {
-          doc.image(footerPath, 0, footerY, { width: footerWidth });
+          try {
+            doc.image(footerPath, 0, footerY, { width: footerWidth, height: footerHeight });
+          } catch {
+            drawFallbackFooter();
+          }
         } else {
-          doc.rect(0, 841.89 - 30, headerWidth, 30).fill(daikinDarkNavy);
-          doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica')
-            .text('Thanking you and assure our best service always. • ECDIAL Coimbatore', leftMargin, 841.89 - 20);
+          drawFallbackFooter();
         }
       };
 
-      // =========================================================================
-      // 2. RENDER PAGE 1 TOP SECTION
-      // =========================================================================
+      const drawFallbackFooter = () => {
+        doc.rect(0, footerY, footerWidth, footerHeight).fill(themePrimary);
+        doc.fillColor('#FFFFFF').fontSize(10).font('Helvetica-Oblique')
+          .text(isEcDial ? 'Thank you for your trust in Ec Dial.' : 'Thank you for choosing Daikin & ECDIAL.', 0, footerY + 22, { width: footerWidth, align: 'center' });
+      };
+
+      // Function to draw Prominent Authorized Dealer Brand Logos Strip (Matching Image 3)
+      const drawAuthorizedBrandLogos = (startY: number): number => {
+        const brandHeading = 'AUTHORIZED SALES & SERVICE DEALER';
+        
+        doc.fillColor(themePrimary).fontSize(8).font('Helvetica-Bold');
+        const headingWidth = doc.widthOfString(brandHeading);
+        const headingX = leftMargin + (contentWidth - headingWidth) / 2;
+        
+        // Draw left rule, heading, right rule
+        const ruleLeftEnd = headingX - 10;
+        const ruleRightStart = headingX + headingWidth + 10;
+        
+        doc.moveTo(leftMargin + 10, startY + 4).lineTo(ruleLeftEnd, startY + 4).lineWidth(0.6).strokeColor(ruleGray).stroke();
+        doc.text(brandHeading, headingX, startY);
+        doc.moveTo(ruleRightStart, startY + 4).lineTo(rightMargin - 10, startY + 4).lineWidth(0.6).strokeColor(ruleGray).stroke();
+
+        // Draw Prominent Brand Logos with Vertical Separator Lines '|'
+        const logosY = startY + 12;
+        const totalCount = activeBrands.length;
+        const logoTargetHeight = 26;
+
+        if (totalCount === 1) {
+          // Single logo placed cleanly in center without distortion (prominent size: width ~120, height ~28)
+          const brandKey = activeBrands[0];
+          const logoFilename = brandLogoFiles[brandKey] || 'daikin.png';
+          const logoPath = getAssetPath(logoFilename);
+          const logoTargetWidth = 120;
+          const logoX = leftMargin + (contentWidth - logoTargetWidth) / 2;
+
+          if (logoPath) {
+            try {
+              doc.image(logoPath, logoX, logosY, { fit: [logoTargetWidth, logoTargetHeight], align: 'center', valign: 'center' });
+            } catch {
+              doc.fillColor(themePrimary).fontSize(10).font('Helvetica-Bold').text(brandKey, logoX, logosY + 6, { width: logoTargetWidth, align: 'center' });
+            }
+          }
+          return logosY + logoTargetHeight + 4;
+        } else {
+          // Multiple logos centered side-by-side with crisp vertical dividers '|'
+          const logoTargetWidth = Math.min(88, Math.floor((contentWidth - (totalCount - 1) * 20) / totalCount));
+          const gap = 20;
+          const totalW = totalCount * logoTargetWidth + (totalCount - 1) * gap;
+          let currentX = leftMargin + (contentWidth - totalW) / 2;
+
+          for (let i = 0; i < totalCount; i++) {
+            const brandKey = activeBrands[i];
+            const logoFilename = brandLogoFiles[brandKey] || 'daikin.png';
+            const logoPath = getAssetPath(logoFilename);
+
+            if (logoPath) {
+              try {
+                doc.image(logoPath, currentX, logosY, { fit: [logoTargetWidth, logoTargetHeight], align: 'center', valign: 'center' });
+              } catch {
+                doc.fillColor(themePrimary).fontSize(9).font('Helvetica-Bold').text(brandKey, currentX, logosY + 6, { width: logoTargetWidth, align: 'center' });
+              }
+            }
+
+            // Draw vertical separator line between logos (Image 3 style)
+            if (i < totalCount - 1) {
+              const dividerX = currentX + logoTargetWidth + gap / 2;
+              doc.moveTo(dividerX, logosY + 2).lineTo(dividerX, logosY + logoTargetHeight - 2).lineWidth(0.6).strokeColor(ruleGray).stroke();
+            }
+
+            currentX += logoTargetWidth + gap;
+          }
+
+          return logosY + logoTargetHeight + 4;
+        }
+      };
+
+      // ==========================================
+      // PAGE 1 RENDERING
+      // ==========================================
       drawHeaderBanner();
 
-      let y = headerHeight + 8;
+      // Top Meta Box & Customer Area
+      const clientBoxY = headerHeight + 8;
+      const clientBoxWidth = 265;
+      const quoteCardWidth = 210;
+      const quoteCardX = rightMargin - quoteCardWidth;
 
-      // Customer Info (Left) & Quotation Commercial Summary Box (Right)
-      const cleanCustomerName = sanitizePdfText(data.customerName);
-      const cleanCustomerAddress = sanitizePdfText(data.customerAddress);
-      const cleanCustomerPhone = sanitizePdfText(data.customerPhone);
-      const hasCustomer = cleanCustomerName.length > 0;
+      // Customer Info (Left)
+      doc.fillColor(themePrimary).fontSize(8.5).font('Helvetica').text('To,', leftMargin, clientBoxY);
+      const custName = sanitizePdfText(data.customerName) || 'Valued Customer';
+      doc.fillColor(themePrimary).fontSize(11).font('Helvetica-Bold')
+        .text(custName, leftMargin, clientBoxY + 12, { width: clientBoxWidth });
 
-      const rightCardWidth = 205;
-      const rightCardX = rightMargin - rightCardWidth;
-      const cardHeight = 114;
-      const cardRowH = 18;
-
-      // Left Customer Box
-      if (hasCustomer) {
-        doc.fillColor(daikinBrightBlue).fontSize(11).font('Helvetica-Bold')
-          .text('To,', leftMargin, y + 2);
-        doc.fillColor(textDark).fontSize(13.5).font('Helvetica-Bold')
-          .text(cleanCustomerName, leftMargin, y + 18, { width: 280 });
-        
-        let custY = y + 36;
-        if (cleanCustomerAddress.length > 0) {
-          doc.fillColor(textMuted).fontSize(9.5).font('Helvetica')
-            .text(cleanCustomerAddress, leftMargin, custY, { width: 280 });
-          custY += doc.heightOfString(cleanCustomerAddress, { width: 280 }) + 4;
-        }
-        if (cleanCustomerPhone.length > 0) {
-          doc.fillColor(textMuted).fontSize(9.5).font('Helvetica')
-            .text(`Mobile: ${cleanCustomerPhone}`, leftMargin, custY, { width: 280 });
-        }
+      let custInfoY = clientBoxY + 28;
+      if (data.customerAddress) {
+        const custAddr = sanitizePdfText(data.customerAddress);
+        doc.fillColor(textMuted).fontSize(8).font('Helvetica')
+          .text(custAddr, leftMargin, custInfoY, { width: clientBoxWidth });
+        custInfoY += doc.heightOfString(custAddr, { width: clientBoxWidth }) + 3;
+      }
+      if (data.customerPhone) {
+        doc.fillColor(textMuted).fontSize(8).font('Helvetica')
+          .text(`Mobile: ${sanitizePdfText(data.customerPhone)}`, leftMargin, custInfoY, { width: clientBoxWidth });
       }
 
-      // Right: Quotation Commercial Summary Box (Crisp High-Contrast Grid)
-      doc.roundedRect(rightCardX, y, rightCardWidth, cardHeight, 5)
-        .lineWidth(0.8).strokeColor('#CBD5E1').fillAndStroke('#FFFFFF', '#CBD5E1');
+      // Quotation Summary Card (Right) - NO quotation number in header as requested
+      const quoteCardY = clientBoxY;
+      const cardRowH = 15;
+      const summaryHeaderH = 18;
+      const cardTotalRows = 4; // Date/Page, Sub Total, CGST, SGST
+      const quoteCardHeight = summaryHeaderH + (cardTotalRows * cardRowH) + 20; // 18 + 60 + 20 = 98
 
-      // Top Navy Header: QUOTATION
-      doc.roundedRect(rightCardX, y, rightCardWidth, 23, 5).fill(daikinDarkNavy);
-      doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold')
-        .text('QUOTATION', rightCardX, y + 6.5, { width: rightCardWidth, align: 'center' });
+      // Main Container with rounded border
+      doc.roundedRect(quoteCardX, quoteCardY, quoteCardWidth, quoteCardHeight, 4)
+        .lineWidth(1).strokeColor(ruleGray).fillAndStroke('#FFFFFF', ruleGray);
 
-      // Row 1: Date (Clean date only, quotation number removed as requested)
-      const r1Y = y + 23;
-      doc.rect(rightCardX, r1Y, rightCardWidth, cardRowH).fill('#F8FAFC');
-      doc.rect(rightCardX, r1Y, rightCardWidth, 0.6).fill('#E2E8F0');
-      doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
-        .text(`Date: ${displayDate}`, rightCardX, r1Y + 4.5, { width: rightCardWidth, align: 'center' });
+      // Card Header (Clean Centered Title - NO Quotation Number)
+      doc.roundedRect(quoteCardX, quoteCardY, quoteCardWidth, summaryHeaderH, 3)
+        .fill(themePrimary);
+      
+      doc.fillColor('#FFFFFF').fontSize(9.5).font('Helvetica-Bold')
+        .text('QUOTATION', quoteCardX, quoteCardY + 4.5, { width: quoteCardWidth, align: 'center' });
+
+      // Rows
+      let curRowY = quoteCardY + summaryHeaderH;
+
+      // Row 1: Date & Page indicator
+      doc.rect(quoteCardX, curRowY, quoteCardWidth, cardRowH).fill('#F8FAFC');
+      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
+        .text(`Date: ${formattedDate}`, quoteCardX + 8, curRowY + 3.5);
+      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
+        .text(`Page 1 of ${totalPages}`, quoteCardX + 110, curRowY + 3.5, { width: quoteCardWidth - 118, align: 'right' });
+      doc.moveTo(quoteCardX, curRowY + cardRowH).lineTo(quoteCardX + quoteCardWidth, curRowY + cardRowH).lineWidth(0.5).strokeColor('#E2E8F0').stroke();
+      curRowY += cardRowH;
 
       // Row 2: Sub Total
-      const r2Y = r1Y + cardRowH;
-      doc.rect(rightCardX, r2Y, rightCardWidth, 0.6).fill('#E2E8F0');
+      doc.fillColor(textMuted).fontSize(8).font('Helvetica')
+        .text(isTwoPages ? 'Sub Total (A)' : 'Sub Total', quoteCardX + 8, curRowY + 3.5);
       doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
-        .text(isTwoPages ? 'Sub Total (A)' : 'Sub Total', rightCardX + 10, r2Y + 4.5);
+        .text(`Rs. ${data.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, quoteCardX + 80, curRowY + 3, { width: quoteCardWidth - 88, align: 'right' });
+      doc.moveTo(quoteCardX, curRowY + cardRowH).lineTo(quoteCardX + quoteCardWidth, curRowY + cardRowH).lineWidth(0.5).strokeColor('#E2E8F0').stroke();
+      curRowY += cardRowH;
+
+      // Row 3: CGST 9%
+      doc.fillColor(textDark).fontSize(8).font('Helvetica-Bold')
+        .text(`CGST ${data.cgstPercent}%`, quoteCardX + 8, curRowY + 3.5);
       doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
-        .text(`Rs. ${Number(data.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r2Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
+        .text(`Rs. ${data.cgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, quoteCardX + 80, curRowY + 3, { width: quoteCardWidth - 88, align: 'right' });
+      doc.moveTo(quoteCardX, curRowY + cardRowH).lineTo(quoteCardX + quoteCardWidth, curRowY + cardRowH).lineWidth(0.5).strokeColor('#E2E8F0').stroke();
+      curRowY += cardRowH;
 
-      // Row 3: CGST (Crisp dark text)
-      const r3Y = r2Y + cardRowH;
-      doc.rect(rightCardX, r3Y, rightCardWidth, 0.6).fill('#E2E8F0');
-      doc.fillColor('#334155').fontSize(8.5).font('Helvetica')
-        .text(`CGST ${data.cgstPercent || 9}%`, rightCardX + 10, r3Y + 4.5);
+      // Row 4: SGST 9%
+      doc.fillColor(textDark).fontSize(8).font('Helvetica-Bold')
+        .text(`SGST ${data.sgstPercent}%`, quoteCardX + 8, curRowY + 3.5);
       doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
-        .text(`Rs. ${Number(data.cgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r3Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
+        .text(`Rs. ${data.sgstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, quoteCardX + 80, curRowY + 3, { width: quoteCardWidth - 88, align: 'right' });
+      curRowY += cardRowH;
 
-      // Row 4: SGST (Crisp dark text)
-      const r4Y = r3Y + cardRowH;
-      doc.rect(rightCardX, r4Y, rightCardWidth, 0.6).fill('#E2E8F0');
-      doc.fillColor('#334155').fontSize(8.5).font('Helvetica')
-        .text(`SGST ${data.sgstPercent || 9}%`, rightCardX + 10, r4Y + 4.5);
-      doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
-        .text(`Rs. ${Number(data.sgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 80, r4Y + 4.5, { width: rightCardWidth - 90, align: 'right' });
+      // Row 5: Total Banner (Navy)
+      doc.rect(quoteCardX, curRowY, quoteCardWidth, 20).fill(themePrimary);
+      doc.fillColor('#FFFFFF').fontSize(9).font('Helvetica-Bold')
+        .text(isTwoPages ? 'TOTAL (A)' : 'TOTAL', quoteCardX + 8, curRowY + 5.5);
+      doc.fillColor('#FFFFFF').fontSize(10).font('Helvetica-Bold')
+        .text(`Rs. ${data.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, quoteCardX + 60, curRowY + 5, { width: quoteCardWidth - 68, align: 'right' });
 
-      // Row 5: Total Banner
-      const r5Y = r4Y + cardRowH;
-      doc.roundedRect(rightCardX, r5Y, rightCardWidth, 24, 5).fill(daikinDarkNavy);
-      doc.fillColor('#FFFFFF').fontSize(9.5).font('Helvetica-Bold')
-        .text(isTwoPages ? 'TOTAL (A)' : 'TOTAL', rightCardX + 10, r5Y + 6.5);
-      doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold')
-        .text(`Rs. ${Number(data.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, rightCardX + 75, r5Y + 6, { width: rightCardWidth - 85, align: 'right' });
+      // Table Geometry
+      let y = quoteCardY + quoteCardHeight + 8;
 
-      // Vertical divider in middle of summary box
-      doc.rect(rightCardX + 90, r1Y, 0.6, cardRowH * 4).fill('#E2E8F0');
-
-      y += cardHeight + 10;
-
-      // =========================================================================
-      // 3. TABLE COLUMN LAYOUT & DYNAMIC PROPORTIONAL HEIGHT CALCULATOR
-      // =========================================================================
-      // Column Coordinates (Total: 531.28 pt)
-      const colX = {
-        sl: leftMargin, // 32
+      const cols = {
+        sl: leftMargin,
         slW: 34,
-        desc: leftMargin + 34, // 66
-        descW: 248,
-        qty: leftMargin + 282, // 314
-        qtyW: 38,
-        unit: leftMargin + 320, // 352
-        unitW: 38,
-        price: leftMargin + 358, // 390
+        desc: leftMargin + 34,
+        descW: 242,
+        qty: leftMargin + 276,
+        qtyW: 42,
+        unit: leftMargin + 318,
+        unitW: 40,
+        price: leftMargin + 358,
         priceW: 84,
-        amount: leftMargin + 442, // 474
+        amount: leftMargin + 442,
         amountW: 89.28,
       };
 
-      // Calculate Auto-Flex row heights for 1-Page mode to perfectly fill the space
-      let mainUnitRowHeight = 36;
-      let lowSideRowHeight = 28;
-      let sectionGap = 12;
+      // Draw Section Header Pill
+      const drawSectionPill = (badgeLetter: string, title: string, itemCount: number) => {
+        doc.roundedRect(leftMargin, y, 22, 17, 4).fill(themePrimary);
+        doc.fillColor('#FFFFFF').fontSize(9).font('Helvetica-Bold')
+          .text(badgeLetter, leftMargin, y + 3.5, { width: 22, align: 'center' });
 
-      if (!isTwoPages) {
-        const availableSpaceForTables = termsY1Page - y - 10;
-        const fixedHeadersHeight = 44 + (lowSideItems.length > 0 ? 58 : 0);
-        const freeSpaceForRows = Math.max(120, availableSpaceForTables - fixedHeadersHeight);
+        doc.fillColor(themePrimary).fontSize(9.5).font('Helvetica-Bold')
+          .text(title, leftMargin + 28, y + 3.5);
         
-        const totalWeightedItems = 1.3 * (mainItems.length || 1) + 1.0 * (lowSideItems.length || 0);
-        const baseUnit = freeSpaceForRows / totalWeightedItems;
+        const countText = `( ${itemCount} ITEMS )`;
+        const titleW = doc.widthOfString(title);
+        doc.fillColor(orangeBadge).fontSize(8).font('Helvetica-Bold')
+          .text(countText, leftMargin + 30 + titleW, y + 4.5);
 
-        mainUnitRowHeight = Math.max(30, Math.min(48, Math.floor(baseUnit * 1.3)));
-        lowSideRowHeight = Math.max(24, Math.min(36, Math.floor(baseUnit * 1.0)));
-        sectionGap = Math.max(10, Math.min(20, Math.floor((availableSpaceForTables - (fixedHeadersHeight + mainItems.length * mainUnitRowHeight + lowSideItems.length * lowSideRowHeight)) / 2)));
-      }
-
-      const drawSectionTable = (
-        badgeLetter: string,
-        titleText: string,
-        itemCountText: string | null,
-        items: Array<{ description: string; quantity: number; unit: string; unitPrice: number; amount: number }>,
-        subtotalLabel: string | null,
-        subtotalVal: number | null,
-        rowHeight: number
-      ) => {
-        if (!items || items.length === 0) return;
-
-        // 1. Section Header Badge & Title
-        doc.roundedRect(leftMargin, y, 22, 20, 4).fill(daikinDarkNavy);
-        doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold')
-          .text(badgeLetter, leftMargin + 7, y + 4.5);
-
-        doc.fillColor(daikinDarkNavy).fontSize(11).font('Helvetica-Bold')
-          .text(titleText, leftMargin + 30, y + 4.5);
-
-        let titleW = doc.widthOfString(titleText);
-        if (itemCountText) {
-          doc.fillColor(orangeBadge).fontSize(10).font('Helvetica-Bold')
-            .text(itemCountText, leftMargin + 34 + titleW, y + 4.5);
-          titleW += doc.widthOfString(itemCountText) + 8;
-        }
-
-        // Thin Rule Line extending across remaining width
-        const ruleStartX = leftMargin + 38 + titleW;
-        if (ruleStartX < rightMargin) {
-          doc.rect(ruleStartX, y + 12, rightMargin - ruleStartX, 0.8).fill(ruleGray);
-        }
-
-        y += 24;
-
-        // 2. Table Column Header
-        const headerH = 22;
-        doc.roundedRect(leftMargin, y, contentWidth, headerH, 4).fill(daikinDarkNavy);
-        doc.fillColor('#FFFFFF').fontSize(8.5).font('Helvetica-Bold');
-        doc.text('SL.No', colX.sl, y + 6.5, { width: colX.slW, align: 'center' });
-        doc.text('Description', colX.desc + 6, y + 6.5, { width: colX.descW - 6 });
-        doc.text('Qty', colX.qty, y + 6.5, { width: colX.qtyW, align: 'center' });
-        doc.text('Unit', colX.unit, y + 6.5, { width: colX.unitW, align: 'center' });
-        doc.text('Price (Rs.)', colX.price, y + 6.5, { width: colX.priceW - 4, align: 'right' });
-        doc.text('Amount (Rs.)', colX.amount, y + 6.5, { width: colX.amountW - 6, align: 'right' });
-        y += headerH;
-
-        // 3. Table Rows with Generous Spacing & 2-Line Support
-        items.forEach((item, index) => {
-          const rowBg = index % 2 === 0 ? '#FFFFFF' : rowAltBg;
-          
-          const descText = sanitizePdfText(item.description);
-          doc.fontSize(8.5).font('Helvetica-Bold');
-          const textH = doc.heightOfString(descText, { width: colX.descW - 10 });
-          const actualRowHeight = Math.max(rowHeight, textH + 12);
-
-          doc.rect(leftMargin, y, contentWidth, actualRowHeight).lineWidth(0.5).strokeColor(ruleGray).fillAndStroke(rowBg, ruleGray);
-
-          const verticalTextY = y + (actualRowHeight - 9) / 2;
-
-          // SL.No
-          doc.fillColor(textMuted).fontSize(8.5).font('Helvetica')
-            .text(String(index + 1), colX.sl, verticalTextY, { width: colX.slW, align: 'center' });
-
-          // Description (supports 2-line wrap)
-          const descVerticalY = y + Math.max(5, (actualRowHeight - textH) / 2);
-          doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
-            .text(descText, colX.desc + 6, descVerticalY, { width: colX.descW - 10 });
-
-          // Qty
-          doc.fillColor(textDark).font('Helvetica')
-            .text(String(item.quantity || 1), colX.qty, verticalTextY, { width: colX.qtyW, align: 'center' });
-
-          // Unit
-          doc.text(sanitizePdfText(item.unit) || 'Nos', colX.unit, verticalTextY, { width: colX.unitW, align: 'center' });
-
-          // Price
-          doc.text(Number(item.unitPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }), colX.price, verticalTextY, { width: colX.priceW - 4, align: 'right' });
-
-          // Amount
-          doc.font('Helvetica-Bold')
-            .text(Number(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }), colX.amount, verticalTextY, { width: colX.amountW - 6, align: 'right' });
-
-          y += actualRowHeight;
-        });
-
-        // 4. Subtotal Row Bar (Optional when explicit subtotal provided)
-        if (subtotalLabel && subtotalVal !== null) {
-          const subtotalH = 22;
-          doc.roundedRect(leftMargin, y, contentWidth, subtotalH, 3).lineWidth(0.6).strokeColor(ruleGray).fillAndStroke('#F1F5F9', ruleGray);
-          doc.fillColor(textDark).fontSize(9.5).font('Helvetica-Bold')
-            .text(subtotalLabel, leftMargin + 10, y + 6);
-          doc.fillColor(textDark).fontSize(10).font('Helvetica-Bold')
-            .text(`Rs. ${Number(subtotalVal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, colX.amount - 80, y + 5.5, { width: colX.amountW + 74, align: 'right' });
-
-          y += subtotalH;
-        }
-
-        y += sectionGap;
+        y += 20;
       };
 
-      // =========================================================================
-      // 4. EXECUTE PAGE RENDERING (SINGLE-PAGE vs TWO-PAGES)
-      // =========================================================================
-      if (!isTwoPages) {
-        // --- SINGLE-PAGE MODE ---
-        drawSectionTable('A', 'MAIN UNIT', null, mainItems, null, null, mainUnitRowHeight);
+      // Draw Table Header Bar
+      const drawTableHeader = (priceLabel = 'Price (Rs.)') => {
+        doc.rect(leftMargin, y, contentWidth, 16).fill(themePrimary);
+        doc.fillColor('#FFFFFF').fontSize(7.5).font('Helvetica-Bold');
+        doc.text('SL.No', cols.sl, y + 4, { width: cols.slW, align: 'center' });
+        doc.text('Description', cols.desc + 6, y + 4, { width: cols.descW - 6, align: 'left' });
+        doc.text('Qty', cols.qty, y + 4, { width: cols.qtyW, align: 'center' });
+        doc.text('Unit', cols.unit, y + 4, { width: cols.unitW, align: 'center' });
+        doc.text(priceLabel, cols.price, y + 4, { width: cols.priceW, align: 'right' });
+        doc.text('Amount (Rs.)', cols.amount, y + 4, { width: cols.amountW - 6, align: 'right' });
+        y += 16;
+      };
 
-        if (lowSideItems.length > 0) {
-          drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', null, lowSideItems, null, null, lowSideRowHeight);
+      // In 1-Page mode, set safe row heights to guarantee ZERO overlap with Terms & Conditions
+      const mainUnitRowHeight1P = mainItems.length === 1 ? 25 : 22;
+      const lowSideRowHeight1P = lowSideItems.length <= 4 ? 20 : (lowSideItems.length <= 6 ? 17 : 15.5);
+      const sectionGap1P = 6;
+
+      // SECTION A: MAIN UNITS TABLE
+      drawSectionPill('A', 'MAIN UNITS', mainItems.length);
+      drawTableHeader('Price (Rs.)');
+
+      const mainRowH = isTwoPages ? 30 : mainUnitRowHeight1P;
+
+      // Render Section A Rows
+      mainItems.forEach((item, idx) => {
+        const isAlt = idx % 2 === 1;
+        if (isAlt) {
+          doc.rect(leftMargin, y, contentWidth, mainRowH).fill(rowAltBg);
         }
 
+        doc.rect(leftMargin, y, contentWidth, mainRowH).lineWidth(0.5).strokeColor(ruleGray).stroke();
+        doc.moveTo(cols.desc, y).lineTo(cols.desc, y + mainRowH).stroke();
+        doc.moveTo(cols.qty, y).lineTo(cols.qty, y + mainRowH).stroke();
+        doc.moveTo(cols.unit, y).lineTo(cols.unit, y + mainRowH).stroke();
+        doc.moveTo(cols.price, y).lineTo(cols.price, y + mainRowH).stroke();
+        doc.moveTo(cols.amount, y).lineTo(cols.amount, y + mainRowH).stroke();
+
+        const vCenter = y + (mainRowH - 9) / 2;
+
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
+          .text(String(idx + 1), cols.sl, vCenter, { width: cols.slW, align: 'center' });
+
+        const descStr = sanitizePdfText(item.description);
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica-Bold')
+          .text(descStr, cols.desc + 6, y + 4, { width: cols.descW - 12, lineGap: 1 });
+
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
+          .text(String(item.quantity), cols.qty, vCenter, { width: cols.qtyW, align: 'center' });
+
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
+          .text(sanitizePdfText(item.unit) || 'Nos', cols.unit, vCenter, { width: cols.unitW, align: 'center' });
+
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
+          .text(item.unitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.price, vCenter, { width: cols.priceW, align: 'right' });
+
+        doc.fillColor(textDark).fontSize(7.5).font('Helvetica-Bold')
+          .text(item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.amount, vCenter, { width: cols.amountW - 6, align: 'right' });
+
+        y += mainRowH;
+      });
+
+      // Total (A) Subtotal Row
+      doc.rect(leftMargin, y, contentWidth, 16).fill('#FFFFFF');
+      doc.rect(leftMargin, y, contentWidth, 16).lineWidth(0.8).strokeColor(ruleGray).stroke();
+      doc.fillColor(themePrimary).fontSize(8).font('Helvetica-Bold')
+        .text('Total (A)', leftMargin + 8, y + 4);
+      doc.fillColor(themePrimary).fontSize(8.5).font('Helvetica-Bold')
+        .text(`Rs. ${data.mainUnitTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, cols.amount, y + 3.5, { width: cols.amountW - 6, align: 'right' });
+      y += 16;
+
+      // ==========================================
+      // SINGLE PAGE MODE vs TWO PAGE MODE
+      // ==========================================
+      if (!isTwoPages) {
+        // --- 1-PAGE MODE (Fits 1 to 3 Main Units + Low-side items perfectly) ---
+        if (lowSideItems.length > 0) {
+          y += sectionGap1P;
+          drawSectionPill('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideItems.length);
+          drawTableHeader('Price (Rs.)');
+
+          lowSideItems.forEach((item, idx) => {
+            const isAlt = idx % 2 === 1;
+            if (isAlt) doc.rect(leftMargin, y, contentWidth, lowSideRowHeight1P).fill(rowAltBg);
+            doc.rect(leftMargin, y, contentWidth, lowSideRowHeight1P).lineWidth(0.5).strokeColor(ruleGray).stroke();
+            doc.moveTo(cols.desc, y).lineTo(cols.desc, y + lowSideRowHeight1P).stroke();
+            doc.moveTo(cols.qty, y).lineTo(cols.qty, y + lowSideRowHeight1P).stroke();
+            doc.moveTo(cols.unit, y).lineTo(cols.unit, y + lowSideRowHeight1P).stroke();
+            doc.moveTo(cols.price, y).lineTo(cols.price, y + lowSideRowHeight1P).stroke();
+            doc.moveTo(cols.amount, y).lineTo(cols.amount, y + lowSideRowHeight1P).stroke();
+
+            const vCenter = y + (lowSideRowHeight1P - 8) / 2;
+
+            doc.fillColor(textDark).fontSize(7).font('Helvetica').text(String(idx + 1), cols.sl, vCenter, { width: cols.slW, align: 'center' });
+            doc.fillColor(textDark).fontSize(7).font('Helvetica').text(sanitizePdfText(item.description), cols.desc + 6, y + 3.5, { width: cols.descW - 12 });
+            doc.fillColor(textDark).fontSize(7).font('Helvetica').text(String(item.quantity), cols.qty, vCenter, { width: cols.qtyW, align: 'center' });
+            doc.fillColor(textDark).fontSize(7).font('Helvetica').text(sanitizePdfText(item.unit) || 'Nos', cols.unit, vCenter, { width: cols.unitW, align: 'center' });
+            doc.fillColor(textDark).fontSize(7).font('Helvetica').text(item.unitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.price, vCenter, { width: cols.priceW, align: 'right' });
+            doc.fillColor(textDark).fontSize(7).font('Helvetica-Bold').text(item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.amount, vCenter, { width: cols.amountW - 6, align: 'right' });
+            y += lowSideRowHeight1P;
+          });
+
+          // Note: Total (B) has been removed as requested!
+        }
+
+        // Space Budget for Bottom Elements
+        const dealerStripHeight = isEcDial ? 42 : 0;
+        const dealerStartY = footerY - dealerStripHeight;
+
+        // Dynamic Space Calculation for Terms & Conditions (GUARANTEED NO OVERLAP!)
+        const availableHeightForTerms = dealerStartY - y - 10;
+        const naturalRatio = isEcDial ? (421 / 1024) : (176 / 572);
+        const naturalTermsHeight = contentWidth * naturalRatio;
+
+        // Fit within available height while preserving 100% natural aspect ratio
+        const fitTermsHeight = Math.min(naturalTermsHeight, Math.max(100, availableHeightForTerms - 6));
+        const fitTermsWidth = fitTermsHeight / naturalRatio;
+        const actualTermsWidth = Math.min(contentWidth, fitTermsWidth);
+        const actualTermsHeight = actualTermsWidth * naturalRatio;
+
+        const termsX = leftMargin + (contentWidth - actualTermsWidth) / 2;
+        const termsY = y + 6 + (availableHeightForTerms - actualTermsHeight) / 2;
+
         if (termsPaymentPath) {
-          doc.image(termsPaymentPath, leftMargin, termsY1Page, { width: termsWidth });
+          try {
+            doc.image(termsPaymentPath, termsX, termsY, { width: actualTermsWidth, height: actualTermsHeight });
+          } catch {
+            doc.roundedRect(termsX, termsY, actualTermsWidth, actualTermsHeight, 4).fillAndStroke('#F8FAFC', ruleGray);
+          }
+        }
+        
+        // Prominent Authorized Brand Logos Strip on Ec Dial Quotes (Directly before footer)
+        if (isEcDial) {
+          drawAuthorizedBrandLogos(dealerStartY);
         }
 
         drawFooterBanner();
       } else {
-        // --- TWO-PAGE MODE (Image 2 & 3 Reference Style) ---
-        // PAGE 1: Section A (Main Units)
-        const mainSubtotal = data.mainUnitTotal || mainItems.reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
-        const countBadgeText = `( ${mainItems.length} ITEMS )`;
-        
-        drawSectionTable('A', 'MAIN UNITS', countBadgeText, mainItems, null, null, 36);
+        // --- TWO-PAGE MODE (For 4+ Main Units OR >10 items) ---
+        const noteBoxY = footerY - 40;
+        const noteBoxWidth = contentWidth;
+        const noteBoxHeight = 30;
 
-        // Page 1 Bottom: Note box & Continued Link
-        const noteBoxY = 735;
-        const noteBoxHeight = 32;
-        const noteBoxWidth = 320;
-
-        // Note Box
         doc.roundedRect(leftMargin, noteBoxY, noteBoxWidth, noteBoxHeight, 4)
           .lineWidth(0.8).strokeColor(orangeBorder).fillAndStroke(orangeBg, orangeBorder);
         
         doc.fillColor(orangeBadge).fontSize(8).font('Helvetica-Bold')
           .text('NOTE:', leftMargin + 8, noteBoxY + 6);
         doc.fillColor(textDark).fontSize(7.5).font('Helvetica')
-          .text('Low side / additional materials (If added).\nTerms & Conditions, Payment Method & Other details on next page.', leftMargin + 40, noteBoxY + 6, { width: noteBoxWidth - 48 });
+          .text('Low side materials, Terms & Conditions & Payment Details continued on next page.', leftMargin + 42, noteBoxY + 6, { width: noteBoxWidth - 210 });
 
-        // Continued on next page Link / Icon on Right
-        doc.fillColor(daikinBrightBlue).fontSize(10).font('Helvetica-Bold')
-          .text('📄  Continued on next page →', rightMargin - 180, noteBoxY + 10, { width: 180, align: 'right' });
+        // Clean Continued on next page Link (NO garbled emojis/characters)
+        doc.fillColor(themeAccent).fontSize(9).font('Helvetica-Bold')
+          .text('Continued on next page ->', rightMargin - 165, noteBoxY + 10, { width: 155, align: 'right' });
 
-        // Footer on Page 1
         drawFooterBanner();
 
-        // PAGE 2
+        // ==========================================
+        // PAGE 2 RENDERING (Generous Vertical Spacing between items)
+        // ==========================================
         doc.addPage({ size: 'A4', margin: 0 });
-
         drawHeaderBanner();
 
-        // Subheader on Page 2: Date and Page 2 of 2
-        const p2SubY = headerHeight + 6;
-        doc.fillColor(textDark).fontSize(9).font('Helvetica-Bold')
-          .text(`Date: ${displayDate}`, rightMargin - 200, p2SubY, { width: 90, align: 'right' });
-        doc.fillColor(textMuted).fontSize(9).font('Helvetica')
-          .text('|', rightMargin - 105, p2SubY, { width: 10, align: 'center' });
-        doc.fillColor(daikinBrightBlue).fontSize(9).font('Helvetica-Bold')
-          .text(`Page 2 of ${totalPages}`, rightMargin - 90, p2SubY, { width: 90, align: 'right' });
+        // Page 2 Subheader on Right
+        const p2SubY = headerHeight + 8;
+        doc.fillColor(textMuted).fontSize(8.5).font('Helvetica')
+          .text(`Date: ${formattedDate}   |   Page 2 of 2`, leftMargin, p2SubY, { width: contentWidth, align: 'right' });
 
-        y = headerHeight + 22;
+        y = p2SubY + 16;
 
-        // Section B: Low Side Items
-        if (lowSideItems.length > 0) {
-          const lowSideCountBadge = `( ${lowSideItems.length} ITEMS )`;
-          drawSectionTable('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideCountBadge, lowSideItems, null, null, 30);
-        }
+        // Bring Terms & Conditions to the bottom on Page 2
+        const p2DealerHeight = isEcDial ? 42 : 0;
+        const p2DealerStartY = footerY - p2DealerHeight;
+        const p2NaturalRatio = isEcDial ? (421 / 1024) : (176 / 572);
+        const p2TermsHeight = Math.min(180, contentWidth * p2NaturalRatio);
+        const p2TermsWidth = p2TermsHeight / p2NaturalRatio;
+        const actualP2TermsWidth = Math.min(contentWidth, p2TermsWidth);
+        const actualP2TermsHeight = actualP2TermsWidth * p2NaturalRatio;
+        const p2TermsY = p2DealerStartY - actualP2TermsHeight - 8;
+        const p2TermsX = leftMargin + (contentWidth - actualP2TermsWidth) / 2;
 
-        // Terms & Conditions / Payment Method on Page 2
-        const p2TermsY = footerY - termsHeight - 8;
+        // SECTION B: LOW SIDE TABLE (Dynamically expanded with generous padding to fill Page 2 gracefully)
+        drawSectionPill('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideItems.length);
+        drawTableHeader('Price (Rs.)');
+
+        const availableSpaceP2 = p2TermsY - y - 10;
+        const countLowSide = Math.max(1, lowSideItems.length);
+        const lowSideRowHeight2P = Math.max(30, Math.min(42, Math.floor(availableSpaceP2 / (countLowSide + 1.2))));
+
+        lowSideItems.forEach((item, idx) => {
+          const isAlt = idx % 2 === 1;
+          if (isAlt) {
+            doc.rect(leftMargin, y, contentWidth, lowSideRowHeight2P).fill(rowAltBg);
+          }
+
+          doc.rect(leftMargin, y, contentWidth, lowSideRowHeight2P).lineWidth(0.5).strokeColor(ruleGray).stroke();
+          doc.moveTo(cols.desc, y).lineTo(cols.desc, y + lowSideRowHeight2P).stroke();
+          doc.moveTo(cols.qty, y).lineTo(cols.qty, y + lowSideRowHeight2P).stroke();
+          doc.moveTo(cols.unit, y).lineTo(cols.unit, y + lowSideRowHeight2P).stroke();
+          doc.moveTo(cols.price, y).lineTo(cols.price, y + lowSideRowHeight2P).stroke();
+          doc.moveTo(cols.amount, y).lineTo(cols.amount, y + lowSideRowHeight2P).stroke();
+
+          const vCenter = y + (lowSideRowHeight2P - 9) / 2;
+
+          doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
+            .text(String(idx + 1), cols.sl, vCenter, { width: cols.slW, align: 'center' });
+
+          doc.fillColor(textDark).fontSize(8).font('Helvetica')
+            .text(sanitizePdfText(item.description), cols.desc + 6, y + 6, { width: cols.descW - 12, lineGap: 1 });
+
+          doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
+            .text(String(item.quantity), cols.qty, vCenter, { width: cols.qtyW, align: 'center' });
+
+          doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
+            .text(sanitizePdfText(item.unit) || 'Nos', cols.unit, vCenter, { width: cols.unitW, align: 'center' });
+
+          doc.fillColor(textDark).fontSize(8.5).font('Helvetica')
+            .text(item.unitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.price, vCenter, { width: cols.priceW, align: 'right' });
+
+          doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
+            .text(item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 }), cols.amount, vCenter, { width: cols.amountW - 6, align: 'right' });
+
+          y += lowSideRowHeight2P;
+        });
+
+        // Terms & Conditions Block on Page 2 (Natural aspect ratio)
         if (termsPaymentPath) {
-          doc.image(termsPaymentPath, leftMargin, p2TermsY, { width: termsWidth });
+          try {
+            doc.image(termsPaymentPath, p2TermsX, p2TermsY, { width: actualP2TermsWidth, height: actualP2TermsHeight });
+          } catch {
+            doc.roundedRect(p2TermsX, p2TermsY, actualP2TermsWidth, actualP2TermsHeight, 6)
+              .lineWidth(1).strokeColor(ruleGray).fillAndStroke('#FFFFFF', ruleGray);
+          }
         }
 
-        // Footer on Page 2
+        // Prominent Authorized Brand Logos Strip on Page 2 (Directly before footer)
+        if (isEcDial) {
+          drawAuthorizedBrandLogos(p2DealerStartY);
+        }
+
         drawFooterBanner();
       }
 
       doc.end();
-    } catch (error) {
-      reject(error);
+    } catch (err) {
+      reject(err);
     }
   });
 }

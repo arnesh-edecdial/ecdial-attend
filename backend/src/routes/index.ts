@@ -87,6 +87,7 @@ router.post('/attendance/checkout', authMiddleware, attendanceController.checkOu
 
 // C. Attendance Requests (Single-Day / Closing)
 router.post('/attendance/requests', authMiddleware, attendanceController.submitAttendanceRequest);
+router.get('/attendance/requests/my', authMiddleware, attendanceController.getMyAttendanceRequests);
 
 // D. Monthly Visual Calendar
 router.get('/attendance/calendar', authMiddleware, attendanceController.getMonthlyCalendar);

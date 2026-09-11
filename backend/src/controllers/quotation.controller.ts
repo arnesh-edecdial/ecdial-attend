@@ -82,6 +82,7 @@ export const quotationController = {
       customerPhone,
       customerEmail,
       customerLocation,
+      quotationType,
       hasLowSide,
       items,
       cgstPercent,
@@ -90,6 +91,7 @@ export const quotationController = {
       paymentMethod,
       status,
       notes,
+      pdfName,
     } = req.body;
 
     try {
@@ -99,8 +101,8 @@ export const quotationController = {
       const config = (await prisma.quotationConfig.findFirst()) || {
         defaultCgstPercent: 9.0,
         defaultSgstPercent: 9.0,
-        defaultTerms: '1. AC Price inclusive of 18% taxes.',
-        defaultPaymentMethod: '100% with PO.',
+        defaultTerms: 'Standard terms apply.',
+        defaultPaymentMethod: '100% Machine with PO',
       };
 
       const cgst = cgstPercent !== undefined ? Number(cgstPercent) : config.defaultCgstPercent;
@@ -108,21 +110,23 @@ export const quotationController = {
       const terms = termsAndConditions || config.defaultTerms;
       const payment = paymentMethod || config.defaultPaymentMethod;
 
-      const rawItems = Array.isArray(items) ? items : [];
-      const processedItems: any[] = [];
-      const stockWarnings: string[] = [];
+      // Process Line Items and Calculate Totals
+      const processedItems = [];
+      const stockWarnings = [];
 
-      for (let index = 0; index < rawItems.length; index++) {
-        const item = rawItems[index];
+      const rawItems = Array.isArray(items) ? items : [];
+      for (let idx = 0; idx < rawItems.length; idx++) {
+        const item = rawItems[idx];
         const qty = Number(item.quantity) || 1;
         const price = Number(item.unitPrice) || 0;
         const itemAmount = roundCurrency(qty * price);
 
+        // Optional: Check Machine Catalogue stock if productId provided
         if (item.productId) {
-          const prod = await prisma.product.findUnique({ where: { id: item.productId } });
-          if (prod && prod.availableStock < qty) {
+          const product = await prisma.product.findUnique({ where: { id: item.productId } });
+          if (product && product.availableStock < qty) {
             stockWarnings.push(
-              `Requested quantity (${qty}) for '${prod.name}' exceeds available warehouse stock (${prod.availableStock}).`
+              `Warning: Insufficient stock for ${product.name}. Available: ${product.availableStock}, Requested: ${qty}`
             );
           }
         }
@@ -130,8 +134,9 @@ export const quotationController = {
         processedItems.push({
           section: item.section || 'MAIN_UNIT',
           productId: item.productId || null,
-          itemOrder: index + 1,
-          description: item.description || 'AC Equipment / Material',
+          brand: item.brand || null,
+          itemOrder: idx + 1,
+          description: item.description || 'Item Description',
           quantity: qty,
           unit: item.unit || 'Nos',
           unitPrice: price,
@@ -143,6 +148,7 @@ export const quotationController = {
       const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst);
       const finalCustName = customerName ? String(customerName).trim() : '';
       const finalCustAddr = customerAddress ? String(customerAddress).trim() : '';
+      const cleanPdfName = pdfName ? String(pdfName).trim() : null;
 
       // Create Quotation with Items in Supabase DB
       const newQuotation = await prisma.quotation.create({
@@ -157,6 +163,7 @@ export const quotationController = {
           customerEmail: customerEmail ? String(customerEmail).trim() : null,
           customerLocation: customerLocation ? String(customerLocation).trim() : finalCustAddr,
           createdById: req.user.id,
+          quotationType: (quotationType || 'DAIKIN').toUpperCase(),
           hasLowSide: Boolean(hasLowSide),
           mainUnitTotal: totals.mainUnitTotal,
           lowSideTotal: totals.lowSideTotal,
@@ -169,6 +176,7 @@ export const quotationController = {
           termsAndConditions: terms,
           paymentMethod: payment,
           status: status || 'DRAFT',
+          pdfName: cleanPdfName,
           notes: notes || null,
           items: {
             create: processedItems,
@@ -241,6 +249,7 @@ export const quotationController = {
         customerLocation: q.customerLocation || q.customer?.address || '',
         createdById: q.createdById,
         createdByName: q.createdBy?.name || 'Sales Rep',
+        quotationType: (q as any).quotationType || 'DAIKIN',
         hasLowSide: q.hasLowSide,
         mainUnitTotal: q.mainUnitTotal,
         lowSideTotal: q.lowSideTotal,
@@ -253,6 +262,7 @@ export const quotationController = {
         termsAndConditions: q.termsAndConditions,
         paymentMethod: q.paymentMethod,
         status: q.status,
+        pdfName: (q as any).pdfName || null,
         itemCount: q.items.length,
         items: q.items,
         createdAt: q.createdAt,
@@ -313,6 +323,7 @@ export const quotationController = {
       customerPhone,
       customerEmail,
       customerLocation,
+      quotationType,
       hasLowSide,
       items,
       cgstPercent,
@@ -321,83 +332,95 @@ export const quotationController = {
       paymentMethod,
       status,
       notes,
+      pdfName,
     } = req.body;
 
     try {
-      const quotation = await prisma.quotation.findUnique({ where: { id } });
-      if (!quotation) {
+      const existing = await prisma.quotation.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!existing) {
         res.status(404).json({ success: false, message: 'Quotation not found.' });
         return;
       }
 
-      if (req.user && req.user.role === 'SALES' && quotation.createdById !== req.user.id) {
-        res.status(403).json({ success: false, message: 'Access denied.' });
-        return;
-      }
+      const cgst = cgstPercent !== undefined ? Number(cgstPercent) : existing.cgstPercent;
+      const sgst = sgstPercent !== undefined ? Number(sgstPercent) : existing.sgstPercent;
 
-      const cgst = cgstPercent !== undefined ? Number(cgstPercent) : quotation.cgstPercent;
-      const sgst = sgstPercent !== undefined ? Number(sgstPercent) : quotation.sgstPercent;
-      const rawItems = Array.isArray(items) ? items : [];
-
-      const processedItems: any[] = [];
-      rawItems.forEach((item: any, idx: number) => {
-        const qty = Number(item.quantity) || 1;
-        const price = Number(item.unitPrice) || 0;
-        processedItems.push({
-          quotationId: quotation.id,
+      let processedItems = existing.items;
+      if (Array.isArray(items)) {
+        processedItems = items.map((item, idx) => ({
+          id: item.id || undefined,
+          quotationId: id,
           section: item.section || 'MAIN_UNIT',
           productId: item.productId || null,
+          brand: item.brand || null,
           itemOrder: idx + 1,
-          description: item.description || 'AC Material',
-          quantity: qty,
+          description: item.description || 'Item',
+          quantity: Number(item.quantity) || 1,
           unit: item.unit || 'Nos',
-          unitPrice: price,
-          amount: roundCurrency(qty * price),
-          notes: item.notes || '',
-        });
-      });
+          unitPrice: Number(item.unitPrice) || 0,
+          amount: roundCurrency((Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)),
+          notes: item.notes || null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })) as any;
+      }
 
       const totals = calculateQuotationTotals(
         processedItems,
-        hasLowSide !== undefined ? Boolean(hasLowSide) : quotation.hasLowSide,
+        hasLowSide !== undefined ? Boolean(hasLowSide) : existing.hasLowSide,
         cgst,
         sgst
       );
 
-      // Execute in transaction: delete old items and insert updated items
-      await prisma.$transaction([
-        prisma.quotationItem.deleteMany({ where: { quotationId: id } }),
-        ...(processedItems.length > 0
-          ? [prisma.quotationItem.createMany({ data: processedItems })]
-          : []),
-        prisma.quotation.update({
-          where: { id },
-          data: {
-            ...(customerName ? { customerName: customerName.trim() } : {}),
-            ...(customerAddress ? { customerAddress: customerAddress.trim() } : {}),
-            ...(customerPhone !== undefined ? { customerPhone: customerPhone ? customerPhone.trim() : null } : {}),
-            ...(customerEmail !== undefined ? { customerEmail: customerEmail ? customerEmail.trim() : null } : {}),
-            ...(customerLocation !== undefined ? { customerLocation: customerLocation ? customerLocation.trim() : null } : {}),
-            ...(hasLowSide !== undefined ? { hasLowSide: Boolean(hasLowSide) } : {}),
-            mainUnitTotal: totals.mainUnitTotal,
-            lowSideTotal: totals.lowSideTotal,
-            subtotal: totals.subtotal,
-            cgstPercent: cgst,
-            cgstAmount: totals.cgstAmount,
-            sgstPercent: sgst,
-            sgstAmount: totals.sgstAmount,
-            grandTotal: totals.grandTotal,
-            ...(termsAndConditions ? { termsAndConditions } : {}),
-            ...(paymentMethod ? { paymentMethod } : {}),
-            ...(status ? { status } : {}),
-            ...(notes !== undefined ? { notes } : {}),
-          },
-        }),
-      ]);
+      // Re-create items if provided
+      if (Array.isArray(items)) {
+        await prisma.quotationItem.deleteMany({ where: { quotationId: id } });
+        await prisma.quotationItem.createMany({
+          data: processedItems.map((pi) => ({
+            quotationId: id,
+            section: pi.section,
+            productId: pi.productId,
+            brand: pi.brand,
+            itemOrder: pi.itemOrder,
+            description: pi.description,
+            quantity: pi.quantity,
+            unit: pi.unit,
+            unitPrice: pi.unitPrice,
+            amount: pi.amount,
+            notes: pi.notes,
+          })),
+        });
+      }
 
-      const updated = await prisma.quotation.findUnique({
+      const updated = await prisma.quotation.update({
         where: { id },
-        include: { items: true },
+        data: {
+          customerName: customerName !== undefined ? String(customerName).trim() : existing.customerName,
+          customerAddress: customerAddress !== undefined ? String(customerAddress).trim() : existing.customerAddress,
+          customerPhone: customerPhone !== undefined ? String(customerPhone).trim() : existing.customerPhone,
+          customerEmail: customerEmail !== undefined ? String(customerEmail).trim() : existing.customerEmail,
+          customerLocation: customerLocation !== undefined ? String(customerLocation).trim() : existing.customerLocation,
+          quotationType: quotationType !== undefined ? (quotationType || 'DAIKIN').toUpperCase() : (existing as any).quotationType,
+          hasLowSide: hasLowSide !== undefined ? Boolean(hasLowSide) : existing.hasLowSide,
+          mainUnitTotal: totals.mainUnitTotal,
+          lowSideTotal: totals.lowSideTotal,
+          subtotal: totals.subtotal,
+          cgstPercent: cgst,
+          cgstAmount: totals.cgstAmount,
+          sgstPercent: sgst,
+          sgstAmount: totals.sgstAmount,
+          grandTotal: totals.grandTotal,
+          termsAndConditions: termsAndConditions !== undefined ? termsAndConditions : existing.termsAndConditions,
+          paymentMethod: paymentMethod !== undefined ? paymentMethod : existing.paymentMethod,
+          status: status || existing.status,
+          pdfName: pdfName !== undefined ? (pdfName ? String(pdfName).trim() : null) : (existing as any).pdfName,
+          notes: notes !== undefined ? notes : existing.notes,
+        },
+        include: { items: true, customer: true, createdBy: true },
       });
 
       res.json({
@@ -411,7 +434,165 @@ export const quotationController = {
     }
   },
 
-  // 7. Update Status
+  // 7. Duplicate Quotation
+  duplicateQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+
+    try {
+      const source = await prisma.quotation.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!source) {
+        res.status(404).json({ success: false, message: 'Source quotation not found.' });
+        return;
+      }
+
+      const todayStr = getTodayDateString();
+      const quotationNumber = await generateNextQuotationNumber();
+
+      const duplicated = await prisma.quotation.create({
+        data: {
+          quotationNumber,
+          revisionNumber: 1,
+          originalQuotationId: source.id,
+          date: todayStr,
+          customerId: source.customerId,
+          customerName: source.customerName,
+          customerAddress: source.customerAddress,
+          customerPhone: source.customerPhone,
+          customerEmail: source.customerEmail,
+          customerLocation: source.customerLocation,
+          createdById: req.user!.id,
+          quotationType: (source as any).quotationType || 'DAIKIN',
+          hasLowSide: source.hasLowSide,
+          mainUnitTotal: source.mainUnitTotal,
+          lowSideTotal: source.lowSideTotal,
+          subtotal: source.subtotal,
+          cgstPercent: source.cgstPercent,
+          cgstAmount: source.cgstAmount,
+          sgstPercent: source.sgstPercent,
+          sgstAmount: source.sgstAmount,
+          grandTotal: source.grandTotal,
+          termsAndConditions: source.termsAndConditions,
+          paymentMethod: source.paymentMethod,
+          status: 'DRAFT',
+          notes: `Cloned from ${source.quotationNumber}`,
+          items: {
+            create: source.items.map((it) => ({
+              section: it.section,
+              productId: it.productId,
+              brand: (it as any).brand || null,
+              itemOrder: it.itemOrder,
+              description: it.description,
+              quantity: it.quantity,
+              unit: it.unit,
+              unitPrice: it.unitPrice,
+              amount: it.amount,
+              notes: it.notes,
+            })),
+          },
+        },
+        include: { items: true, customer: true },
+      });
+
+      res.json({
+        success: true,
+        message: 'Quotation duplicated successfully.',
+        data: duplicated,
+      });
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ success: false, message: 'Failed to duplicate quotation.' });
+    }
+  },
+
+  // 8. Generate & Export PDF
+  exportPdf: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+
+    try {
+      const quotation = await prisma.quotation.findFirst({
+        where: {
+          OR: [{ id }, { quotationNumber: id }],
+        },
+        include: {
+          items: { orderBy: { itemOrder: 'asc' } },
+          createdBy: { select: { id: true, name: true, email: true, role: true } },
+        },
+      });
+
+      if (!quotation) {
+        res.status(404).json({ success: false, message: 'Quotation not found.' });
+        return;
+      }
+
+      const mainItems = quotation.items.filter((i) => i.section === 'MAIN_UNIT');
+      const lowSideItems = quotation.items.filter((i) => i.section === 'LOW_SIDE');
+
+      const pdfBuffer = await generateQuotationPDF({
+        quotationNumber: quotation.quotationNumber,
+        revisionNumber: quotation.revisionNumber,
+        date: quotation.date,
+        quotationType: ((quotation as any).quotationType || 'DAIKIN') as any,
+        customerName: quotation.customerName,
+        customerAddress: quotation.customerAddress,
+        customerPhone: quotation.customerPhone,
+        customerEmail: quotation.customerEmail,
+        createdByName: quotation.createdBy?.name || 'ECDIAL Sales Rep',
+        createdByEmail: quotation.createdBy?.email || 'sales@ecdial.com',
+        hasLowSide: quotation.hasLowSide,
+        mainUnitTotal: quotation.mainUnitTotal,
+        lowSideTotal: quotation.lowSideTotal,
+        subtotal: quotation.subtotal,
+        cgstPercent: quotation.cgstPercent,
+        cgstAmount: quotation.cgstAmount,
+        sgstPercent: quotation.sgstPercent,
+        sgstAmount: quotation.sgstAmount,
+        grandTotal: quotation.grandTotal,
+        termsAndConditions: quotation.termsAndConditions,
+        paymentMethod: quotation.paymentMethod,
+        mainItems: mainItems.map((m) => ({
+          description: m.description,
+          brand: (m as any).brand || undefined,
+          quantity: m.quantity,
+          unit: m.unit,
+          unitPrice: m.unitPrice,
+          amount: m.amount,
+        })),
+        lowSideItems: lowSideItems.map((l) => ({
+          description: l.description,
+          brand: (l as any).brand || undefined,
+          quantity: l.quantity,
+          unit: l.unit,
+          unitPrice: l.unitPrice,
+          amount: l.amount,
+        })),
+      });
+
+      const requestedFilename = req.query.filename ? String(req.query.filename).trim() : null;
+      const rawName = requestedFilename || (quotation as any).pdfName || `Quotation_${quotation.quotationNumber}`;
+      const outFilename = rawName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${outFilename}.pdf"`);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.send(pdfBuffer);
+    } catch (err: any) {
+      console.error('[PDF Generation Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to generate PDF.' });
+    }
+  },
+
+  // Alias for downloadPdf route
+  downloadPdf: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    return quotationController.exportPdf(req, res);
+  },
+
+  // 9. Update Quotation Status
   updateStatus: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const { status } = req.body;
@@ -433,77 +614,7 @@ export const quotationController = {
     }
   },
 
-  // 8. Dynamic Professional PDF Generation
-  downloadPdf: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const { id } = req.params;
-
-    try {
-      const quotation = await prisma.quotation.findFirst({
-        where: {
-          OR: [{ id }, { quotationNumber: id }],
-        },
-        include: {
-          items: { orderBy: { itemOrder: 'asc' } },
-          createdBy: true,
-        },
-      });
-
-      if (!quotation) {
-        res.status(404).json({ success: false, message: 'Quotation not found.' });
-        return;
-      }
-
-      const mainItems = quotation.items.filter((i) => i.section === 'MAIN_UNIT');
-      const lowSideItems = quotation.items.filter((i) => i.section === 'LOW_SIDE');
-
-      const pdfBuffer = await generateQuotationPDF({
-        quotationNumber: quotation.quotationNumber,
-        revisionNumber: quotation.revisionNumber,
-        date: quotation.date,
-        customerName: quotation.customerName,
-        customerAddress: quotation.customerAddress,
-        customerPhone: quotation.customerPhone,
-        customerEmail: quotation.customerEmail,
-        createdByName: quotation.createdBy?.name || 'ECDIAL Sales Rep',
-        createdByEmail: quotation.createdBy?.email || 'sales@ecdial.com',
-        hasLowSide: quotation.hasLowSide,
-        mainUnitTotal: quotation.mainUnitTotal,
-        lowSideTotal: quotation.lowSideTotal,
-        subtotal: quotation.subtotal,
-        cgstPercent: quotation.cgstPercent,
-        cgstAmount: quotation.cgstAmount,
-        sgstPercent: quotation.sgstPercent,
-        sgstAmount: quotation.sgstAmount,
-        grandTotal: quotation.grandTotal,
-        termsAndConditions: quotation.termsAndConditions,
-        paymentMethod: quotation.paymentMethod,
-        mainItems: mainItems.map((m) => ({
-          description: m.description,
-          quantity: m.quantity,
-          unit: m.unit,
-          unitPrice: m.unitPrice,
-          amount: m.amount,
-        })),
-        lowSideItems: lowSideItems.map((l) => ({
-          description: l.description,
-          quantity: l.quantity,
-          unit: l.unit,
-          unitPrice: l.unitPrice,
-          amount: l.amount,
-        })),
-      });
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="Quotation_${quotation.quotationNumber}.pdf"`);
-      res.setHeader('Content-Length', pdfBuffer.length);
-      res.send(pdfBuffer);
-    } catch (err: any) {
-      console.error('[PDF Generation Error]', err);
-      res.status(500).json({ success: false, message: 'Failed to generate PDF.' });
-    }
-  },
-
-  // 9. Delete Quotation (Rule 19)
+  // 10. Delete Quotation (Rule 19)
   deleteQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     try {

@@ -7,6 +7,16 @@ import {
   getTodayDateString,
 } from '../utils/calculations';
 
+function formatFullDateTime(d?: Date | string | null): string {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '—';
+  const day = String(dt.getDate()).padStart(2, '0');
+  const month = String(dt.getMonth() + 1).padStart(2, '0');
+  const year = dt.getFullYear();
+  return `${day}/${month}/${year} ${formatTime12h(dt)}`;
+}
+
 export const exportService = {
   /**
    * 1. Generate Today's Attendance Excel Report (.xlsx)
@@ -340,6 +350,7 @@ export const exportService = {
       'Half Days',
       'Holidays / Leave',
       'Total Work Hours',
+      'Total Overtime (OT)',
       'Attendance %',
     ];
 
@@ -371,6 +382,7 @@ export const exportService = {
       let halfDays = 0;
       let workingDaysCount = 0;
       let totalWorkMinutes = 0;
+      let totalOtMinutes = 0;
 
       for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -396,6 +408,9 @@ export const exportService = {
           } else if (att.status === 'ABSENT') {
             absentDays++;
           }
+          if (att.otMinutes && att.otMinutes > 0) {
+            totalOtMinutes += att.otMinutes;
+          }
         }
       }
 
@@ -416,6 +431,7 @@ export const exportService = {
         halfDays,
         holidays.length,
         `${totalWorkHours} hrs`,
+        totalOtMinutes > 0 ? `${(totalOtMinutes / 60).toFixed(1)} hrs (${totalOtMinutes} mins)` : '0 mins',
         `${attendancePercent}%`,
       ]);
 
@@ -445,7 +461,7 @@ export const exportService = {
       });
 
       // Attendance percentage color highlight
-      const pctCell = row.getCell(12);
+      const pctCell = row.getCell(13);
       if (attendancePercent >= 90) {
         pctCell.font = { name: 'Calibri', size: 10.5, bold: true, color: { argb: 'FF065F46' } };
       } else if (attendancePercent < 75) {
@@ -465,17 +481,18 @@ export const exportService = {
       { width: 12 }, // Half Days
       { width: 16 }, // Holidays
       { width: 18 }, // Total Work Hours
+      { width: 20 }, // Total OT
       { width: 16 }, // Attendance %
     ];
 
     // ==========================================
-    // SHEET 2: DETAILED DAILY LOGS
+    // SHEET 2: DETAILED DAILY LOGS (Date, Login DateTime, Logout DateTime, Working Time, OT)
     // ==========================================
     const detailSheet = workbook.addWorksheet('Daily Logs', {
       views: [{ showGridLines: true }],
     });
 
-    detailSheet.mergeCells('A1:I1');
+    detailSheet.mergeCells('A1:L1');
     const logTitle = detailSheet.getCell('A1');
     logTitle.value = `ECDIAL DAILY ATTENDANCE LOGS — ${monthName.toUpperCase()} ${year}`;
     logTitle.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -490,11 +507,14 @@ export const exportService = {
       'Day',
       'Employee Code',
       'Employee Name',
+      'Department',
       'Role',
       'Status',
-      'Check-In',
-      'Check-Out',
-      'Duration',
+      'Login Date & Time',
+      'Logout Date & Time',
+      'Working Time',
+      'Overtime (OT)',
+      'OT Status',
     ];
 
     const detailHeaderRow = detailSheet.addRow(detailHeaders);
@@ -526,17 +546,23 @@ export const exportService = {
         const att = attendances.find((a) => a.employeeId === emp.id && a.date === dateStr);
 
         let status = 'NOT_MARKED';
-        let checkIn = '—';
-        let checkOut = '—';
+        let loginDateTime = '—';
+        let logoutDateTime = '—';
         let duration = '—';
+        let overtime = '—';
+        let otStatus = '—';
 
         if (isHoliday) {
           status = `HOLIDAY (${isHoliday.name})`;
         } else if (att) {
           status = att.status;
-          checkIn = att.checkInTime ? formatTime12h(att.checkInTime) : '—';
-          checkOut = att.checkOutTime ? formatTime12h(att.checkOutTime) : (att.status === 'PRESENT' ? 'Working' : '—');
+          loginDateTime = att.checkInTime ? formatFullDateTime(att.checkInTime) : '—';
+          logoutDateTime = att.checkOutTime ? formatFullDateTime(att.checkOutTime) : (att.status === 'PRESENT' ? 'Currently Working' : '—');
           duration = att.workingDurationMinutes ? formatMinutesToDuration(att.workingDurationMinutes) : '—';
+          if (att.otMinutes && att.otMinutes > 0) {
+            overtime = `${att.otMinutes} mins (${formatMinutesToDuration(att.otMinutes)})`;
+            otStatus = att.otStatus || 'APPROVED';
+          }
         } else if (!isWorkingDay) {
           status = 'WEEKLY_OFF';
         }
@@ -546,11 +572,14 @@ export const exportService = {
           dayName,
           emp.employeeCode,
           emp.name,
+          emp.department || 'HVAC Operations',
           emp.role,
           status,
-          checkIn,
-          checkOut,
+          loginDateTime,
+          logoutDateTime,
           duration,
+          overtime,
+          otStatus,
         ]);
 
         logRow.height = 20;
@@ -559,7 +588,7 @@ export const exportService = {
           cell.font = { name: 'Calibri', size: 10 };
           cell.alignment = {
             vertical: 'middle',
-            horizontal: colNumber <= 2 || colNumber === 6 ? 'center' : 'left',
+            horizontal: colNumber <= 2 || colNumber === 7 ? 'center' : 'left',
           };
         });
       });
@@ -570,11 +599,14 @@ export const exportService = {
       { width: 8 },  // Day
       { width: 16 }, // Employee Code
       { width: 24 }, // Name
+      { width: 20 }, // Department
       { width: 15 }, // Role
       { width: 18 }, // Status
-      { width: 14 }, // Check-In
-      { width: 14 }, // Check-Out
-      { width: 16 }, // Duration
+      { width: 24 }, // Login Date & Time
+      { width: 24 }, // Logout Date & Time
+      { width: 16 }, // Working Time
+      { width: 20 }, // Overtime
+      { width: 14 }, // OT Status
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();
