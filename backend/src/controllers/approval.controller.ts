@@ -1,8 +1,15 @@
 import { Response } from 'express';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { calculateDurationMinutes, formatMinutesToDuration, formatTime12h } from '../utils/calculations';
+import {
+  calculateDurationMinutes,
+  formatMinutesToDuration,
+  formatTime12h,
+  parseISTDateTime,
+} from '../utils/calculations';
 import { notificationService } from '../services/notification.service';
+
+
 
 export const approvalController = {
   // 1. List All Pending Approvals (Attendance Requests & Pending Overtime)
@@ -196,12 +203,12 @@ export const approvalController = {
         }
 
         for (const dateStr of parsedDates) {
-          const inDate = new Date(`${dateStr}T${inTimeStr}:00`);
+          const inDate = parseISTDateTime(dateStr, inTimeStr);
           let outDate: Date | null = null;
           let durMins: number | null = null;
 
           if (outTimeStr && outTimeStr.trim() !== '') {
-            outDate = new Date(`${dateStr}T${outTimeStr}:00`);
+            outDate = parseISTDateTime(dateStr, outTimeStr);
             durMins = calculateDurationMinutes(inDate, outDate);
           }
 
@@ -381,11 +388,11 @@ export const approvalController = {
       let durMins: number | null = null;
 
       if (checkInTime && checkInTime.trim() !== '') {
-        inDate = new Date(`${date}T${checkInTime}:00`);
+        inDate = parseISTDateTime(date, checkInTime);
       }
 
       if (checkOutTime && checkOutTime.trim() !== '') {
-        outDate = new Date(`${date}T${checkOutTime}:00`);
+        outDate = parseISTDateTime(date, checkOutTime);
         if (inDate) {
           durMins = calculateDurationMinutes(inDate, outDate);
         }

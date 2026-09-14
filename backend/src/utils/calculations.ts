@@ -105,6 +105,36 @@ export function calculateOvertimeMinutes(
  */
 export function formatTime12h(date: Date | string): string {
   if (!date) return '—';
+
+  // If already a time string like "09:00", "13:30", "09:00 AM"
+  if (typeof date === 'string') {
+    const trimmed = date.trim();
+    const timeMatch = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+    if (timeMatch) {
+      const h = parseInt(timeMatch[1], 10) || 0;
+      const m = parseInt(timeMatch[2], 10) || 0;
+      const periodParam = timeMatch[3]?.toUpperCase();
+
+      let p: 'AM' | 'PM';
+      let h12: number;
+
+      if (periodParam === 'PM' || periodParam === 'AM') {
+        p = periodParam as 'AM' | 'PM';
+        h12 = h % 12;
+        if (h12 === 0) h12 = 12;
+      } else {
+        const validH24 = Math.max(0, Math.min(23, h));
+        p = validH24 >= 12 ? 'PM' : 'AM';
+        h12 = validH24 % 12;
+        if (h12 === 0) h12 = 12;
+      }
+
+      const strHours = h12 < 10 ? '0' + h12 : String(h12);
+      const strMinutes = m < 10 ? '0' + m : String(m);
+      return `${strHours}:${strMinutes} ${p}`;
+    }
+  }
+
   const d = typeof date === 'string' ? new Date(date) : date;
   if (isNaN(d.getTime())) return '—';
 
@@ -117,10 +147,9 @@ export function formatTime12h(date: Date | string): string {
     });
     return formatter.format(d).toUpperCase();
   } catch {
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istDate = new Date(d.getTime() + istOffsetMs);
-    let hours = istDate.getUTCHours();
-    const minutes = istDate.getUTCMinutes();
+    // Use local time directly — server timezone is IST (UTC+05:30), no manual offset needed
+    let hours = d.getHours();
+    const minutes = d.getMinutes();
     const ampm = hours >= 12 ? 'PM' : 'AM';
     hours = hours % 12;
     hours = hours ? hours : 12;
@@ -143,11 +172,45 @@ export function getTodayDateString(d: Date = new Date()): string {
     });
     return formatter.format(d);
   } catch {
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istDate = new Date(d.getTime() + istOffsetMs);
-    const year = istDate.getUTCFullYear();
-    const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(istDate.getUTCDate()).padStart(2, '0');
+    // Use local time directly — server timezone is IST (UTC+05:30), no manual offset needed
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
 }
+
+/**
+ * Parse date string (YYYY-MM-DD) and time string (HH:mm) in Indian Standard Time (IST / UTC+05:30)
+ * Guarantees consistent and accurate UTC conversion regardless of server system timezone.
+ */
+export function parseISTDateTime(dateStr: string, timeStr: string): Date {
+  const cleanDate = dateStr.trim();
+  const cleanTime = timeStr.trim();
+
+  // If timeStr is already an ISO string with Date component
+  if (cleanTime.includes('T')) {
+    const d = new Date(cleanTime);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Handle 12-hour AM/PM formats e.g. "09:30 AM", "1:15 pm"
+  const isPM = /pm/i.test(cleanTime);
+  const isAM = /am/i.test(cleanTime);
+  const rawTime = cleanTime.replace(/(am|pm)/gi, '').trim();
+
+  const parts = rawTime.split(':');
+  let hourNum = parseInt(parts[0], 10) || 0;
+  const minuteNum = parseInt(parts[1] || '0', 10) || 0;
+  const secondNum = parseInt(parts[2] || '0', 10) || 0;
+
+  if (isPM && hourNum < 12) hourNum += 12;
+  if (isAM && hourNum === 12) hourNum = 0;
+
+  const h = String(hourNum).padStart(2, '0');
+  const m = String(minuteNum).padStart(2, '0');
+  const s = String(secondNum).padStart(2, '0');
+
+  return new Date(`${cleanDate}T${h}:${m}:${s}+05:30`);
+}
+

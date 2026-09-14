@@ -3,6 +3,7 @@ import { api } from '../../services/api';
 import { CalendarDay } from '../../types';
 import { ChevronLeft, ChevronRight, Clock, AlertCircle, PlusCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { formatTime12 } from '../../utils/time';
 
 interface AttendanceCalendarProps {
   onRequestCorrection: (preselectedDate?: string) => void;
@@ -209,7 +210,7 @@ export const AttendanceCalendar: React.FC<AttendanceCalendarProps> = ({ onReques
                   )}
                   {day.checkIn && (
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                      In: {day.checkIn}
+                      In: {formatTime12(day.checkIn)}
                     </div>
                   )}
                 </div>
@@ -258,11 +259,11 @@ export const AttendanceCalendar: React.FC<AttendanceCalendarProps> = ({ onReques
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div style={{ padding: '10px', background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)' }}>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Check-in</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDay.checkIn || '—'}</div>
+                <div style={{ fontSize: '14px', fontWeight: 600 }}>{formatTime12(selectedDay.checkIn)}</div>
               </div>
               <div style={{ padding: '10px', background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)' }}>
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Check-out</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDay.checkOut || '—'}</div>
+                <div style={{ fontSize: '14px', fontWeight: 600 }}>{formatTime12(selectedDay.checkOut)}</div>
               </div>
             </div>
 

@@ -7,6 +7,7 @@ import { ApprovalQueueView } from '../components/attendance/ApprovalQueueView';
 import { AttendanceRequestModal } from '../components/attendance/AttendanceRequestModal';
 import { ScheduleConfigModal } from '../components/attendance/ScheduleConfigModal';
 import { useAuth } from '../context/AuthContext';
+import { formatTime12, formatSchedule12 } from '../utils/time';
 import {
   Users,
   CheckCircle,
@@ -197,7 +198,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ activeTab, setAc
                     <td><span className="badge badge-grey">{emp.role}</span></td>
                     <td>{emp.department || 'ECDIAL'}</td>
                     <td><span style={{ color: 'var(--status-present)', fontWeight: 600 }}>Monday - Saturday</span></td>
-                    <td>09:00 - 20:00</td>
+                    <td>09:00 AM - 08:00 PM</td>
                     <td style={{ textAlign: 'right' }}>
                       <button
                         className="btn btn-secondary btn-sm"
@@ -570,9 +571,9 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ activeTab, setAc
                         </div>
                       </td>
                       <td><span className="badge badge-grey">{emp.role}</span></td>
-                      <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{emp.schedule}</td>
-                      <td style={{ fontWeight: 600 }}>{emp.checkIn || '—'}</td>
-                      <td style={{ fontWeight: 600 }}>{emp.checkOut || '—'}</td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{formatSchedule12(emp.schedule)}</td>
+                      <td style={{ fontWeight: 600 }}>{formatTime12(emp.checkIn)}</td>
+                      <td style={{ fontWeight: 600 }}>{formatTime12(emp.checkOut)}</td>
                       <td>{emp.duration || '—'}</td>
                       <td>
                         <span className={`badge ${

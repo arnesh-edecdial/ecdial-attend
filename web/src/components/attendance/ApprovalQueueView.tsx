@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { ApprovalItem } from '../../types';
 import { CheckSquare, Check, X, Clock, AlertTriangle } from 'lucide-react';
+import { formatTime12 } from '../../utils/time';
 
 export const ApprovalQueueView: React.FC = () => {
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
@@ -152,7 +153,7 @@ export const ApprovalQueueView: React.FC = () => {
                         </div>
                       ) : (
                         <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
-                          {item.checkInTime || '09:00'} → {item.checkOutTime || '20:00'}
+                          {formatTime12(item.checkInTime || '09:00')} → {formatTime12(item.checkOutTime || '20:00')}
                         </div>
                       )}
                     </td>

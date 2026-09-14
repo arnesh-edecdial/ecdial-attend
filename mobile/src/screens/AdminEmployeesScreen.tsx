@@ -15,6 +15,7 @@ import {
 import { mobileApi } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
+import { formatTime12 } from '../utils/time';
 
 interface AdminEmployeesScreenProps {
   onClose?: () => void;
@@ -349,24 +350,24 @@ export const AdminEmployeesScreen: React.FC<AdminEmployeesScreenProps> = ({ onCl
               <Text style={[styles.inputLabel, { marginTop: 8 }]}>Working Schedule (Mon - Sat)</Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.timeSubLabel}>Start Time (24h)</Text>
+                  <Text style={styles.timeSubLabel}>Shift Start Time</Text>
                   <TouchableOpacity
                     style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
                     onPress={() => setTimePickerTarget('START')}
                     activeOpacity={0.8}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{startTime}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{formatTime12(startTime)}</Text>
                     <Text style={{ fontSize: 16 }}>🕒</Text>
                   </TouchableOpacity>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.timeSubLabel}>Expected End Time (24h)</Text>
+                  <Text style={styles.timeSubLabel}>Shift End Time</Text>
                   <TouchableOpacity
                     style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
                     onPress={() => setTimePickerTarget('END')}
                     activeOpacity={0.8}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{endTime}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{formatTime12(endTime)}</Text>
                     <Text style={{ fontSize: 16 }}>🕒</Text>
                   </TouchableOpacity>
                 </View>

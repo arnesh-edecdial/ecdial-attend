@@ -1,327 +1,465 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
-  ScrollView,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
-  Platform,
 } from 'react-native';
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
+import Svg, { Polyline, Circle, Line, Path } from 'react-native-svg';
+
+import {
+  pad,
+  computeHour24,
+  parse24HourString,
+  formatTime12,
+  formatTime24,
+} from '../utils/time';
+
+export {
+  computeHour24,
+  parse24HourString,
+  formatTime12,
+  formatTime24,
+};
+
+// ─────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────
 
 export interface TimePickerValue {
   hour12: number;
   minute: number;
   period: 'AM' | 'PM';
   hour24: number;
-  formatted24: string; // "HH:mm"
-  formatted12: string; // "hh:mm A"
+  formatted24: string;
+  formatted12: string;
 }
 
-export interface ScrollTimePickerModalProps {
-  visible: boolean;
-  initialTime?: string; // e.g. "14:30" or "08:30"
-  initialHour?: number; // 1-12
-  initialMinute?: number; // 0-59
+export interface SteppedTimePickerProps {
+  initialTime?: string;
+  initialHour?: number;
+  initialMinute?: number;
   initialPeriod?: 'AM' | 'PM';
   title?: string;
-  maxTime?: { hour24: number; minute: number }; // Disallow future times (e.g. for today)
+  subtitle?: string;
+  maxTime?: { hour24: number; minute: number };
   minTime?: { hour24: number; minute: number };
   onConfirm: (time: TimePickerValue) => void;
+  onCancel?: () => void;
+  onReset?: () => void;
+}
+
+export interface ScrollTimePickerModalProps extends SteppedTimePickerProps {
+  visible: boolean;
   onCancel: () => void;
 }
 
-const ITEM_H = 44;
-const WHEEL_H = 220;
-const PAD_H = (WHEEL_H - ITEM_H) / 2; // 88px (2 items above, 2 items below, 1 centered)
+const ACCENT = '#3E63F5';
+const ACCENT_LIGHT = '#EDF1FE';
+const BORDER = '#E5E8EF';
+const TEXT_MUTED = '#8C93A3';
+const TEXT_DARK = '#1C2130';
 
-const HOURS = [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // standard clock sequence
-const MINUTES = Array.from({ length: 60 }, (_, i) => i);
-const PERIODS: ('AM' | 'PM')[] = ['AM', 'PM'];
+// ─────────────────────────────────────────────
+// SMALL ICONS (inline SVG, no extra deps)
+// ─────────────────────────────────────────────
 
-function pad(n: number): string {
-  return n.toString().padStart(2, '0');
-}
+const ChevronUpIcon = ({ color = TEXT_DARK }: { color?: string }) => (
+  <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+    <Polyline
+      points="6 15 12 9 18 15"
+      stroke={color}
+      strokeWidth={2.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
 
-export function computeHour24(h12: number, period: 'AM' | 'PM'): number {
-  const norm = h12 % 12;
-  return period === 'AM' ? norm : norm + 12;
-}
+const ChevronDownIcon = ({ color = TEXT_DARK }: { color?: string }) => (
+  <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+    <Polyline
+      points="6 9 12 15 18 9"
+      stroke={color}
+      strokeWidth={2.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
 
-export function parse24HourString(timeStr?: string | null): {
-  hour12: number;
-  minute: number;
-  period: 'AM' | 'PM';
-  hour24: number;
-} {
-  if (!timeStr || typeof timeStr !== 'string' || !timeStr.includes(':')) {
-    return { hour12: 12, minute: 0, period: 'PM', hour24: 12 };
+const ClockIcon = ({ color = '#FFFFFF' }: { color?: string }) => (
+  <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+    <Circle cx="12" cy="12" r="9" stroke={color} strokeWidth={2} />
+    <Line x1="12" y1="7" x2="12" y2="12.5" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    <Line x1="12" y1="12.5" x2="15.2" y2="14" stroke={color} strokeWidth={2} strokeLinecap="round" />
+  </Svg>
+);
+
+const CloseIcon = ({ color = TEXT_MUTED }: { color?: string }) => (
+  <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+    <Line x1="18" y1="6" x2="6" y2="18" stroke={color} strokeWidth={2.2} strokeLinecap="round" />
+    <Line x1="6" y1="6" x2="18" y2="18" stroke={color} strokeWidth={2.2} strokeLinecap="round" />
+  </Svg>
+);
+
+const EyeIcon = ({ color = ACCENT }: { color?: string }) => (
+  <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinejoin="round"
+    />
+    <Circle cx="12" cy="12" r="3" stroke={color} strokeWidth={2} />
+  </Svg>
+);
+
+const ResetIcon = ({ color = TEXT_MUTED }: { color?: string }) => (
+  <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M20 11A8 8 0 1 0 18.5 16"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+    />
+    <Polyline
+      points="20 5 20 11 14 11"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+const CheckIcon = ({ color = '#FFFFFF' }: { color?: string }) => (
+  <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+    <Polyline
+      points="20 6 9 17 4 12"
+      stroke={color}
+      strokeWidth={2.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+// ─────────────────────────────────────────────
+// INITIAL TIME RESOLUTION
+// ─────────────────────────────────────────────
+
+function resolveInitialState(props: {
+  initialTime?: string;
+  initialHour?: number;
+  initialMinute?: number;
+  initialPeriod?: 'AM' | 'PM';
+  maxTime?: { hour24: number; minute: number };
+  minTime?: { hour24: number; minute: number };
+}): { hour: number; minute: number; period: 'AM' | 'PM' } {
+  let h = 12;
+  let m = 0;
+  let p: 'AM' | 'PM' = 'AM';
+
+  if (
+    props.initialTime &&
+    typeof props.initialTime === 'string' &&
+    props.initialTime.includes(':')
+  ) {
+    const parsed = parse24HourString(props.initialTime);
+    h = parsed.hour12;
+    m = parsed.minute;
+    p = parsed.period;
+  } else if (props.initialHour !== undefined) {
+    h = props.initialHour;
+    m = props.initialMinute ?? 0;
+    p = props.initialPeriod || (h >= 12 ? 'PM' : 'AM');
+  } else {
+    const now = new Date();
+    const parsed = parse24HourString(now);
+    h = parsed.hour12;
+    m = parsed.minute;
+    p = parsed.period;
   }
-  const parts = timeStr.trim().split(':');
-  const h24 = parseInt(parts[0], 10) || 0;
-  const min = parseInt(parts[1], 10) || 0;
-  const validH24 = Math.max(0, Math.min(23, h24));
-  const validMin = Math.max(0, Math.min(59, min));
 
-  const period: 'AM' | 'PM' = validH24 >= 12 ? 'PM' : 'AM';
-  let hour12 = validH24 % 12;
-  if (hour12 === 0) hour12 = 12;
+  if (props.maxTime) {
+    const totalMins = computeHour24(h, p) * 60 + m;
+    const maxMins = props.maxTime.hour24 * 60 + props.maxTime.minute;
 
-  return { hour12, minute: validMin, period, hour24: validH24 };
+    if (totalMins > maxMins) {
+      p = props.maxTime.hour24 >= 12 ? 'PM' : 'AM';
+      let clampedH12 = props.maxTime.hour24 % 12;
+      if (clampedH12 === 0) clampedH12 = 12;
+      h = clampedH12;
+      m = props.maxTime.minute;
+    }
+  }
+
+  if (props.minTime) {
+    const totalMins = computeHour24(h, p) * 60 + m;
+    const minMins = props.minTime.hour24 * 60 + props.minTime.minute;
+
+    if (totalMins < minMins) {
+      p = props.minTime.hour24 >= 12 ? 'PM' : 'AM';
+      let clampedH12 = props.minTime.hour24 % 12;
+      if (clampedH12 === 0) clampedH12 = 12;
+      h = clampedH12;
+      m = props.minTime.minute;
+    }
+  }
+
+  return { hour: h, minute: m, period: p };
 }
 
-interface ColumnProps<T> {
-  items: T[];
-  selectedValue: T;
-  onSelect: (val: T) => void;
-  renderLabel: (val: T) => string;
-  isItemDisabled?: (val: T) => boolean;
+// ─────────────────────────────────────────────
+// STEPPER FIELD (hour or minute column)
+// ─────────────────────────────────────────────
+
+interface StepperFieldProps {
+  label: string;
+  value: number;
+  displayValue: string;
+  onIncrement: () => void;
+  onDecrement: () => void;
+  incrementDisabled: boolean;
+  decrementDisabled: boolean;
 }
 
-function WheelColumn<T extends number | string>({
-  items,
-  selectedValue,
-  onSelect,
-  renderLabel,
-  isItemDisabled,
-}: ColumnProps<T>) {
-  const scrollRef = useRef<ScrollView>(null);
-  const isUserScrolling = useRef<boolean>(false);
-  const selectedIndex = items.indexOf(selectedValue);
+// Delay before fast-forward kicks in (ms)
+const HOLD_DELAY_MS = 400;
+// Interval between fast-forward steps (ms)
+const HOLD_INTERVAL_MS = 100;
 
-  // Sync scroll position when selectedValue changes externally
-  useEffect(() => {
-    if (!isUserScrolling.current && selectedIndex >= 0) {
-      setTimeout(() => {
-        scrollRef.current?.scrollTo({ y: selectedIndex * ITEM_H, animated: false });
-      }, 50);
-    }
-  }, [selectedValue, items]);
+const StepperField: React.FC<StepperFieldProps> = ({
+  label,
+  displayValue,
+  onIncrement,
+  onDecrement,
+  incrementDisabled,
+  decrementDisabled,
+}) => {
+  const holdTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const handleScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const y = e.nativeEvent.contentOffset.y;
-    let idx = Math.round(y / ITEM_H);
-    idx = Math.max(0, Math.min(items.length - 1, idx));
-
-    isUserScrolling.current = false;
-
-    // Check if the landed item is disabled. If disabled, find the closest valid item!
-    if (isItemDisabled && isItemDisabled(items[idx])) {
-      let closestIdx = -1;
-      for (let offset = 1; offset < items.length; offset++) {
-        if (idx - offset >= 0 && !isItemDisabled(items[idx - offset])) {
-          closestIdx = idx - offset;
-          break;
-        }
-        if (idx + offset < items.length && !isItemDisabled(items[idx + offset])) {
-          closestIdx = idx + offset;
-          break;
-        }
-      }
-
-      if (closestIdx >= 0) {
-        idx = closestIdx;
-        scrollRef.current?.scrollTo({ y: idx * ITEM_H, animated: true });
-      }
-    }
-
-    const val = items[idx];
-    if (val !== undefined && (!isItemDisabled || !isItemDisabled(val))) {
-      onSelect(val);
-    }
+  const clearHold = () => {
+    if (holdTimeout.current) { clearTimeout(holdTimeout.current); holdTimeout.current = null; }
+    if (holdInterval.current) { clearInterval(holdInterval.current); holdInterval.current = null; }
   };
 
-  const handleItemPress = (item: T, idx: number) => {
-    if (isItemDisabled && isItemDisabled(item)) return;
-    scrollRef.current?.scrollTo({ y: idx * ITEM_H, animated: true });
-    onSelect(item);
+  const startHold = (action: () => void, disabled: boolean) => {
+    if (disabled) return;
+    // Fire immediately on press
+    action();
+    // After HOLD_DELAY_MS, start repeating at HOLD_INTERVAL_MS
+    holdTimeout.current = setTimeout(() => {
+      holdInterval.current = setInterval(action, HOLD_INTERVAL_MS);
+    }, HOLD_DELAY_MS);
   };
+
+  // Clean up on unmount
+  useEffect(() => () => clearHold(), []);
 
   return (
-    <View style={styles.column}>
-      <ScrollView
-        ref={scrollRef}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={ITEM_H}
-        decelerationRate={Platform.OS === 'ios' ? 'normal' : 'fast'}
-        contentContainerStyle={{ paddingTop: PAD_H, paddingBottom: PAD_H }}
-        onScrollBeginDrag={() => {
-          isUserScrolling.current = true;
-        }}
-        onMomentumScrollEnd={handleScrollEnd}
-        onScrollEndDrag={(e) => {
-          if (Platform.OS === 'android') {
-            handleScrollEnd(e);
-          }
-        }}
+    <View style={styles.stepperField}>
+      <TouchableOpacity
+        style={[styles.stepperBtn, incrementDisabled && styles.stepperBtnDisabled]}
+        onPressIn={() => startHold(onIncrement, incrementDisabled)}
+        onPressOut={clearHold}
+        disabled={incrementDisabled}
+        activeOpacity={0.6}
       >
-        {items.map((item, idx) => {
-          const isSelected = item === selectedValue;
-          const dist = Math.abs(idx - selectedIndex);
-          const disabled = isItemDisabled ? isItemDisabled(item) : false;
+        <ChevronUpIcon color={incrementDisabled ? '#C6CAD4' : TEXT_DARK} />
+      </TouchableOpacity>
 
-          let itemColor = '#5f6368';
-          let itemSize = 20;
-          let itemOpacity = 0.35;
-          let fontWeight: '400' | '600' | '700' = '400';
+      <Text style={styles.stepperValue}>{displayValue}</Text>
 
-          if (disabled) {
-            itemColor = '#333333';
-            itemOpacity = 0.15;
-            itemSize = 18;
-          } else if (isSelected) {
-            itemColor = '#8ab4f8';
-            itemSize = 26;
-            itemOpacity = 1;
-            fontWeight = '700';
-          } else if (dist === 1) {
-            itemColor = '#9aa0a6';
-            itemSize = 22;
-            itemOpacity = 0.65;
-            fontWeight = '600';
-          }
+      <TouchableOpacity
+        style={[styles.stepperBtn, decrementDisabled && styles.stepperBtnDisabled]}
+        onPressIn={() => startHold(onDecrement, decrementDisabled)}
+        onPressOut={clearHold}
+        disabled={decrementDisabled}
+        activeOpacity={0.6}
+      >
+        <ChevronDownIcon color={decrementDisabled ? '#C6CAD4' : TEXT_DARK} />
+      </TouchableOpacity>
 
-          return (
-            <TouchableOpacity
-              key={String(item)}
-              activeOpacity={disabled ? 1 : 0.7}
-              onPress={() => handleItemPress(item, idx)}
-              style={styles.itemRow}
-            >
-              <Text
-                style={[
-                  styles.itemText,
-                  {
-                    color: itemColor,
-                    fontSize: itemSize,
-                    opacity: itemOpacity,
-                    fontWeight,
-                  },
-                ]}
-              >
-                {renderLabel(item)}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      <Text style={styles.stepperLabel}>{label}</Text>
     </View>
   );
-}
+};
 
-export const ScrollTimePickerModal: React.FC<ScrollTimePickerModalProps> = ({
-  visible,
+// ─────────────────────────────────────────────
+// STANDALONE STEPPED TIME PICKER COMPONENT
+// ─────────────────────────────────────────────
+
+export const SteppedTimePicker: React.FC<SteppedTimePickerProps> = ({
   initialTime,
   initialHour,
   initialMinute,
   initialPeriod,
-  title = 'Select Time',
+  title = 'Set Time',
+  subtitle = 'Choose a time in 12-hour format',
   maxTime,
   minTime,
   onConfirm,
   onCancel,
+  onReset,
 }) => {
-  const [hour, setHour] = useState<number>(12);
-  const [minute, setMinute] = useState<number>(0);
-  const [period, setPeriod] = useState<'AM' | 'PM'>('PM');
+  const initialValues = useMemo(
+    () =>
+      resolveInitialState({
+        initialTime,
+        initialHour,
+        initialMinute,
+        initialPeriod,
+        maxTime,
+        minTime,
+      }),
+    [initialTime, initialHour, initialMinute, initialPeriod, maxTime, minTime]
+  );
 
-  // Initialize state when modal opens
+  const [hour, setHour] = useState<number>(initialValues.hour);
+  const [minute, setMinute] = useState<number>(initialValues.minute);
+  const [period, setPeriod] = useState<'AM' | 'PM'>(initialValues.period);
+
   useEffect(() => {
-    if (!visible) return;
+    const resolved = resolveInitialState({
+      initialTime,
+      initialHour,
+      initialMinute,
+      initialPeriod,
+      maxTime,
+      minTime,
+    });
+    setHour(resolved.hour);
+    setMinute(resolved.minute);
+    setPeriod(resolved.period);
+  }, [initialTime, initialHour, initialMinute, initialPeriod, maxTime, minTime]);
 
-    let h = 12;
-    let m = 0;
-    let p: 'AM' | 'PM' = 'PM';
+  const totalMinutesFor = useCallback(
+    (h: number, m: number, p: 'AM' | 'PM') => computeHour24(h, p) * 60 + m,
+    []
+  );
 
-    if (initialTime) {
-      const parsed = parse24HourString(initialTime);
-      h = parsed.hour12;
-      m = parsed.minute;
-      p = parsed.period;
-    } else {
-      h = initialHour !== undefined ? initialHour : 12;
-      m = initialMinute !== undefined ? initialMinute : 0;
-      p = initialPeriod || 'PM';
+  const maxMins = maxTime ? maxTime.hour24 * 60 + maxTime.minute : null;
+  const minMins = minTime ? minTime.hour24 * 60 + minTime.minute : null;
+
+  // ─────────────────────────────────────────────
+  // HOUR STEPPING (wraps 1-12, clamped by min/max)
+  // ─────────────────────────────────────────────
+
+  const stepHour = (direction: 1 | -1) => {
+    let nextHour = hour + direction;
+    if (nextHour > 12) nextHour = 1;
+    if (nextHour < 1) nextHour = 12;
+
+    let nextMinute = minute;
+    const candidateMins = totalMinutesFor(nextHour, nextMinute, period);
+
+    if (maxMins !== null && candidateMins > maxMins) {
+      if (totalMinutesFor(nextHour, 0, period) > maxMins) return;
+      nextMinute = maxTime!.minute;
     }
 
-    // Clamp if maxTime is provided and initial exceeds maxTime
-    if (maxTime) {
-      const totalMins = computeHour24(h, p) * 60 + m;
-      const maxMins = maxTime.hour24 * 60 + maxTime.minute;
-      if (totalMins > maxMins) {
-        p = maxTime.hour24 >= 12 ? 'PM' : 'AM';
-        let clampedH12 = maxTime.hour24 % 12;
-        if (clampedH12 === 0) clampedH12 = 12;
-        h = clampedH12;
-        m = maxTime.minute;
-      }
+    if (minMins !== null && candidateMins < minMins) {
+      if (totalMinutesFor(nextHour, 59, period) < minMins) return;
+      nextMinute = minTime!.minute;
     }
 
-    setHour(h);
-    setMinute(m);
-    setPeriod(p);
-  }, [visible, initialTime, initialHour, initialMinute, initialPeriod, maxTime]);
-
-  // Check if period is disabled based on maxTime
-  const isPeriodDisabled = (p: 'AM' | 'PM') => {
-    if (!maxTime) return false;
-    // If maxTime is in AM (< 12), then PM is completely in the future!
-    if (p === 'PM' && maxTime.hour24 < 12) {
-      return true;
-    }
-    return false;
+    setHour(nextHour);
+    setMinute(nextMinute);
   };
 
-  // Check if hour is disabled based on maxTime & current period
-  const isHourDisabled = (h: number) => {
-    if (!maxTime) return false;
-    const h24 = computeHour24(h, period);
-    // An hour is disabled if even its 0th minute is in the future
-    const hourStartMins = h24 * 60;
-    const maxMins = maxTime.hour24 * 60 + maxTime.minute;
-    return hourStartMins > maxMins;
+  // ─────────────────────────────────────────────
+  // MINUTE STEPPING (wraps 0-59, clamped by min/max)
+  // ─────────────────────────────────────────────
+
+  const stepMinute = (direction: 1 | -1) => {
+    let nextMinute = minute + direction;
+    if (nextMinute > 59) nextMinute = 0;
+    if (nextMinute < 0) nextMinute = 59;
+
+    const candidateMins = totalMinutesFor(hour, nextMinute, period);
+
+    if (maxMins !== null && candidateMins > maxMins) return;
+    if (minMins !== null && candidateMins < minMins) return;
+
+    setMinute(nextMinute);
   };
 
-  // Check if minute is disabled based on current hour, period & maxTime
-  const isMinuteDisabled = (m: number) => {
-    if (!maxTime) return false;
-    const h24 = computeHour24(hour, period);
-    const totalMins = h24 * 60 + m;
-    const maxMins = maxTime.hour24 * 60 + maxTime.minute;
-    return totalMins > maxMins;
-  };
+  // ─────────────────────────────────────────────
+  // PERIOD SELECTION
+  // ─────────────────────────────────────────────
 
-  // When period changes, ensure hour & minute are not exceeding maxTime
+  const isPeriodDisabled = useCallback(
+    (p: 'AM' | 'PM') => {
+      if (maxTime && p === 'PM' && maxTime.hour24 < 12) return true;
+      if (minTime && p === 'AM' && minTime.hour24 >= 12) return true;
+      return false;
+    },
+    [maxTime, minTime]
+  );
+
   const handlePeriodChange = (newPeriod: 'AM' | 'PM') => {
+    if (isPeriodDisabled(newPeriod)) return;
     setPeriod(newPeriod);
-    if (maxTime) {
-      const h24 = computeHour24(hour, newPeriod);
-      const totalMins = h24 * 60 + minute;
-      const maxMins = maxTime.hour24 * 60 + maxTime.minute;
-      if (totalMins > maxMins) {
-        let clampedH12 = maxTime.hour24 % 12;
-        if (clampedH12 === 0) clampedH12 = 12;
-        setHour(clampedH12);
-        setMinute(maxTime.minute);
-      }
+
+    const candidateMins = totalMinutesFor(hour, minute, newPeriod);
+
+    if (maxMins !== null && candidateMins > maxMins) {
+      let clampedH12 = maxTime!.hour24 % 12;
+      if (clampedH12 === 0) clampedH12 = 12;
+      setHour(clampedH12);
+      setMinute(maxTime!.minute);
+    }
+
+    if (minMins !== null && candidateMins < minMins) {
+      let clampedH12 = minTime!.hour24 % 12;
+      if (clampedH12 === 0) clampedH12 = 12;
+      setHour(clampedH12);
+      setMinute(minTime!.minute);
     }
   };
 
-  // When hour changes, ensure minute is not exceeding maxTime
-  const handleHourChange = (newHour: number) => {
-    setHour(newHour);
-    if (maxTime) {
-      const h24 = computeHour24(newHour, period);
-      const totalMins = h24 * 60 + minute;
-      const maxMins = maxTime.hour24 * 60 + maxTime.minute;
-      if (totalMins > maxMins) {
-        setMinute(maxTime.minute);
-      }
-    }
+  // Stepper boundary disable states
+  const isHourIncrementDisabled = useMemo(() => {
+    if (maxMins === null) return false;
+    let nextHour = hour + 1;
+    if (nextHour > 12) nextHour = 1;
+    return totalMinutesFor(nextHour, 0, period) > maxMins;
+  }, [hour, period, maxMins, totalMinutesFor]);
+
+  const isHourDecrementDisabled = useMemo(() => {
+    if (minMins === null) return false;
+    let nextHour = hour - 1;
+    if (nextHour < 1) nextHour = 12;
+    return totalMinutesFor(nextHour, 59, period) < minMins;
+  }, [hour, period, minMins, totalMinutesFor]);
+
+  const isMinuteIncrementDisabled = useMemo(() => {
+    if (maxMins === null) return false;
+    let nextMinute = minute + 1;
+    if (nextMinute > 59) nextMinute = 0;
+    return totalMinutesFor(hour, nextMinute, period) > maxMins;
+  }, [hour, minute, period, maxMins, totalMinutesFor]);
+
+  const isMinuteDecrementDisabled = useMemo(() => {
+    if (minMins === null) return false;
+    let nextMinute = minute - 1;
+    if (nextMinute < 0) nextMinute = 59;
+    return totalMinutesFor(hour, nextMinute, period) < minMins;
+  }, [hour, minute, period, minMins, totalMinutesFor]);
+
+  // ─────────────────────────────────────────────
+  // RESET / CONFIRM
+  // ─────────────────────────────────────────────
+
+  const handleReset = () => {
+    setHour(initialValues.hour);
+    setMinute(initialValues.minute);
+    setPeriod(initialValues.period);
+    onReset?.();
   };
 
   const handleConfirm = () => {
@@ -339,264 +477,417 @@ export const ScrollTimePickerModal: React.FC<ScrollTimePickerModalProps> = ({
     });
   };
 
-  const currentH24 = computeHour24(hour, period);
   const previewTime = `${pad(hour)}:${pad(minute)} ${period}`;
 
+  return (
+    <View style={styles.card}>
+      {/* HEADER */}
+      <View style={styles.headerRow}>
+        <View style={styles.headerLeft}>
+          <View style={styles.headerIconCircle}>
+            <ClockIcon />
+          </View>
+          <View style={styles.headerTextGroup}>
+            <Text style={styles.headerTitle}>{title}</Text>
+            <Text style={styles.headerSubtitle}>{subtitle}</Text>
+          </View>
+        </View>
+
+        {onCancel && (
+          <TouchableOpacity
+            style={styles.closeBtn}
+            onPress={onCancel}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <CloseIcon />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* OPTIONAL MAX/MIN LIMIT INFO */}
+      {maxTime && (
+        <Text style={styles.limitNotice}>
+          Max allowed: {formatTime12(`${pad(maxTime.hour24)}:${pad(maxTime.minute)}`)}
+        </Text>
+      )}
+
+      {/* STEPPERS */}
+      <View style={styles.steppersRow}>
+        <StepperField
+          label="Hours"
+          value={hour}
+          displayValue={pad(hour)}
+          onIncrement={() => stepHour(1)}
+          onDecrement={() => stepHour(-1)}
+          incrementDisabled={isHourIncrementDisabled}
+          decrementDisabled={isHourDecrementDisabled}
+        />
+
+        <Text style={styles.colonText}>:</Text>
+
+        <StepperField
+          label="Minutes"
+          value={minute}
+          displayValue={pad(minute)}
+          onIncrement={() => stepMinute(1)}
+          onDecrement={() => stepMinute(-1)}
+          incrementDisabled={isMinuteIncrementDisabled}
+          decrementDisabled={isMinuteDecrementDisabled}
+        />
+
+        <View style={styles.periodGroup}>
+          {(['AM', 'PM'] as const).map((p) => {
+            const selected = period === p;
+            const disabled = isPeriodDisabled(p);
+
+            return (
+              <TouchableOpacity
+                key={p}
+                style={[
+                  styles.periodBtn,
+                  selected && styles.periodBtnSelected,
+                  disabled && styles.periodBtnDisabled,
+                ]}
+                onPress={() => handlePeriodChange(p)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.periodBtnText,
+                    selected && styles.periodBtnTextSelected,
+                    disabled && styles.periodBtnTextDisabled,
+                  ]}
+                >
+                  {p}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* SELECTED TIME PREVIEW */}
+      <View style={styles.previewBox}>
+        <View style={styles.previewLabelRow}>
+          <EyeIcon />
+          <Text style={styles.previewLabel}>Selected Time</Text>
+        </View>
+        <Text style={styles.previewValue}>{previewTime}</Text>
+      </View>
+
+      {/* ACTIONS */}
+      <View style={styles.actionsRow}>
+        <TouchableOpacity
+          style={styles.resetBtn}
+          onPress={handleReset}
+          activeOpacity={0.7}
+        >
+          <ResetIcon />
+          <Text style={styles.resetBtnText}>Reset</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.confirmBtn}
+          onPress={handleConfirm}
+          activeOpacity={0.85}
+        >
+          <CheckIcon />
+          <Text style={styles.confirmBtnText}>Confirm Time</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+// ─────────────────────────────────────────────
+// MODAL PRESENTATION WRAPPER
+// ─────────────────────────────────────────────
+
+export const ScrollTimePickerModal: React.FC<ScrollTimePickerModalProps> = ({
+  visible,
+  onCancel,
+  ...pickerProps
+}) => {
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.overlay}>
-        <View style={styles.timePickerContainer}>
-          {/* Header */}
-          <Text style={styles.headerTitle}>{title}</Text>
-          {maxTime && (
-            <Text style={styles.maxTimeNotice}>
-              Cannot select future time (Current limit: {pad(maxTime.hour24)}:{pad(maxTime.minute)})
-            </Text>
-          )}
-
-          {/* Wheel Area */}
-          <View style={styles.wheelArea}>
-            {/* Center Selection Window */}
-            <View style={styles.selectionWindow} pointerEvents="none" />
-
-            {/* Columns */}
-            <View style={styles.columnsRow}>
-              {/* Hour Column */}
-              <WheelColumn
-                items={HOURS}
-                selectedValue={hour}
-                onSelect={handleHourChange}
-                renderLabel={(h) => String(h)}
-                isItemDisabled={isHourDisabled}
-              />
-
-              {/* Colon Separator */}
-              <View style={styles.separatorContainer} pointerEvents="none">
-                <Text style={styles.separatorText}>:</Text>
-              </View>
-
-              {/* Minute Column */}
-              <WheelColumn
-                items={MINUTES}
-                selectedValue={minute}
-                onSelect={setMinute}
-                renderLabel={(m) => pad(m)}
-                isItemDisabled={isMinuteDisabled}
-              />
-
-              {/* Period Column */}
-              <WheelColumn
-                items={PERIODS}
-                selectedValue={period}
-                onSelect={handlePeriodChange}
-                renderLabel={(p) => p}
-                isItemDisabled={isPeriodDisabled}
-              />
-            </View>
-
-            {/* Top Fade Gradient */}
-            <View style={styles.fadeTop} pointerEvents="none">
-              <Svg height={60} width="100%">
-                <Defs>
-                  <SvgLinearGradient id="fadeTopGrad" x1="0" y1="0" x2="0" y2="1">
-                    <Stop offset="0" stopColor="#151515" stopOpacity="1" />
-                    <Stop offset="1" stopColor="#151515" stopOpacity="0" />
-                  </SvgLinearGradient>
-                </Defs>
-                <Rect x="0" y="0" width="100%" height="60" fill="url(#fadeTopGrad)" />
-              </Svg>
-            </View>
-
-            {/* Bottom Fade Gradient */}
-            <View style={styles.fadeBottom} pointerEvents="none">
-              <Svg height={60} width="100%">
-                <Defs>
-                  <SvgLinearGradient id="fadeBottomGrad" x1="0" y1="0" x2="0" y2="1">
-                    <Stop offset="0" stopColor="#151515" stopOpacity="0" />
-                    <Stop offset="1" stopColor="#151515" stopOpacity="1" />
-                  </SvgLinearGradient>
-                </Defs>
-                <Rect x="0" y="0" width="100%" height="60" fill="url(#fadeBottomGrad)" />
-              </Svg>
-            </View>
-          </View>
-
-          {/* Selected Preview Badge */}
-          <View style={styles.demoOutput}>
-            <Text style={styles.demoOutputText}>Selected: {previewTime}</Text>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.actionsRow}>
-            <TouchableOpacity style={[styles.btn, styles.secondaryBtn]} onPress={onCancel} activeOpacity={0.7}>
-              <Text style={styles.secondaryBtnText}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.btn, styles.doneBtn]} onPress={handleConfirm} activeOpacity={0.7}>
-              <Text style={styles.doneBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onCancel}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={onCancel}
+        />
+        <View style={styles.modalCardWrapper}>
+          <SteppedTimePicker
+            {...pickerProps}
+            onCancel={onCancel}
+          />
         </View>
       </View>
     </Modal>
   );
 };
 
-// Backward-compatibility alias
+// Backward-compatibility aliases
 export const AnalogTimePickerModal = ScrollTimePickerModal;
+export default ScrollTimePickerModal;
+
+// ─────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  overlay: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
-  timePickerContainer: {
-    width: 320,
-    maxWidth: '92%',
-    backgroundColor: '#151515',
+
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  modalCardWrapper: {
+    width: '100%',
+    maxWidth: 390,
+    zIndex: 10,
+  },
+
+  card: {
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#262626',
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    borderColor: BORDER,
+    padding: 20,
+    shadowColor: '#1C2130',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 8,
   },
-  headerTitle: {
-    textAlign: 'center',
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#9aa0a6',
-    letterSpacing: 0.3,
-    marginBottom: 4,
-  },
-  maxTimeNotice: {
-    textAlign: 'center',
-    fontSize: 11,
-    color: '#f28b82',
-    marginBottom: 10,
-    paddingHorizontal: 10,
-  },
-  wheelArea: {
-    position: 'relative',
-    height: WHEEL_H,
-    marginVertical: 6,
-  },
-  selectionWindow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: PAD_H,
-    height: ITEM_H,
-    backgroundColor: 'rgba(138, 180, 248, 0.10)',
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: 'rgba(138, 180, 248, 0.35)',
-    borderRadius: 10,
-    zIndex: 1,
-  },
-  columnsRow: {
+
+  headerRow: {
     flexDirection: 'row',
-    height: '100%',
-    zIndex: 2,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
-  column: {
+
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     flex: 1,
-    height: '100%',
   },
-  separatorContainer: {
-    width: 14,
-    height: '100%',
-    justifyContent: 'center',
+
+  headerIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: ACCENT,
     alignItems: 'center',
-    zIndex: 3,
+    justifyContent: 'center',
+    marginRight: 12,
   },
-  separatorText: {
-    color: '#8ab4f8',
-    fontSize: 24,
+
+  headerTextGroup: {
+    flexShrink: 1,
+  },
+
+  headerTitle: {
+    fontSize: 17,
     fontWeight: '700',
-    marginBottom: 4,
+    color: TEXT_DARK,
   },
-  itemRow: {
-    height: ITEM_H,
-    justifyContent: 'center',
+
+  headerSubtitle: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    marginTop: 2,
+  },
+
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
     alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
   },
-  itemText: {
-    fontVariant: ['tabular-nums'],
+
+  limitNotice: {
+    fontSize: 11.5,
+    color: '#E05638',
+    fontWeight: '600',
+    marginBottom: 12,
     textAlign: 'center',
   },
-  fadeTop: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: 60,
-    zIndex: 4,
+
+  steppersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
   },
-  fadeBottom: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 60,
-    zIndex: 4,
-  },
-  demoOutput: {
-    marginVertical: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: '#1e1e1e',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2d2d2d',
+
+  stepperField: {
     alignItems: 'center',
   },
-  demoOutputText: {
-    fontSize: 14,
+
+  stepperBtn: {
+    width: 46,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  stepperBtnDisabled: {
+    backgroundColor: '#F5F6F9',
+  },
+
+  stepperValue: {
+    fontSize: 30,
+    fontWeight: '700',
+    color: TEXT_DARK,
+    fontVariant: ['tabular-nums'],
+    marginVertical: 4,
+    minWidth: 56,
+    textAlign: 'center',
+  },
+
+  stepperLabel: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    marginTop: 4,
+  },
+
+  colonText: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: TEXT_DARK,
+    marginHorizontal: 12,
+    marginTop: -20,
+  },
+
+  periodGroup: {
+    marginLeft: 18,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+
+  periodBtn: {
+    width: 60,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+
+  periodBtnSelected: {
+    backgroundColor: ACCENT,
+  },
+
+  periodBtnDisabled: {
+    backgroundColor: '#F5F6F9',
+  },
+
+  periodBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: TEXT_DARK,
+  },
+
+  periodBtnTextSelected: {
+    color: '#FFFFFF',
+  },
+
+  periodBtnTextDisabled: {
+    color: '#C6CAD4',
+  },
+
+  previewBox: {
+    backgroundColor: ACCENT_LIGHT,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  previewLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+
+  previewLabel: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#8ab4f8',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#5C6478',
+  },
+
+  previewValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: ACCENT,
+    fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
+
   actionsRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    paddingTop: 8,
-  },
-  btn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  secondaryBtn: {
-    backgroundColor: 'transparent',
-  },
-  secondaryBtnText: {
-    color: '#9aa0a6',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  doneBtn: {
-    backgroundColor: 'rgba(138, 180, 248, 0.15)',
+
+  resetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(138, 180, 248, 0.4)',
+    borderColor: BORDER,
+    backgroundColor: '#FFFFFF',
   },
-  doneBtnText: {
-    color: '#8ab4f8',
-    fontSize: 14,
+
+  resetBtnText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: TEXT_MUTED,
+  },
+
+  confirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: ACCENT,
+  },
+
+  confirmBtnText: {
+    fontSize: 13.5,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    color: '#FFFFFF',
   },
 });

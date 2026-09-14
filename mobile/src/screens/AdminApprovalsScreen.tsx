@@ -13,6 +13,7 @@ import {
 import { mobileApi } from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
+import { formatTime12 } from '../utils/time';
 
 interface AdminApprovalsScreenProps {
   onClose?: () => void;
@@ -172,7 +173,7 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
 
               {item.checkInTime && (
                 <Text style={styles.timeInfo}>
-                  Requested: {item.checkInTime} {item.checkOutTime ? `→ ${item.checkOutTime}` : '(Check-in only)'}
+                  Requested: {formatTime12(item.checkInTime)} {item.checkOutTime ? `→ ${formatTime12(item.checkOutTime)}` : '(Check-in only)'}
                 </Text>
               )}
 
@@ -225,23 +226,32 @@ export const AdminApprovalsScreen: React.FC<AdminApprovalsScreenProps> = ({ onCl
                 Adjust attendance time for {editModalItem?.employeeName} ({editModalItem?.datesFormatted})
               </Text>
 
-              <Text style={styles.inputLabel}>Check-In Time (HH:MM / 24h) *</Text>
+              <Text style={styles.inputLabel}>Check-In Time *</Text>
               <TouchableOpacity
                 style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
                 onPress={() => setTimePickerTarget('CHECK_IN')}
                 activeOpacity={0.8}
               >
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{editCheckIn}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{formatTime12(editCheckIn)}</Text>
                 <Text style={{ fontSize: 16 }}>🕒</Text>
               </TouchableOpacity>
 
-              <Text style={styles.inputLabel}>Check-Out Time (Optional / leave blank if check-in only)</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.inputLabel}>Check-Out Time (Optional / leave blank for Check-In only)</Text>
+                {Boolean(editCheckOut) && (
+                  <TouchableOpacity onPress={() => setEditCheckOut('')}>
+                    <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '700' }}>Clear</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <TouchableOpacity
                 style={[styles.textInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
                 onPress={() => setTimePickerTarget('CHECK_OUT')}
                 activeOpacity={0.8}
               >
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{editCheckOut}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: editCheckOut ? '#0F172A' : '#94A3B8' }}>
+                  {editCheckOut ? formatTime12(editCheckOut) : 'Not set (Check-in only)'}
+                </Text>
                 <Text style={{ fontSize: 16 }}>🕒</Text>
               </TouchableOpacity>
 

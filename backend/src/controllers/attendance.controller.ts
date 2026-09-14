@@ -127,11 +127,8 @@ export const attendanceController = {
       let checkOutFormatted: string | null = null;
       let durationFormatted: string | null = null;
       let isCurrentlyWorking = false;
+      let liveOtMinutes = 0;
 
-      // Authoritative 10:30 AM cutoff rule (Requirement 9)
-      const nowMinutes = todayDate.getHours() * 60 + todayDate.getMinutes();
-      const cutoff1030Minutes = 10 * 60 + 30; // 10:30 AM
-      const isPastCutoff = nowMinutes >= cutoff1030Minutes;
 
       if (holiday) {
         displayStatus = 'COMPANY_LEAVE';
@@ -159,13 +156,47 @@ export const attendanceController = {
         } else {
           displayStatus = attendance.status;
         }
+
+        // ── Live / derived overtime calculation ──
+        // DB otMinutes is only set on QR checkout. For live sessions and
+        // admin-approved closings we derive it here.
+        if (attendance.otMinutes != null && attendance.otMinutes > 0) {
+          // Trust the stored value
+          liveOtMinutes = attendance.otMinutes;
+        } else if (schedule) {
+          const scheduleEndParts = schedule.endTime.split(':').map(Number);
+          const scheduleHours = (scheduleEndParts[0] || 0);
+          const scheduleMinutes = (scheduleEndParts[1] || 0);
+          const scheduleTotalMins = scheduleHours * 60 + scheduleMinutes;
+
+          if (isCurrentlyWorking && attendance.checkInTime) {
+            // Live session: compute OT vs. how far past schedule end we are now
+            const now = new Date();
+            // Build a Date for schedule end in the same UTC day as checkInTime
+            const checkInDate = new Date(attendance.checkInTime);
+            const scheduleEndUTC = new Date(checkInDate);
+            // endTime is stored as IST "HH:MM" – convert to UTC offset (+5:30 = 330 min)
+            const IST_OFFSET_MINS = 330;
+            scheduleEndUTC.setUTCHours(scheduleHours, scheduleMinutes, 0, 0);
+            scheduleEndUTC.setTime(scheduleEndUTC.getTime() - IST_OFFSET_MINS * 60 * 1000);
+            if (now > scheduleEndUTC) {
+              liveOtMinutes = calculateDurationMinutes(scheduleEndUTC, now);
+            }
+          } else if (!isCurrentlyWorking && attendance.workingDurationMinutes) {
+            // Completed via admin approval — otMinutes was never saved in DB
+            const workedMins = attendance.workingDurationMinutes;
+            const startParts = schedule.startTime.split(':').map(Number);
+            const startTotal = (startParts[0] || 0) * 60 + (startParts[1] || 0);
+            const scheduleDuration = scheduleTotalMins - startTotal;
+            if (workedMins > scheduleDuration) {
+              liveOtMinutes = workedMins - scheduleDuration;
+            }
+          }
+        }
       } else if (activeRequest) {
         displayStatus = 'WAITING_FOR_APPROVAL';
       } else if (!isWorkingDay) {
         displayStatus = 'WEEKLY_OFF';
-      } else if (isWorkingDay && isPastCutoff) {
-        // Automatically marked ABSENT at or after 10:30 AM (Requirement 9)
-        displayStatus = 'ABSENT';
       } else {
         displayStatus = 'NOT_MARKED';
       }
@@ -176,8 +207,6 @@ export const attendanceController = {
           date: todayStr,
           displayStatus,
           isCurrentlyWorking,
-          isPastCutoff,
-          cutoffTime: '10:30 AM',
           incompletePreviousDay: incompletePreviousAttendance
             ? {
                 date: incompletePreviousAttendance.date,
@@ -203,6 +232,7 @@ export const attendanceController = {
                 checkInFormatted,
                 checkOutFormatted,
                 durationFormatted,
+                liveOtMinutes,
               }
             : null,
           holiday: holiday ? { name: holiday.name, description: holiday.description } : null,
@@ -933,6 +963,9 @@ export const attendanceController = {
       let currentlyWorkingCount = 0;
       let pendingCount = 0;
 
+      const realTodayStr = getTodayDateString();
+      const isPastDate = todayStr < realTodayStr;
+
       const employeeRows = users.map((employee) => {
         const schedule = employee.schedules.find((s) => s.dayOfWeek === dayOfWeek);
         const isWorkingDay = schedule ? schedule.isWorkingDay : dayOfWeek !== 0;
@@ -991,6 +1024,11 @@ export const attendanceController = {
         } else if (!isWorkingDay) {
           status = 'WEEKLY_OFF';
           statusBadge = 'Scheduled Day Off';
+        } else if (isPastDate) {
+          // Past dates with no record are marked ABSENT
+          absentCount++;
+          status = 'ABSENT';
+          statusBadge = '× Absent';
         } else {
           notMarkedCount++;
           status = 'NOT_MARKED';

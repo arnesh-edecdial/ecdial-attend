@@ -10,6 +10,7 @@ import {
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatTime12 } from '../utils/time';
 
 interface AttendanceCalendarScreenProps {
   onClose?: () => void;
@@ -209,11 +210,11 @@ export const AttendanceCalendarScreen: React.FC<AttendanceCalendarScreenProps> =
             <View style={styles.timeRow}>
               <View style={styles.timeBox}>
                 <Text style={styles.timeBoxLabel}>Check-In</Text>
-                <Text style={styles.timeBoxVal}>{selectedDay.checkIn || '—'}</Text>
+                <Text style={styles.timeBoxVal}>{formatTime12(selectedDay.checkIn)}</Text>
               </View>
               <View style={styles.timeBox}>
                 <Text style={styles.timeBoxLabel}>Check-Out</Text>
-                <Text style={styles.timeBoxVal}>{selectedDay.checkOut || '—'}</Text>
+                <Text style={styles.timeBoxVal}>{formatTime12(selectedDay.checkOut)}</Text>
               </View>
             </View>
 

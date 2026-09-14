@@ -12,7 +12,8 @@ import {
 import { mobileApi } from '../services/api';
 import { CalendarDay } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
+import { ScrollTimePickerModal, TimePickerValue } from '../components/ScrollTimePicker';
+import { formatTime12, formatTime24, parse24HourString } from '../utils/time';
 
 interface AttendanceRequestScreenProps {
   onClose: () => void;
@@ -28,10 +29,14 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   initialMode,
 }) => {
   const insets = useSafeAreaInsets();
+  const getLocalDateString = (d: Date = new Date()): string => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const today = new Date();
-  const todayStr = today.toISOString().substring(0, 10);
-  const currentHour24 = today.getHours();
-  const isAfternoonEligible = currentHour24 >= 13; // 1:00 PM Afternoon threshold
+  const todayStr = getLocalDateString(today);
 
   // Sub-Tab Switch: NEW Request vs All My Requests History
   const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY'>('NEW');
@@ -41,6 +46,20 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   const [requestType, setRequestType] = useState<'ATTENDANCE' | 'CLOSING'>(
     initialMode === 'CLOSING' ? 'CLOSING' : 'ATTENDANCE'
   );
+
+  // Synchronize props if opened with specific date/mode
+  useEffect(() => {
+    if (initialDate) {
+      setSelectedDate(initialDate);
+    }
+  }, [initialDate]);
+
+  useEffect(() => {
+    if (initialMode) {
+      setRequestType(initialMode === 'CLOSING' ? 'CLOSING' : 'ATTENDANCE');
+    }
+  }, [initialMode]);
+
 
   // Calendar for Date Picking
   const [year, setYear] = useState<number>(today.getFullYear());
@@ -198,12 +217,7 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
   };
 
   const formatSubmittedTime = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-    } catch {
-      return '';
-    }
+    return formatTime12(dateStr);
   };
 
   // Future Time Limit for Today
@@ -213,6 +227,15 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
     const now = new Date();
     return { hour24: now.getHours(), minute: now.getMinutes() };
   }, [isSelectedDateToday]);
+
+  // Minimum Closing Time if checkIn already exists for the day
+  const minClosingTime = useMemo(() => {
+    if (requestType === 'CLOSING' && selectedDayInfo?.checkIn) {
+      const parsed = parse24HourString(selectedDayInfo.checkIn);
+      return { hour24: parsed.hour24, minute: parsed.minute };
+    }
+    return undefined;
+  }, [requestType, selectedDayInfo]);
 
   // Submit Handler
   const handleSubmit = async () => {
@@ -239,16 +262,14 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
       return;
     }
 
-    if (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible) {
-      Alert.alert(
-        'Closing Time Not Yet Eligible',
-        'Closing time request for today can only be submitted in the afternoon (after 1:00 PM).'
-      );
-      return;
-    }
-
     const checkIn24 = formatTime24h(checkInHour, checkInMinute, checkInPeriod);
     const closing24 = formatTime24h(closingHour, closingMinute, closingPeriod);
+
+    let finalCheckIn = checkIn24;
+    if (requestType === 'CLOSING' && selectedDayInfo?.checkIn) {
+      const parsed = parse24HourString(selectedDayInfo.checkIn);
+      finalCheckIn = formatTime24(parsed.hour12, parsed.minute, parsed.period);
+    }
 
     const payload = {
       requestType:
@@ -258,7 +279,7 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
           ? 'TODAY_ATTENDANCE'
           : 'MISSED_ATTENDANCE',
       dates: [selectedDate],
-      checkInTime: requestType === 'CLOSING' ? selectedDayInfo?.checkIn || checkIn24 : checkIn24,
+      checkInTime: finalCheckIn,
       checkOutTime: requestType === 'CLOSING' ? closing24 : undefined,
       closingTime: requestType === 'CLOSING' ? closing24 : undefined,
       reason: reason.trim(),
@@ -518,30 +539,17 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
                 3. {requestType === 'ATTENDANCE' ? 'START / CHECK-IN TIME' : 'CLOSING / CHECK-OUT TIME'}
               </Text>
 
-              {requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && (
-                <View style={styles.disabledTimeNotice}>
-                  <Text style={{ fontSize: 14 }}>🔒</Text>
-                  <Text style={styles.disabledTimeNoticeText}>
-                    Closing time request is disabled before afternoon. It unlocks at 1:00 PM.
-                  </Text>
-                </View>
-              )}
-
               {isSelectedDateToday && (
                 <View style={styles.futureNotice}>
                   <Text style={{ fontSize: 13 }}>ℹ️</Text>
                   <Text style={styles.futureNoticeText}>
-                    Future times beyond current local time are disabled in the scroll wheel.
+                    Future times beyond current local time are disabled for today.
                   </Text>
                 </View>
               )}
 
               <TouchableOpacity
-                style={[
-                  styles.timeDisplayCard,
-                  requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible && { opacity: 0.5 },
-                ]}
-                disabled={requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible}
+                style={styles.timeDisplayCard}
                 onPress={() => setTimePickerTarget(requestType === 'ATTENDANCE' ? 'IN' : 'OUT')}
               >
                 <View>
@@ -555,7 +563,7 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
                   </Text>
                 </View>
                 <View style={styles.changeTimeBadge}>
-                  <Text style={styles.changeTimeBadgeText}>Scroll Time Wheel ⏱️</Text>
+                  <Text style={styles.changeTimeBadgeText}>Change Time ⏱️</Text>
                 </View>
               </TouchableOpacity>
             </View>
@@ -615,16 +623,10 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
             <TouchableOpacity
               style={[
                 styles.submitBtn,
-                (!!pendingRequestForSelectedDate ||
-                  (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)) &&
-                  styles.submitBtnDisabled,
+                !!pendingRequestForSelectedDate && styles.submitBtnDisabled,
               ]}
               onPress={handleSubmit}
-              disabled={
-                isLoadingSubmit ||
-                !!pendingRequestForSelectedDate ||
-                (requestType === 'CLOSING' && selectedDate === todayStr && !isAfternoonEligible)
-              }
+              disabled={isLoadingSubmit || !!pendingRequestForSelectedDate}
             >
               {isLoadingSubmit ? (
                 <ActivityIndicator color="#FFFFFF" size="small" />
@@ -724,13 +726,13 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
                     {req.checkInTime && (
                       <View style={styles.timeTag}>
                         <Text style={styles.timeTagLabel}>Check-In:</Text>
-                        <Text style={styles.timeTagValue}>{req.checkInTime}</Text>
+                        <Text style={styles.timeTagValue}>{formatTime12(req.checkInTime)}</Text>
                       </View>
                     )}
                     {req.checkOutTime && (
                       <View style={styles.timeTag}>
                         <Text style={styles.timeTagLabel}>Check-Out:</Text>
-                        <Text style={styles.timeTagValue}>{req.checkOutTime}</Text>
+                        <Text style={styles.timeTagValue}>{formatTime12(req.checkOutTime)}</Text>
                       </View>
                     )}
                   </View>
@@ -767,15 +769,17 @@ export const AttendanceRequestScreen: React.FC<AttendanceRequestScreenProps> = (
         </ScrollView>
       )}
 
-      {/* UNIFIED WHEEL SCROLL TIME PICKER */}
+      {/* UNIFIED TIME PICKER MODAL */}
       <ScrollTimePickerModal
         visible={timePickerTarget !== null}
         initialHour={timePickerTarget === 'IN' ? checkInHour : closingHour}
         initialMinute={timePickerTarget === 'IN' ? checkInMinute : closingMinute}
         initialPeriod={timePickerTarget === 'IN' ? checkInPeriod : closingPeriod}
         title={timePickerTarget === 'IN' ? 'Select Check-In Time' : 'Select Closing Time'}
+        subtitle={timePickerTarget === 'IN' ? 'Choose requested arrival time' : 'Choose requested closing time'}
         maxTime={maxAllowedTime}
-        onConfirm={(val) => {
+        minTime={timePickerTarget === 'OUT' ? minClosingTime : undefined}
+        onConfirm={(val: TimePickerValue) => {
           if (timePickerTarget === 'IN') {
             setCheckInHour(val.hour12);
             setCheckInMinute(val.minute);

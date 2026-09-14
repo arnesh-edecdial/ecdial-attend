@@ -17,6 +17,7 @@ import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import { CalendarDay } from '../types';
 import { downloadAndSaveFile } from '../services/fileDownloader';
 import { ScrollTimePickerModal } from '../components/ScrollTimePicker';
+import { formatTime12, formatSchedule12 } from '../utils/time';
 
 interface AdminCalendarScreenProps {
   onClose?: () => void;
@@ -40,9 +41,22 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
   const [resolveStatus, setResolveStatus] = useState<'PRESENT' | 'HALF_DAY' | 'ABSENT' | 'LEAVE'>('PRESENT');
   const [resolveCheckIn, setResolveCheckIn] = useState<string>('09:00');
   const [resolveCheckOut, setResolveCheckOut] = useState<string>('18:00');
+  const [includeClosingTime, setIncludeClosingTime] = useState<boolean>(true);
   const [resolveRemarks, setResolveRemarks] = useState<string>('Admin direct resolution');
   const [timePickerTarget, setTimePickerTarget] = useState<'CHECK_IN' | 'CLOSING' | null>(null);
   const [isSubmittingResolve, setIsSubmittingResolve] = useState<boolean>(false);
+
+  const to24h = (timeStr?: string | null, fallback: string = '09:00'): string => {
+    if (!timeStr) return fallback;
+    const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+    if (!match) return fallback;
+    let h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const period = match[3]?.toUpperCase();
+    if (period === 'PM' && h < 12) h += 12;
+    if (period === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
 
   const fetchCalendar = async () => {
     try {
@@ -325,10 +339,10 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                 <View key={emp.id} style={styles.empRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.empName}>{emp.name}</Text>
-                    <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
+                    <Text style={styles.empRole}>{emp.role} • {formatSchedule12(emp.schedule || '09:00 - 18:00')}</Text>
                     {emp.checkIn && (
                       <Text style={styles.empTimeNote}>
-                        In: {emp.checkIn} {emp.checkOut ? `• Out: ${emp.checkOut}` : ''}
+                        In: {formatTime12(emp.checkIn)} {emp.checkOut ? `• Out: ${formatTime12(emp.checkOut)}` : ''}
                       </Text>
                     )}
                   </View>
@@ -342,9 +356,14 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                       style={styles.resolveBtn}
                       onPress={() => {
                         setSelectedEmpToResolve(emp);
-                        setResolveStatus(emp.status === 'PRESENT' ? 'PRESENT' : 'PRESENT');
-                        setResolveCheckIn('09:00');
-                        setResolveCheckOut('18:00');
+                        const existingIn = to24h(emp.checkIn, '09:00');
+                        const existingOut = to24h(emp.checkOut, '18:00');
+                        const isHalf = emp.status === 'HALF_DAY';
+                        setResolveStatus(isHalf ? 'HALF_DAY' : 'PRESENT');
+                        setResolveCheckIn(existingIn);
+                        setResolveCheckOut(isHalf ? '12:30' : existingOut);
+                        setIncludeClosingTime(Boolean(emp.checkOut || isHalf));
+                        setResolveRemarks('Admin direct resolution');
                         setResolveModalVisible(true);
                       }}
                     >
@@ -378,7 +397,15 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                 <TouchableOpacity
                   key={st}
                   style={[styles.statusOptBtn, resolveStatus === st && styles.statusOptBtnActive]}
-                  onPress={() => setResolveStatus(st)}
+                  onPress={() => {
+                    setResolveStatus(st);
+                    if (st === 'HALF_DAY') {
+                      const loginTime = to24h(selectedEmpToResolve?.checkIn, resolveCheckIn || '09:00');
+                      setResolveCheckIn(loginTime);
+                      setResolveCheckOut('12:30');
+                      setIncludeClosingTime(true);
+                    }
+                  }}
                 >
                   <Text style={[styles.statusOptText, resolveStatus === st && styles.statusOptTextActive]}>
                     {st === 'PRESENT' ? 'Present' : st === 'HALF_DAY' ? 'Half Day' : st === 'ABSENT' ? 'Absent' : 'Leave'}
@@ -388,29 +415,55 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
             </View>
 
             {(resolveStatus === 'PRESENT' || resolveStatus === 'HALF_DAY') && (
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Check-In Time</Text>
+              <View style={{ marginTop: 6, marginBottom: 6 }}>
+                <Text style={styles.inputLabel}>Times to Record</Text>
+                <View style={styles.scopeRow}>
                   <TouchableOpacity
-                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                    onPress={() => setTimePickerTarget('CHECK_IN')}
-                    activeOpacity={0.8}
+                    style={[styles.scopeBtn, !includeClosingTime && styles.scopeBtnActive]}
+                    onPress={() => setIncludeClosingTime(false)}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{resolveCheckIn}</Text>
-                    <Text style={{ fontSize: 16 }}>🕒</Text>
+                    <Text style={[styles.scopeBtnText, !includeClosingTime && styles.scopeBtnTextActive]}>
+                      Check-In Only
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.scopeBtn, includeClosingTime && styles.scopeBtnActive]}
+                    onPress={() => setIncludeClosingTime(true)}
+                  >
+                    <Text style={[styles.scopeBtnText, includeClosingTime && styles.scopeBtnTextActive]}>
+                      Check-In & Closing
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabel}>Closing Time</Text>
-                  <TouchableOpacity
-                    style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                    onPress={() => setTimePickerTarget('CLOSING')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{resolveCheckOut}</Text>
-                    <Text style={{ fontSize: 16 }}>🕒</Text>
-                  </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Check-In Time</Text>
+                    <TouchableOpacity
+                      style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                      onPress={() => setTimePickerTarget('CHECK_IN')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{formatTime12(resolveCheckIn)}</Text>
+                      <Text style={{ fontSize: 16 }}>🕒</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {includeClosingTime && (
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.inputLabel}>
+                        {resolveStatus === 'HALF_DAY' ? 'Closing (12:30 PM)' : 'Closing Time'}
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                        onPress={() => setTimePickerTarget('CLOSING')}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }}>{formatTime12(resolveCheckOut)}</Text>
+                        <Text style={{ fontSize: 16 }}>🕒</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
             )}
@@ -429,12 +482,13 @@ export const AdminCalendarScreen: React.FC<AdminCalendarScreenProps> = ({ onClos
                 if (!selectedEmpToResolve || !selectedDay) return;
                 setIsSubmittingResolve(true);
                 try {
+                  const isTimeActive = resolveStatus === 'PRESENT' || resolveStatus === 'HALF_DAY';
                   const res = await mobileApi.directResolveAttendance({
                     employeeId: selectedEmpToResolve.id,
                     date: selectedDay.date,
                     status: resolveStatus,
-                    checkInTime: resolveCheckIn,
-                    checkOutTime: resolveCheckOut,
+                    checkInTime: isTimeActive ? resolveCheckIn : undefined,
+                    checkOutTime: (isTimeActive && includeClosingTime) ? resolveCheckOut : undefined,
                     remarks: resolveRemarks,
                   });
                   if (res.success) {
@@ -900,6 +954,34 @@ const styles = StyleSheet.create({
   monthExportBannerText: {
     color: '#0066CC',
     fontSize: 12,
+    fontWeight: '800',
+  },
+  scopeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  scopeBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 7,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scopeBtnActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0066CC',
+  },
+  scopeBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  scopeBtnTextActive: {
+    color: '#0066CC',
     fontWeight: '800',
   },
 });

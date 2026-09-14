@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import { mobileApi } from '../services/api';
+import { formatTime12 } from '../utils/time';
 
 interface QRScannerScreenProps {
   onClose: () => void;
@@ -110,7 +111,7 @@ export const QRScannerScreen: React.FC<QRScannerScreenProps> = ({
         setResultState({
           status: 'SUCCESS',
           title: isCheckout ? '✓ Checkout Successful' : '✓ Attendance Marked',
-          message: res.message || (isCheckout ? `Closing Time: ${res.data?.checkOutTime}\nWorked: ${res.data?.workingDuration}` : `Check-in\n${res.data?.checkInTime}`),
+          message: res.message || (isCheckout ? `Closing Time: ${formatTime12(res.data?.checkOutTime)}\nWorked: ${res.data?.workingDuration}` : `Check-in\n${formatTime12(res.data?.checkInTime)}`),
           checkInTime: res.data?.checkInTime,
         });
 

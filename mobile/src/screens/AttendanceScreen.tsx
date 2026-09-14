@@ -19,6 +19,7 @@ import { DynamicQRCode } from '../components/DynamicQRCode';
 import { NotificationCenterModal } from '../components/NotificationCenterModal';
 import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
 import { canSkipAttendance } from '../utils/roles';
+import { formatTime12, formatSchedule12 } from '../utils/time';
 
 interface AttendanceScreenProps {
   onOpenDrawer: () => void;
@@ -351,6 +352,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setCurrentMonthName(`${mNames[d.getMonth()]} ${d.getFullYear()}`);
   }, [userRole]);
 
+  // Auto-refresh every 60 s while the employee is live (CHECKED_IN).
+  // This catches admin-approved closings without requiring a manual pull-to-refresh.
+  useEffect(() => {
+    if (!statusData?.isCurrentlyWorking) return;
+    const interval = setInterval(fetchStatus, 60_000);
+    return () => clearInterval(interval);
+  }, [statusData?.isCurrentlyWorking]);
+
   useEffect(() => {
     if (deviceCoords && (officeConfig || statusData?.office)) {
       const officeLat = Number(officeConfig?.latitude || 11.0168);
@@ -371,21 +380,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   // Timezone-aware local time formatter for Indian Standard Time
   const formatLocalTime = (isoString?: string | null, fallbackFormatted?: string | null): string => {
     if (fallbackFormatted && fallbackFormatted !== '—' && !fallbackFormatted.includes('NaN')) {
-      return fallbackFormatted;
+      return formatTime12(fallbackFormatted);
     }
     if (!isoString) return '—';
-    try {
-      const d = new Date(isoString);
-      if (isNaN(d.getTime())) return fallbackFormatted || '—';
-      return d.toLocaleTimeString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-      });
-    } catch {
-      return fallbackFormatted || '—';
-    }
+    return formatTime12(isoString);
   };
 
   const checkInTimeDisplay = formatLocalTime(
@@ -398,8 +396,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   );
 
   const durationDisplay = statusData?.attendance?.durationFormatted || '00h 00m';
-  const otDisplay = statusData?.attendance?.otMinutes
-    ? `${Math.floor(statusData.attendance.otMinutes / 60)}h ${statusData.attendance.otMinutes % 60}m`
+  const rawOtMins: number = (statusData?.attendance as any)?.liveOtMinutes ?? 0;
+  const otDisplay = rawOtMins > 0
+    ? `${Math.floor(rawOtMins / 60)}h ${String(rawOtMins % 60).padStart(2, '0')}m`
     : '00h 00m';
 
   return (
@@ -820,8 +819,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               </View>
 
               <View style={styles.timeBlock}>
-                <Text style={styles.timeLabel}>{isCompleted ? 'Check In / Out' : 'Check In Time'}</Text>
-                <Text style={styles.timeValue}>{isCheckedIn || isCompleted ? checkInTimeDisplay : '--:--'}</Text>
+                <Text style={styles.timeLabel}>
+                  {isCompleted ? 'Check In / Out' : 'Check In Time'}
+                </Text>
+                <Text style={styles.timeValue}>
+                  {isCheckedIn || isCompleted ? checkInTimeDisplay : '--:--'}
+                </Text>
+                {isCompleted && checkOutTimeDisplay && checkOutTimeDisplay !== '—' && (
+                  <Text style={[styles.timeValue, { fontSize: 13, color: '#059669', marginTop: 2 }]}>
+                    → {checkOutTimeDisplay}
+                  </Text>
+                )}
                 <Text style={styles.dateSubText}>{statusData?.date || 'Aug 20, 2026'}</Text>
               </View>
             </View>
@@ -862,7 +870,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   <View>
                     <Text style={styles.statLabel}>Work Schedule</Text>
                     <Text style={[styles.statVal, { color: '#D97706', fontSize: 10.5 }]}>
-                      {statusData?.schedule ? `${statusData.schedule.startTime} - ${statusData.schedule.endTime}` : '09:00 - 18:00'}
+                      {statusData?.schedule ? formatSchedule12(`${statusData.schedule.startTime} - ${statusData.schedule.endTime}`) : '09:00 AM - 06:00 PM'}
                     </Text>
                   </View>
                 </View>
