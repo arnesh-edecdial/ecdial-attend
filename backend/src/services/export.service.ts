@@ -5,6 +5,7 @@ import {
   formatMinutesToDuration,
   formatTime12h,
   getTodayDateString,
+  isPastCutoffTime,
 } from '../utils/calculations';
 
 function formatFullDateTime(d?: Date | string | null): string {
@@ -98,6 +99,7 @@ export const exportService = {
       'Check-Out Time',
       'Work Duration',
       'Overtime',
+      'Office Location',
     ];
 
     const headerRow = sheet.addRow(headers);
@@ -178,6 +180,9 @@ export const exportService = {
         status = 'UNDER_APPROVAL';
       } else if (!isWorkingDay) {
         status = 'WEEKLY_OFF';
+      } else if (targetDateStr < getTodayDateString() || isPastCutoffTime('10:30')) {
+        absentCount++;
+        status = 'ABSENT';
       } else {
         notMarkedCount++;
         status = 'NOT_MARKED';
@@ -194,6 +199,7 @@ export const exportService = {
         checkOut,
         duration,
         overtime,
+        att?.officeName || '—',
       ]);
 
       row.height = 22;

@@ -10,6 +10,8 @@ import { catalogController } from '../controllers/catalog.controller';
 import { quotationController } from '../controllers/quotation.controller';
 import { customerController } from '../controllers/customer.controller';
 import { notificationController } from '../controllers/notification.controller';
+import { stockRequirementController } from '../controllers/stockRequirement.controller';
+import { catalogueController } from '../controllers/catalogue.controller';
 import { authMiddleware, requireRole } from '../middleware/auth';
 
 const router = Router();
@@ -131,7 +133,14 @@ router.delete(
   holidayController.deleteHoliday
 );
 
-// H. Office Geo-fencing & Settings (Admin only)
+// H. Office Geo-fencing & Settings (Admin only - 3 Locations Supported)
+router.get('/attendance/office-configs', authMiddleware, officeController.listOffices);
+router.put(
+  '/attendance/office-configs/:id',
+  authMiddleware,
+  requireRole(SYSTEM_ADMIN_ROLES),
+  officeController.updateOfficeSlot
+);
 router.get('/attendance/office-config', authMiddleware, officeController.getConfig);
 router.put(
   '/attendance/office-config',
@@ -245,4 +254,86 @@ router.post('/customers', authMiddleware, requireRole(BUSINESS_ROLES), customerC
 router.put('/customers/:id', authMiddleware, requireRole(BUSINESS_ROLES), customerController.updateCustomer);
 router.delete('/customers/:id', authMiddleware, requireRole(BUSINESS_ROLES), customerController.deleteCustomer);
 
+// ==========================================
+// 6. STOCK REQUIREMENTS / ORDER REQUESTS
+// ==========================================
+const STOCK_MANAGEMENT_ROLES = ['ADMIN', 'MANAGER', 'IT_ADMIN', 'SERVICE_MANAGER'] as const;
+
+router.post(
+  '/stock-requirements',
+  authMiddleware,
+  requireRole([...BUSINESS_ROLES]),
+  stockRequirementController.create
+);
+router.get(
+  '/stock-requirements/my',
+  authMiddleware,
+  stockRequirementController.getMyRequests
+);
+router.get(
+  '/stock-requirements',
+  authMiddleware,
+  requireRole(STOCK_MANAGEMENT_ROLES),
+  stockRequirementController.listAll
+);
+router.get(
+  '/stock-requirements/:id',
+  authMiddleware,
+  stockRequirementController.getById
+);
+router.put(
+  '/stock-requirements/:id',
+  authMiddleware,
+  stockRequirementController.update
+);
+router.patch(
+  '/stock-requirements/:id/status',
+  authMiddleware,
+  requireRole(STOCK_MANAGEMENT_ROLES),
+  stockRequirementController.changeStatus
+);
+router.delete(
+  '/stock-requirements/:id',
+  authMiddleware,
+  stockRequirementController.delete
+);
+
+// ==========================================
+// 7. AC CATALOGUES & BROCHURES (CENTRAL SOURCE OF TRUTH)
+// ==========================================
+router.get(
+  '/catalogues',
+  authMiddleware,
+  catalogueController.listCatalogues
+);
+router.get(
+  '/catalogues/:id',
+  authMiddleware,
+  catalogueController.getById
+);
+router.post(
+  '/catalogues/upload',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  catalogueController.uploadDocument
+);
+router.patch(
+  '/catalogues/:id/rename',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  catalogueController.renameCatalogue
+);
+router.delete(
+  '/catalogues/:id',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  catalogueController.deleteCatalogue
+);
+router.get(
+  '/catalogues/:id/download',
+  authMiddleware,
+  catalogueController.downloadCatalogue
+);
+
 export default router;
+

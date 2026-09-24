@@ -239,6 +239,14 @@ const StepperField: React.FC<StepperFieldProps> = ({
   incrementDisabled,
   decrementDisabled,
 }) => {
+  // Keep refs up-to-date on every render so the interval always calls the
+  // latest callback (avoids stale-closure bug where the first step fires but
+  // subsequent ones are ignored because state changed in the parent).
+  const onIncrRef = useRef(onIncrement);
+  const onDecrRef = useRef(onDecrement);
+  onIncrRef.current = onIncrement;
+  onDecrRef.current = onDecrement;
+
   const holdTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -247,13 +255,11 @@ const StepperField: React.FC<StepperFieldProps> = ({
     if (holdInterval.current) { clearInterval(holdInterval.current); holdInterval.current = null; }
   };
 
-  const startHold = (action: () => void, disabled: boolean) => {
+  const startHold = (ref: React.MutableRefObject<() => void>, disabled: boolean) => {
     if (disabled) return;
-    // Fire immediately on press
-    action();
-    // After HOLD_DELAY_MS, start repeating at HOLD_INTERVAL_MS
+    ref.current();   // immediate single step
     holdTimeout.current = setTimeout(() => {
-      holdInterval.current = setInterval(action, HOLD_INTERVAL_MS);
+      holdInterval.current = setInterval(() => ref.current(), HOLD_INTERVAL_MS);
     }, HOLD_DELAY_MS);
   };
 
@@ -264,7 +270,7 @@ const StepperField: React.FC<StepperFieldProps> = ({
     <View style={styles.stepperField}>
       <TouchableOpacity
         style={[styles.stepperBtn, incrementDisabled && styles.stepperBtnDisabled]}
-        onPressIn={() => startHold(onIncrement, incrementDisabled)}
+        onPressIn={() => startHold(onIncrRef, incrementDisabled)}
         onPressOut={clearHold}
         disabled={incrementDisabled}
         activeOpacity={0.6}
@@ -276,7 +282,7 @@ const StepperField: React.FC<StepperFieldProps> = ({
 
       <TouchableOpacity
         style={[styles.stepperBtn, decrementDisabled && styles.stepperBtnDisabled]}
-        onPressIn={() => startHold(onDecrement, decrementDisabled)}
+        onPressIn={() => startHold(onDecrRef, decrementDisabled)}
         onPressOut={clearHold}
         disabled={decrementDisabled}
         activeOpacity={0.6}

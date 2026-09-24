@@ -41,6 +41,7 @@ model User {
   performedAudits    AttendanceAuditLog[] @relation("AuditPerformer")
   notifications      AppNotification[]
   deviceTokens       DevicePushToken[]
+  stockRequirements  StockRequirement[]   @relation("SalesStockRequirements")
 }
 
 model EmployeeSchedule {
@@ -70,11 +71,13 @@ model GovernmentHoliday {
 model OfficeConfig {
   id                  String   @id @default(uuid())
   officeName          String   @default("ECDIAL Headquarters")
+  address             String?  @db.Text
   latitude            Float    @default(13.0827)
   longitude           Float    @default(80.2707)
   allowedRadiusMeters Float    @default(100.0)
   qrRotationSeconds   Int      @default(30)
   isDefault           Boolean  @default(true)
+  slotIndex           Int      @default(1)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
@@ -83,6 +86,8 @@ model Attendance {
   id                     String    @id @default(uuid())
   employeeId             String
   date                   String    // YYYY-MM-DD
+  officeId               String?
+  officeName             String?
   checkInTime            DateTime?
   checkInMethod          String    @default("QR")
   checkInDistance        Float?
@@ -155,9 +160,11 @@ model Product {
   defaultPrice   Float
   availableStock Int      @default(10)
   imageUrl       String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  stockRequirements StockRequirement[]
 }
 
 model Customer {
@@ -170,7 +177,8 @@ model Customer {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  quotations Quotation[]
+  quotations        Quotation[]
+  stockRequirements StockRequirement[]
 
   @@index([createdAt(sort: Desc)])
   @@index([mobile])
@@ -277,3 +285,45 @@ model DevicePushToken {
   @@index([token])
   @@index([userId, isActive])
 }
+
+model StockRequirement {
+  id          String   @id @default(uuid())
+  salesUserId String
+  customerId  String
+  productId   String
+  quantity    Int
+  requestedAt DateTime @default(now())
+  priority    String   @default("NORMAL") // "NORMAL", "URGENT", "EMERGENCY"
+  status      String   @default("PENDING") // "PENDING", "ORDERED", "RECEIVED", "COMPLETED"
+  note        String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  salesUser   User     @relation("SalesStockRequirements", fields: [salesUserId], references: [id], onDelete: Cascade)
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([salesUserId])
+  @@index([customerId])
+  @@index([productId])
+  @@index([status])
+  @@index([priority])
+  @@index([requestedAt(sort: Desc)])
+}
+
+model Catalogue {
+  id           String   @id @default(uuid())
+  displayName  String
+  fileName     String
+  model        String?
+  category     String   @default("Catalogue") // Catalogue, Brochure, Product Document, Other
+  description  String?  @db.Text
+  uploadedById String?
+  fileSize     Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([displayName])
+  @@index([category])
+}
+

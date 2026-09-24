@@ -36,6 +36,8 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'ADMIN_CALENDAR', label: 'Company Calendar & Leave', icon: '📅' },
         { id: 'ADMIN_APPROVALS', label: 'Attendance Requests', icon: '📝' },
         { id: 'STOCK', label: 'Stock & Inventory', icon: '📦' },
+        { id: 'STOCK_REQUIREMENTS', label: 'Stock Requirements', icon: '📋' },
+        { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
         { id: 'ADMIN_MACHINES', label: 'Machine Models', icon: '❄️' },
         { id: 'QUOTATIONS', label: 'All Quotations', icon: '📄' },
         { id: 'LOCATION_CALIBRATION', label: 'Location & Geofence Calibration', icon: '📍' },
@@ -47,14 +49,17 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'CUSTOMERS', label: 'Customer Directory', icon: '👤' },
         { id: 'CALENDAR', label: 'My Attendance Calendar', icon: '📅' },
         { id: 'STOCK', label: 'Stock & Inventory (View Only)', icon: '📦' },
+        { id: 'STOCK_REQUIREMENTS', label: 'My Stock Requests', icon: '📋' },
+        { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
         { id: 'QUOTATIONS', label: 'My Quotations', icon: '📄' },
         { id: 'NEW_QUOTE', label: 'Create Quotation', icon: '➕' },
       ];
     }
-    // Employee
+    // Employee / Technician
     return [
       { id: 'HOME', label: 'Employee Home', icon: '🏠' },
       { id: 'CALENDAR', label: 'My Attendance History', icon: '📅' },
+      { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
       { id: 'REQUEST', label: 'Request Attendance', icon: '📝' },
     ];
   };

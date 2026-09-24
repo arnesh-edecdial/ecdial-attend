@@ -19,6 +19,8 @@ import { AdminMachinesScreen } from './src/screens/AdminMachinesScreen';
 import { AdminApprovalsScreen } from './src/screens/AdminApprovalsScreen';
 import { StockScreen } from './src/screens/StockScreen';
 import { CustomerScreen } from './src/screens/CustomerScreen';
+import { StockRequirementsScreen } from './src/screens/StockRequirementsScreen';
+import { CataloguesScreen } from './src/screens/CataloguesScreen';
 import { QuotationListScreen } from './src/screens/QuotationListScreen';
 import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
@@ -34,7 +36,7 @@ function MainApp() {
   const insets = useSafeAreaInsets();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
-    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS'
+    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES'
   >('HOME');
   const [activeModal, setActiveModal] = useState<
     'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION' | 'CUSTOMERS_MODAL'
@@ -71,6 +73,10 @@ function MainApp() {
       setCurrentTab('STOCK');
     } else if (screen === 'CUSTOMERS') {
       setCurrentTab('CUSTOMERS');
+    } else if (screen === 'STOCK_REQUIREMENTS' || screen === 'STOCK_REQUIREMENT') {
+      setCurrentTab('STOCK_REQUIREMENTS');
+    } else if (screen === 'CATALOGUES' || screen === 'CATALOGUE') {
+      setCurrentTab('CATALOGUES');
     } else if (screen === 'CALENDAR') {
       setCurrentTab('CALENDAR');
     } else {
@@ -152,6 +158,10 @@ function MainApp() {
       setCurrentTab('MACHINES');
     } else if (screenId === 'STOCK') {
       setCurrentTab('STOCK');
+    } else if (screenId === 'STOCK_REQUIREMENTS') {
+      setCurrentTab('STOCK_REQUIREMENTS');
+    } else if (screenId === 'CATALOGUES') {
+      setCurrentTab('CATALOGUES');
     } else if (screenId === 'CUSTOMERS') {
       setCurrentTab('CUSTOMERS');
     } else if (screenId === 'QUOTATIONS') {
@@ -201,6 +211,8 @@ function MainApp() {
             onOpenMachines={() => setCurrentTab('MACHINES')}
             onOpenAdminCalendar={() => setCurrentTab('CALENDAR')}
             onOpenStock={() => setCurrentTab('STOCK')}
+            onOpenStockRequirements={() => setCurrentTab('STOCK_REQUIREMENTS')}
+            onOpenCatalogues={() => setCurrentTab('CATALOGUES')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
             onOpenCustomers={() => setCurrentTab('CUSTOMERS')}
             onOpenLocationCalibration={() => setActiveModal('LOCATION_CALIBRATION')}
@@ -225,7 +237,21 @@ function MainApp() {
         ) : currentTab === 'MACHINES' ? (
           <AdminMachinesScreen />
         ) : currentTab === 'STOCK' ? (
-          <StockScreen userRole={activeUserRole} />
+          <StockScreen
+            userRole={activeUserRole}
+            onOpenStockRequirements={() => setCurrentTab('STOCK_REQUIREMENTS')}
+          />
+        ) : currentTab === 'STOCK_REQUIREMENTS' ? (
+          <StockRequirementsScreen
+            userRole={activeUserRole}
+            userName={activeUserName}
+            onClose={() => setCurrentTab('HOME')}
+          />
+        ) : currentTab === 'CATALOGUES' ? (
+          <CataloguesScreen
+            userRole={activeUserRole}
+            onClose={() => setCurrentTab('HOME')}
+          />
         ) : currentTab === 'CUSTOMERS' ? (
           <CustomerScreen
             userRole={activeUserRole}

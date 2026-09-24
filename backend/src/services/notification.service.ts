@@ -7,8 +7,8 @@ export interface CreateNotificationParams {
   message: string;
   type: string;
   entityId?: string;
-  entityType?: 'ATTENDANCE_REQUEST' | 'QUOTATION' | 'ATTENDANCE' | 'STOCK' | 'CUSTOMER' | 'SYSTEM';
-  targetScreen?: 'ADMIN_APPROVALS' | 'ATTENDANCE_REQUEST' | 'ATTENDANCE' | 'QUOTATION_PREVIEW' | 'STOCK' | 'CUSTOMERS';
+  entityType?: 'ATTENDANCE_REQUEST' | 'QUOTATION' | 'ATTENDANCE' | 'STOCK' | 'CUSTOMER' | 'SYSTEM' | 'STOCK_REQUIREMENT';
+  targetScreen?: 'ADMIN_APPROVALS' | 'ATTENDANCE_REQUEST' | 'ATTENDANCE' | 'QUOTATION_PREVIEW' | 'STOCK' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS';
   metadata?: Record<string, any>;
   channelId?: string;
 }
@@ -226,6 +226,94 @@ export const notificationService = {
       });
     } catch (err) {
       console.error('[Notify Quotation Error]', err);
+    }
+  },
+
+  /**
+   * When Sales creates a Stock Requirement: Notify all Admins / Managers
+   */
+  notifyAdminsOfStockRequirement: async (data: {
+    requirementId: string;
+    salesPersonName: string;
+    customerName: string;
+    productName: string;
+    quantity: number;
+    salesUserId: string;
+  }) => {
+    try {
+      const admins = await prisma.user.findMany({
+        where: {
+          role: { in: ['ADMIN', 'IT_ADMIN', 'HR', 'MANAGER'] },
+          isActive: true,
+          id: { not: data.salesUserId },
+        },
+        select: { id: true },
+      });
+
+      if (admins.length === 0) return;
+
+      const title = 'New stock requirement';
+      const message = `${data.salesPersonName} requested ${data.quantity} ${data.productName} units for ${data.customerName}.`;
+
+      await notificationService.dispatchToUsers(
+        admins.map((a) => a.id),
+        {
+          title,
+          message,
+          type: 'STOCK_REQUIREMENT_CREATED',
+          entityId: data.requirementId,
+          entityType: 'STOCK_REQUIREMENT',
+          targetScreen: 'STOCK_REQUIREMENTS',
+          metadata: {
+            requirementId: data.requirementId,
+            salesUserId: data.salesUserId,
+            salesPersonName: data.salesPersonName,
+            customerName: data.customerName,
+            productName: data.productName,
+            quantity: data.quantity,
+          },
+          channelId: 'stock_alerts',
+        }
+      );
+    } catch (err) {
+      console.error('[Notify Admins Stock Requirement Error]', err);
+    }
+  },
+
+  /**
+   * When Admin updates status of a Stock Requirement: Notify the requesting Sales Person
+   */
+  notifySalesOfStockRequirementStatusChange: async (data: {
+    salesUserId: string;
+    requirementId: string;
+    productName: string;
+    quantity: number;
+    status: string; // "ORDERED", "RECEIVED", "COMPLETED", etc.
+  }) => {
+    try {
+      // Capitalize status nicely: e.g. "ORDERED" -> "Ordered"
+      const statusFormatted = data.status.charAt(0).toUpperCase() + data.status.slice(1).toLowerCase();
+      const title = 'Stock requirement updated';
+      const message = `Your request for ${data.quantity} ${data.productName} units has been marked ${statusFormatted}.`;
+
+      await notificationService.dispatchNotification({
+        userId: data.salesUserId,
+        title,
+        message,
+        type: 'STOCK_REQUIREMENT_UPDATED',
+        entityId: data.requirementId,
+        entityType: 'STOCK_REQUIREMENT',
+        targetScreen: 'STOCK_REQUIREMENTS',
+        metadata: {
+          requirementId: data.requirementId,
+          status: data.status,
+          quantity: data.quantity,
+          productName: data.productName,
+        },
+        channelId: 'stock_alerts',
+      });
+    } catch (err) {
+      console.error('[Notify Sales Stock Requirement Error]', err);
     }
   },
 };

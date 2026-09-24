@@ -23,9 +23,13 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
   onClose,
   onSaved,
 }) => {
-  const [officeName, setOfficeName] = useState<string>('ECDIAL Headquarters');
-  const [latitude, setLatitude] = useState<string>('11.0168');
-  const [longitude, setLongitude] = useState<string>('76.9558');
+  const [offices, setOffices] = useState<any[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<number>(1); // 1, 2, or 3
+
+  const [officeName, setOfficeName] = useState<string>('ECDIAL Tiruppur');
+  const [address, setAddress] = useState<string>('');
+  const [latitude, setLatitude] = useState<string>('11.1085');
+  const [longitude, setLongitude] = useState<string>('77.3411');
   const [radiusMeters, setRadiusMeters] = useState<number>(200);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -36,7 +40,6 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
   const [adminCoords, setAdminCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [liveDistance, setLiveDistance] = useState<number | null>(null);
 
-  // Calculate distance helper
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
     const R = 6371e3;
     const phi1 = (lat1 * Math.PI) / 180;
@@ -52,15 +55,24 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
     return Math.round(R * c * 10) / 10;
   };
 
+  const populateSlotData = (slotNum: number, officeList: any[]) => {
+    const target = officeList.find((o) => (o.slotIndex || 1) === slotNum) || officeList[slotNum - 1];
+    if (target) {
+      setOfficeName(target.officeName || `Office ${slotNum}`);
+      setAddress(target.address || '');
+      setLatitude(String(target.latitude || 11.0168));
+      setLongitude(String(target.longitude || 76.9558));
+      setRadiusMeters(Number(target.allowedRadiusMeters) || 200);
+    }
+  };
+
   const loadConfig = async () => {
     try {
       setIsLoading(true);
-      const res = await mobileApi.getOfficeConfig();
-      if (res && res.success && res.data) {
-        setOfficeName(res.data.officeName || 'ECDIAL Headquarters');
-        setLatitude(String(res.data.latitude || 11.0168));
-        setLongitude(String(res.data.longitude || 76.9558));
-        setRadiusMeters(Number(res.data.allowedRadiusMeters) || 200);
+      const res = await mobileApi.listOfficeConfigs();
+      if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
+        setOffices(res.data);
+        populateSlotData(selectedSlot, res.data);
       }
 
       // Fetch admin device current location for live distance test
@@ -74,20 +86,10 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
             lat: currentLoc.coords.latitude,
             lon: currentLoc.coords.longitude,
           });
-
-          const officeLat = Number(res?.data?.latitude || 11.0168);
-          const officeLon = Number(res?.data?.longitude || 76.9558);
-          const dist = calculateDistance(
-            currentLoc.coords.latitude,
-            currentLoc.coords.longitude,
-            officeLat,
-            officeLon
-          );
-          setLiveDistance(dist);
         }
       }
     } catch (err: any) {
-      console.error('[Load Office Config Error]', err);
+      console.error('[Load Office Configs Error]', err);
     } finally {
       setIsLoading(false);
     }
@@ -96,6 +98,11 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
   useEffect(() => {
     loadConfig();
   }, []);
+
+  const handleSelectSlot = (slotNum: number) => {
+    setSelectedSlot(slotNum);
+    populateSlotData(slotNum, offices);
+  };
 
   // Update live distance when inputs change
   useEffect(() => {
@@ -151,19 +158,35 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
       return;
     }
 
+    const currentOffice = offices.find((o) => (o.slotIndex || 1) === selectedSlot) || offices[selectedSlot - 1];
+    if (!currentOffice || !currentOffice.id) {
+      Alert.alert('Error', 'Unable to find office slot record to update.');
+      return;
+    }
+
     try {
       setIsSaving(true);
-      const res = await mobileApi.updateOfficeConfig({
-        officeName: officeName.trim() || 'ECDIAL Headquarters',
+      const res = await mobileApi.updateOfficeSlot(currentOffice.id, {
+        officeName: officeName.trim() || `ECDIAL Office ${selectedSlot}`,
+        address: address ? address.trim() : null,
         latitude: latNum,
         longitude: lonNum,
         allowedRadiusMeters: radiusMeters,
+        slotIndex: selectedSlot,
       });
 
       if (res && res.success) {
-        Alert.alert('✓ Perimeter Calibrated', `Office geofence has been updated to ${radiusMeters}m around ${officeName}. Employees outside this area will be blocked from QR check-in.`);
+        // Update local state
+        const updatedList = offices.map((o) => (o.id === currentOffice.id ? res.data : o));
+        setOffices(updatedList);
+
+        Alert.alert(
+          '✓ Office Calibrated',
+          `Office ${selectedSlot} (${res.data.officeName}) updated successfully. Radius: ${radiusMeters}m.`
+        );
         if (onSaved) onSaved();
-        onClose();
+      } else {
+        Alert.alert('Error', res?.message || 'Failed to save office configuration.');
       }
     } catch (err: any) {
       Alert.alert('Save Failed', err.message || 'Unable to update office configuration.');
@@ -172,241 +195,245 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
     }
   };
 
-  const RADIUS_PRESETS = [50, 100, 200, 500, 1000, 2000];
+  const RADIUS_PRESETS = [50, 100, 200, 500, 1000];
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Location Calibration</Text>
-          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Office GPS coordinates & geofence perimeter</Text>
+          <Text style={styles.headerTitle}>3 Office Locations</Text>
+          <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>Configure ECDIAL branch GPS coordinates & perimeters</Text>
         </View>
         <TouchableOpacity
           onPress={onClose}
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            backgroundColor: '#F1F5F9',
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}
+          style={styles.closeBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={{ fontSize: 16, fontWeight: '800', color: '#64748B' }}>✕</Text>
         </TouchableOpacity>
       </View>
 
+      {/* 3 OFFICE LOCATION TAB SWITCHER */}
+      <View style={styles.officeTabRow}>
+        {[1, 2, 3].map((slotNum) => {
+          const off = offices.find((o) => (o.slotIndex || 1) === slotNum) || offices[slotNum - 1];
+          const isSelected = selectedSlot === slotNum;
+          const label = off?.officeName ? off.officeName.replace('ECDIAL ', '') : `Office ${slotNum}`;
+
+          return (
+            <TouchableOpacity
+              key={slotNum}
+              style={[styles.officeTab, isSelected && styles.officeTabActive]}
+              onPress={() => handleSelectSlot(slotNum)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 12 }}>🏢</Text>
+              <Text
+                style={[styles.officeTabText, isSelected && styles.officeTabTextActive]}
+                numberOfLines={1}
+              >
+                {label}
+              </Text>
+              {isSelected && <View style={styles.activeDot} />}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {isLoading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color="#0066CC" />
-          <Text style={styles.loadingText}>Loading office geofence data...</Text>
+          <Text style={styles.loadingText}>Loading office locations...</Text>
         </View>
       ) : (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* 1. VISUAL GEOFENCE RADAR / MAP CARD */}
+          {/* VISUAL GEOFENCE RADAR / MAP CARD */}
           <View style={styles.visualCard}>
             <View style={styles.visualHeader}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={{ fontSize: 16 }}>📍</Text>
-                <Text style={styles.visualTitle}>GEOFENCE RADAR PREVIEW</Text>
+                <Text style={styles.visualTitle}>LOCATION {selectedSlot} RADAR</Text>
               </View>
               <View style={styles.radiusPill}>
-                <Text style={styles.radiusPillText}>{radiusMeters} METERS RADIUS</Text>
+                <Text style={styles.radiusPillText}>{radiusMeters}M RADIUS</Text>
               </View>
             </View>
 
-            {/* Stylized Vector Map & Pulse Geofence Circle (Matches Reference Image) */}
+            {/* Stylized Vector Map & Pulse Geofence Circle */}
             <View style={styles.mapCanvas}>
-              <Svg width="100%" height={210} viewBox="0 0 320 210">
-                {/* Background Roads / Map Grids */}
-                <Rect x="0" y="0" width="320" height="210" fill="#F1F5F9" />
-                <Path d="M 0,40 Q 90,60 160,30 T 320,50" stroke="#E2E8F0" strokeWidth="12" fill="none" />
-                <Path d="M 40,0 Q 60,110 30,210" stroke="#E2E8F0" strokeWidth="10" fill="none" />
-                <Path d="M 160,0 L 160,210" stroke="#E2E8F0" strokeWidth="8" fill="none" />
-                <Path d="M 0,160 Q 150,140 320,170" stroke="#E2E8F0" strokeWidth="12" fill="none" />
-                <Path d="M 270,0 Q 250,100 290,210" stroke="#E2E8F0" strokeWidth="10" fill="none" />
+              <Svg width="100%" height={170} viewBox="0 0 320 170">
+                <Rect x="0" y="0" width="320" height="170" fill="#F1F5F9" />
+                <Path d="M 0,35 Q 90,50 160,25 T 320,40" stroke="#E2E8F0" strokeWidth="10" fill="none" />
+                <Path d="M 40,0 Q 60,90 30,170" stroke="#E2E8F0" strokeWidth="8" fill="none" />
+                <Path d="M 160,0 L 160,170" stroke="#E2E8F0" strokeWidth="6" fill="none" />
+                <Path d="M 0,130 Q 150,115 320,140" stroke="#E2E8F0" strokeWidth="10" fill="none" />
+                <Path d="M 270,0 Q 250,80 290,170" stroke="#E2E8F0" strokeWidth="8" fill="none" />
 
                 {/* Outer Geofence Halo Ring */}
-                <Circle cx="160" cy="105" r="78" fill="rgba(16, 185, 129, 0.08)" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4,4" />
+                <Circle cx="160" cy="85" r="65" fill="rgba(16, 185, 129, 0.08)" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4,4" />
                 {/* Inner Geofence Zone */}
-                <Circle cx="160" cy="105" r="54" fill="rgba(16, 185, 129, 0.20)" stroke="#10B981" strokeWidth="2.5" />
+                <Circle cx="160" cy="85" r="45" fill="rgba(16, 185, 129, 0.20)" stroke="#10B981" strokeWidth="2" />
                 {/* Inner Center Radar Ping */}
-                <Circle cx="160" cy="105" r="18" fill="rgba(16, 185, 129, 0.35)" />
+                <Circle cx="160" cy="85" r="14" fill="rgba(16, 185, 129, 0.35)" />
 
                 {/* Center Pin Marker */}
-                <G transform="translate(144, 75)">
-                  {/* Pin Body */}
+                <G transform="translate(148, 62)">
                   <Path
-                    d="M 16 0 C 7.16 0 0 7.16 0 16 C 0 28 16 40 16 40 C 16 40 32 28 32 16 C 32 7.16 24.84 0 16 0 Z"
+                    d="M 12 0 C 5.37 0 0 5.37 0 12 C 0 21 12 30 12 30 C 12 30 24 21 24 12 C 24 5.37 18.63 0 12 0 Z"
                     fill="#0A1E3F"
                   />
-                  {/* Inner Pin Disc */}
-                  <Circle cx="16" cy="15" r="10" fill="#FFFFFF" />
-                  <Circle cx="16" cy="15" r="6" fill="#0066CC" />
+                  <Circle cx="12" cy="11" r="7" fill="#FFFFFF" />
+                  <Circle cx="12" cy="11" r="4" fill="#0066CC" />
                 </G>
-
-                {/* Live Distance Point (Admin Device) */}
-                {liveDistance !== null && (
-                  <G transform="translate(160, 105)">
-                    <Circle
-                      cx={Math.min(70, Math.max(-70, (liveDistance / (radiusMeters || 1)) * 40))}
-                      cy={Math.min(60, Math.max(-60, (liveDistance / (radiusMeters || 1)) * 30))}
-                      r="6"
-                      fill={liveDistance <= radiusMeters ? '#10B981' : '#EF4444'}
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                    />
-                  </G>
-                )}
               </Svg>
-
-              {/* Coordinates Badge */}
-              <View style={styles.coordsOverlay}>
-                <Text style={styles.coordsText}>
-                  {parseFloat(latitude).toFixed(4)}° N, {parseFloat(longitude).toFixed(4)}° E
-                </Text>
-              </View>
             </View>
 
-            {/* Live Distance Status Feedback */}
-            {liveDistance !== null && (
-              <View
+            {/* Live Distance Meter */}
+            <View style={styles.distanceBar}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor:
+                      liveDistance === null ? '#94A3B8' : liveDistance <= radiusMeters ? '#10B981' : '#EF4444',
+                  }}
+                />
+                <Text style={styles.distanceLabel}>Your Device Distance to Office {selectedSlot}:</Text>
+              </View>
+              <Text
                 style={[
-                  styles.distanceStatusBox,
-                  { backgroundColor: liveDistance <= radiusMeters ? '#ECFDF5' : '#FEF2F2' },
+                  styles.distanceValue,
+                  { color: liveDistance === null ? '#64748B' : liveDistance <= radiusMeters ? '#10B981' : '#EF4444' },
                 ]}
               >
-                <Text style={{ fontSize: 16 }}>{liveDistance <= radiusMeters ? '✅' : '⚠️'}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={[
-                      styles.distanceStatusTitle,
-                      { color: liveDistance <= radiusMeters ? '#065F46' : '#991B1B' },
-                    ]}
-                  >
-                    {liveDistance <= radiusMeters
-                      ? `WITHIN PERIMETER (${liveDistance}m away)`
-                      : `OUTSIDE PERIMETER (${liveDistance}m away)`}
-                  </Text>
-                  <Text style={styles.distanceStatusSub}>
-                    {liveDistance <= radiusMeters
-                      ? `Your device is inside the allowed ${radiusMeters}m office perimeter.`
-                      : `Your device is ${liveDistance - radiusMeters}m beyond the allowed ${radiusMeters}m boundary.`}
-                  </Text>
-                </View>
-              </View>
-            )}
+                {liveDistance !== null ? `${liveDistance} m` : 'Calculating...'}
+              </Text>
+            </View>
           </View>
 
-          {/* 2. GPS AUTO-CAPTURE BUTTON */}
-          <TouchableOpacity
-            style={styles.gpsCaptureButton}
-            onPress={handleUseCurrentLocation}
-            disabled={isFetchingGps}
-            activeOpacity={0.85}
-          >
-            {isFetchingGps ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Text style={{ fontSize: 18 }}>📍</Text>
-                <Text style={styles.gpsCaptureText}>Fetch & Calibrate My Current GPS Location</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* 3. SETTINGS FORM */}
+          {/* 2. OFFICE FORM INPUTS */}
           <View style={styles.formCard}>
-            <Text style={styles.formCardTitle}>OFFICE LOCATION DETAILS</Text>
+            <Text style={styles.sectionTitle}>Office {selectedSlot} Details</Text>
 
             {/* Office Name */}
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Office / Workplace Name</Text>
+              <Text style={styles.inputLabel}>OFFICE / BRANCH NAME</Text>
               <TextInput
                 style={styles.textInput}
                 value={officeName}
                 onChangeText={setOfficeName}
-                placeholder="e.g. ECDIAL Headquarters"
+                placeholder="e.g. ECDIAL Tiruppur"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+
+            {/* Address / Location */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>ADDRESS / LOCATION DETAILS</Text>
+              <TextInput
+                style={[styles.textInput, { height: 42 }]}
+                value={address}
+                onChangeText={setAddress}
+                placeholder="e.g. Avinashi Road, Tiruppur, Tamil Nadu"
                 placeholderTextColor="#94A3B8"
               />
             </View>
 
             {/* Coordinates Row */}
-            <View style={styles.rowTwo}>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.inputLabel}>Latitude</Text>
+                <Text style={styles.inputLabel}>LATITUDE</Text>
                 <TextInput
                   style={styles.textInput}
                   value={latitude}
                   onChangeText={setLatitude}
                   keyboardType="numeric"
-                  placeholder="11.016842"
+                  placeholder="11.0168"
                   placeholderTextColor="#94A3B8"
                 />
               </View>
 
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.inputLabel}>Longitude</Text>
+                <Text style={styles.inputLabel}>LONGITUDE</Text>
                 <TextInput
                   style={styles.textInput}
                   value={longitude}
                   onChangeText={setLongitude}
                   keyboardType="numeric"
-                  placeholder="76.955833"
+                  placeholder="76.9558"
                   placeholderTextColor="#94A3B8"
                 />
               </View>
             </View>
 
+            {/* Use Current Device Location Button */}
+            <TouchableOpacity
+              style={styles.gpsBtn}
+              onPress={handleUseCurrentLocation}
+              disabled={isFetchingGps}
+              activeOpacity={0.8}
+            >
+              {isFetchingGps ? (
+                <ActivityIndicator size="small" color="#0066CC" />
+              ) : (
+                <>
+                  <Text style={{ fontSize: 16 }}>🎯</Text>
+                  <Text style={styles.gpsBtnText}>Use My Current Device Location</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
             {/* Radius Presets */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Allowed Attendance Radius (Meters)</Text>
+            <View style={[styles.inputGroup, { marginTop: 14 }]}>
+              <Text style={styles.inputLabel}>ALLOWED ATTENDANCE PERIMETER RADIUS</Text>
               <View style={styles.presetsRow}>
                 {RADIUS_PRESETS.map((preset) => (
                   <TouchableOpacity
                     key={preset}
-                    style={[
-                      styles.presetChip,
-                      radiusMeters === preset && styles.presetChipActive,
-                    ]}
+                    style={[styles.presetChip, radiusMeters === preset && styles.presetChipActive]}
                     onPress={() => setRadiusMeters(preset)}
+                    activeOpacity={0.8}
                   >
-                    <Text
-                      style={[
-                        styles.presetChipText,
-                        radiusMeters === preset && styles.presetChipTextActive,
-                      ]}
-                    >
+                    <Text style={[styles.presetText, radiusMeters === preset && styles.presetTextActive]}>
                       {preset}m
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
+            </View>
 
+            {/* Custom Radius Input */}
+            <View style={[styles.inputGroup, { marginTop: 8 }]}>
+              <Text style={{ fontSize: 11, color: '#64748B', marginBottom: 4 }}>Or Custom Radius (meters):</Text>
               <TextInput
-                style={[styles.textInput, { marginTop: 8 }]}
+                style={styles.textInput}
                 value={String(radiusMeters)}
-                onChangeText={(val) => setRadiusMeters(parseInt(val, 10) || 0)}
+                onChangeText={(val) => {
+                  const n = parseInt(val, 10);
+                  if (!isNaN(n)) setRadiusMeters(n);
+                  else if (val === '') setRadiusMeters(0);
+                }}
                 keyboardType="numeric"
-                placeholder="Custom radius (e.g. 150)"
+                placeholder="200"
                 placeholderTextColor="#94A3B8"
               />
             </View>
           </View>
 
-          {/* 4. SAVE & APPLY BUTTON */}
+          {/* SAVE BUTTON */}
           <TouchableOpacity
-            style={[styles.saveButton, isSaving && { opacity: 0.7 }]}
+            style={[styles.saveBtn, isSaving && { opacity: 0.7 }]}
             onPress={handleSave}
             disabled={isSaving}
-            activeOpacity={0.88}
+            activeOpacity={0.8}
           >
             {isSaving ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
+              <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Text style={styles.saveButtonText}>Save & Apply Geofence Perimeter</Text>
+              <Text style={styles.saveBtnText}>Save Office {selectedSlot} Configuration</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -418,67 +445,98 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderColor: '#1E293B',
-    backgroundColor: '#0F172A',
-  },
-  backBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: '#1E293B',
-    borderRadius: 8,
-  },
-  backBtnText: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '700',
+    borderBottomColor: '#E2E8F0',
   },
   headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    color: '#0A1E3F',
   },
-  scroll: {
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  officeTabRow: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 8,
+  },
+  officeTab: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-    gap: 14,
+  officeTabActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#0066CC',
+  },
+  officeTabText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  officeTabTextActive: {
+    color: '#0066CC',
+    fontWeight: '700',
+  },
+  activeDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#0066CC',
   },
   centerBox: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   loadingText: {
-    marginTop: 12,
     fontSize: 13,
     color: '#64748B',
-    fontWeight: '600',
+    marginTop: 10,
+    fontWeight: '500',
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
   visualCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 3,
+    marginBottom: 16,
   },
   visualHeader: {
     flexDirection: 'row',
@@ -487,104 +545,74 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderColor: '#F1F5F9',
+    borderBottomColor: '#F1F5F9',
   },
   visualTitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
-    color: '#0A1E3F',
+    color: '#475569',
     letterSpacing: 0.5,
   },
   radiusPill: {
     backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 6,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
   radiusPillText: {
-    color: '#065F46',
-    fontSize: 9.5,
+    fontSize: 10,
     fontWeight: '800',
+    color: '#065F46',
   },
   mapCanvas: {
-    position: 'relative',
-    height: 210,
+    width: '100%',
+    height: 170,
     backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  coordsOverlay: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  coordsText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  distanceStatusBox: {
+  distanceBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    padding: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderColor: '#E2E8F0',
+    borderTopColor: '#F1F5F9',
   },
-  distanceStatusTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  distanceStatusSub: {
+  distanceLabel: {
     fontSize: 11,
-    color: '#475569',
-    marginTop: 2,
+    color: '#64748B',
+    fontWeight: '500',
   },
-  gpsCaptureButton: {
-    backgroundColor: '#0066CC',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 13,
-    borderRadius: 12,
-    shadowColor: '#0066CC',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  gpsCaptureText: {
-    color: '#FFFFFF',
-    fontSize: 13.5,
+  distanceValue: {
+    fontSize: 12,
     fontWeight: '800',
   },
   formCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    gap: 12,
+    marginBottom: 16,
   },
-  formCardTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.8,
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0A1E3F',
+    marginBottom: 14,
   },
   inputGroup: {
-    gap: 5,
+    marginBottom: 12,
   },
   inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0F172A',
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 6,
   },
   textInput: {
     backgroundColor: '#F8FAFC',
@@ -592,52 +620,66 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     fontSize: 13,
-    color: '#0F172A',
-    fontWeight: '600',
+    color: '#0A1E3F',
+    fontWeight: '500',
   },
-  rowTwo: {
+  gpsBtn: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 8,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  gpsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0066CC',
   },
   presetsRow: {
     flexDirection: 'row',
+    gap: 8,
     flexWrap: 'wrap',
-    gap: 6,
   },
   presetChip: {
-    backgroundColor: '#F1F5F9',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
   },
   presetChipActive: {
     backgroundColor: '#0066CC',
     borderColor: '#0066CC',
   },
-  presetChipText: {
-    fontSize: 12,
+  presetText: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#475569',
   },
-  presetChipTextActive: {
+  presetTextActive: {
     color: '#FFFFFF',
   },
-  saveButton: {
-    backgroundColor: '#10B981',
+  saveBtn: {
+    backgroundColor: '#0066CC',
+    borderRadius: 10,
     paddingVertical: 14,
-    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#10B981',
-    shadowOpacity: 0.25,
+    shadowColor: '#0066CC',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 3,
   },
-  saveButtonText: {
+  saveBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',

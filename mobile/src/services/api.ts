@@ -167,10 +167,26 @@ export const mobileApi = {
   deleteMachine: (id: string) =>
     request<any>(`/catalog/products/${id}`, { method: 'DELETE' }),
 
-  // Office Configuration & Geofencing Calibration
+  // Office Configuration & Geofencing Calibration (3 Office Locations)
+  listOfficeConfigs: () => request<any>('/attendance/office-configs'),
+  updateOfficeSlot: (id: string, payload: {
+    officeName?: string;
+    address?: string | null;
+    latitude: number;
+    longitude: number;
+    allowedRadiusMeters: number;
+    qrRotationSeconds?: number;
+    isDefault?: boolean;
+    slotIndex?: number;
+  }) =>
+    request<any>(`/attendance/office-configs/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getOfficeConfig: () => request<any>('/attendance/office-config'),
   updateOfficeConfig: (payload: {
     officeName?: string;
+    address?: string | null;
     latitude: number;
     longitude: number;
     allowedRadiusMeters: number;
@@ -244,4 +260,59 @@ export const mobileApi = {
     request<any>('/devices/register', { method: 'POST', body: JSON.stringify(payload) }),
   unregisterDeviceToken: (payload?: { token?: string }) =>
     request<any>('/devices/unregister', { method: 'POST', body: JSON.stringify(payload || {}) }),
+
+  // Stock Requirements / Order Requests
+  createStockRequirement: (payload: {
+    customerId: string;
+    productId: string;
+    quantity: number;
+    priority?: string;
+    note?: string;
+  }) =>
+    request<any>('/stock-requirements', { method: 'POST', body: JSON.stringify(payload) }),
+  getMyStockRequirements: () =>
+    request<any>('/stock-requirements/my'),
+  listStockRequirements: (params?: { status?: string; priority?: string; search?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.append('status', params.status);
+    if (params?.priority) q.append('priority', params.priority);
+    if (params?.search) q.append('search', params.search);
+    return request<any>(`/stock-requirements?${q.toString()}`);
+  },
+  getStockRequirement: (id: string) =>
+    request<any>(`/stock-requirements/${id}`),
+  updateStockRequirement: (id: string, payload: { quantity?: number; priority?: string; note?: string }) =>
+    request<any>(`/stock-requirements/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  changeStockRequirementStatus: (id: string, status: string) =>
+    request<any>(`/stock-requirements/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deleteStockRequirement: (id: string) =>
+    request<any>(`/stock-requirements/${id}`, { method: 'DELETE' }),
+
+  // AC Catalogues & Brochures
+  listCatalogues: (category?: string, search?: string) => {
+    const q = new URLSearchParams();
+    if (category && category !== 'ALL') q.append('category', category);
+    if (search && search.trim().length > 0) q.append('search', search.trim());
+    return request<any>(`/catalogues?${q.toString()}`);
+  },
+  getCatalogue: (id: string) =>
+    request<any>(`/catalogues/${id}`),
+  uploadCatalogue: (payload: {
+    displayName: string;
+    category?: string;
+    description?: string;
+    model?: string;
+    fileBase64: string;
+    fileName?: string;
+  }) =>
+    request<any>('/catalogues/upload', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  renameCatalogue: (id: string, payload: { displayName: string; model?: string; category?: string; description?: string }) =>
+    request<any>(`/catalogues/${id}/rename`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteCatalogue: (id: string) =>
+    request<any>(`/catalogues/${id}`, { method: 'DELETE' }),
+  getCataloguePdfUrl: (id: string, filename?: string) =>
+    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
 };

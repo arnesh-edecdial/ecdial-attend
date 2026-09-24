@@ -214,3 +214,38 @@ export function parseISTDateTime(dateStr: string, timeStr: string): Date {
   return new Date(`${cleanDate}T${h}:${m}:${s}+05:30`);
 }
 
+/**
+ * Evaluates whether the current moment in Indian Standard Time (IST / Asia/Kolkata)
+ * has reached or passed the given cutoff time string (e.g. "10:30").
+ * Returns false before 10:30 AM, and true at or after 10:30 AM.
+ */
+export function isPastCutoffTime(cutoffHHMM: string = '10:30', now: Date = new Date()): boolean {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+    const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+    const currentTotalMins = hour * 60 + minute;
+
+    const [cutoffH, cutoffM] = cutoffHHMM.split(':').map(Number);
+    const cutoffTotalMins = (cutoffH || 0) * 60 + (cutoffM || 0);
+
+    return currentTotalMins >= cutoffTotalMins;
+  } catch {
+    const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+    const istDate = new Date(utcMs + 330 * 60000);
+    const currentTotalMins = istDate.getHours() * 60 + istDate.getMinutes();
+
+    const [cutoffH, cutoffM] = cutoffHHMM.split(':').map(Number);
+    const cutoffTotalMins = (cutoffH || 0) * 60 + (cutoffM || 0);
+
+    return currentTotalMins >= cutoffTotalMins;
+  }
+}
+
+

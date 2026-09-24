@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  AppState,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -33,6 +34,8 @@ interface AttendanceScreenProps {
   onOpenStock?: () => void;
   onOpenEmployees?: () => void;
   onOpenCustomers?: () => void;
+  onOpenStockRequirements?: () => void;
+  onOpenCatalogues?: () => void;
   onOpenLocationCalibration?: () => void;
   onNavigateNotification?: (screen: string, entityId?: string | null, metadata?: any) => void;
   userName?: string;
@@ -51,6 +54,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenStock,
   onOpenEmployees,
   onOpenCustomers,
+  onOpenStockRequirements,
+  onOpenCatalogues,
   onOpenLocationCalibration,
   onNavigateNotification,
   userName = 'Employee',
@@ -97,9 +102,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     return Math.round(R * c * 10) / 10;
   };
 
-  const fetchStatus = async () => {
+  const fetchStatus = async (silent: boolean = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       const d = new Date();
       const [statusRes, dashRes, qrRes, calRes, officeRes, notifRes] = await Promise.all([
         mobileApi.getTodayStatus(),
@@ -119,23 +124,25 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         setUnreadNotifsCount(notifRes.data.unreadCount || 0);
       }
 
-      // Check device GPS location
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = (await Location.getLastKnownPositionAsync()) ||
-            (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
-          if (loc && loc.coords) {
-            setDeviceCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
+      // Check device GPS location (only update location if not silent or coords missing)
+      if (!silent || !deviceCoords) {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = (await Location.getLastKnownPositionAsync()) ||
+              (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+            if (loc && loc.coords) {
+              setDeviceCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
+            }
           }
+        } catch (locErr) {
+          console.log('[Attendance GPS Check]', locErr);
         }
-      } catch (locErr) {
-        console.log('[Attendance GPS Check]', locErr);
       }
     } catch (err) {
       console.error('Failed to load status', err);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
@@ -346,19 +353,32 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   };
 
   useEffect(() => {
-    fetchStatus();
+    fetchStatus(false);
     const d = new Date();
     const mNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     setCurrentMonthName(`${mNames[d.getMonth()]} ${d.getFullYear()}`);
   }, [userRole]);
 
-  // Auto-refresh every 60 s while the employee is live (CHECKED_IN).
-  // This catches admin-approved closings without requiring a manual pull-to-refresh.
+  // Periodic 30s background sync while on AttendanceScreen without UI blanking/flicker
   useEffect(() => {
-    if (!statusData?.isCurrentlyWorking) return;
-    const interval = setInterval(fetchStatus, 60_000);
+    const interval = setInterval(() => {
+      fetchStatus(true);
+    }, 30_000);
     return () => clearInterval(interval);
-  }, [statusData?.isCurrentlyWorking]);
+  }, [userRole]);
+
+  // Foreground listener: sync immediately when app resumes from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        fetchStatus(true);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (deviceCoords && (officeConfig || statusData?.office)) {
@@ -406,7 +426,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={isLoading} onRefresh={fetchStatus} tintColor="#10B981" />}
+      refreshControl={<RefreshControl refreshing={isLoading} onRefresh={() => fetchStatus(false)} tintColor="#10B981" />}
     >
       {/* 1. TOP HEADER (Responsive & Safe) */}
       <View style={styles.topHeader}>
@@ -614,7 +634,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   <View key={emp.id} style={styles.empRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.empName}>{emp.name}</Text>
-                      <Text style={styles.empRole}>{emp.role} • {emp.schedule || '09:00 - 18:00'}</Text>
+                      <Text style={styles.empRole}>
+                        {emp.role} • {emp.schedule || '09:00 - 18:00'}
+                        {emp.officeName ? ` • 🏢 ${emp.officeName}` : ''}
+                      </Text>
                     </View>
                     <View style={[styles.empBadge, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empBadgeGreen : emp.status === 'ABSENT' ? styles.empBadgeRed : styles.empBadgeGray]}>
                       <Text style={[styles.empBadgeText, emp.status === 'PRESENT' || emp.status === 'COMPLETED' ? styles.empTextGreen : emp.status === 'ABSENT' ? styles.empTextRed : styles.empTextGray]}>
@@ -746,6 +769,20 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               </View>
               <Text style={styles.actionCardTitle}>Quotations</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenStockRequirements}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
+                <Text style={{ fontSize: 20 }}>📋</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Stock Req</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenCatalogues}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#E0E7FF' }]}>
+                <Text style={{ fontSize: 20 }}>📚</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Catalogues</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -780,6 +817,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 </Text>
                 <Text style={styles.loggedInBannerSub}>
                   Logged in at <Text style={{ fontWeight: '800', color: '#0F172A' }}>{checkInTimeDisplay}</Text>
+                  {((statusData?.attendance as any)?.officeName || statusData?.office?.officeName)
+                    ? ` • 🏢 ${(statusData?.attendance as any)?.officeName || statusData?.office?.officeName}`
+                    : ''}
                   {isCompleted && checkOutTimeDisplay !== '—' ? ` • Closed at ${checkOutTimeDisplay}` : ''}
                 </Text>
               </View>
@@ -807,15 +847,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
               <View style={styles.statusDetails}>
                 <Text style={styles.attendanceLabel}>TODAY'S ATTENDANCE</Text>
-                <Text style={[styles.statusTitle, { color: isCheckedIn ? '#059669' : isCompanyLeave ? '#0284C7' : '#DC2626' }]}>
-                  {isCheckedIn ? 'Checked In' : isCompleted ? 'Completed' : isCompanyLeave ? 'Company Leave' : hasActiveRequest ? 'Under Approval' : 'Not Marked'}
+                <Text style={[styles.statusTitle, { color: isCheckedIn ? '#059669' : isCompanyLeave ? '#0284C7' : statusData?.displayStatus === 'ABSENT' ? '#DC2626' : '#D97706' }]}>
+                  {statusData?.displayStatus === 'ABSENT'
+                    ? 'Absent'
+                    : isCheckedIn
+                    ? 'Checked In'
+                    : isCompleted
+                    ? 'Completed'
+                    : isCompanyLeave
+                    ? 'Company Leave'
+                    : hasActiveRequest
+                    ? 'Under Approval'
+                    : 'Not Marked'}
                 </Text>
                 <View style={[styles.workingPill, isCompanyLeave && { backgroundColor: '#E0F2FE' }]}>
-                  <View style={[styles.workingDot, isCompanyLeave && { backgroundColor: '#0284C7' }]} />
-                  <Text style={[styles.workingText, isCompanyLeave && { color: '#0369A1' }]}>
-                    {isCheckedIn ? 'Working' : isCompleted ? 'Shift Ended' : isCompanyLeave ? 'Holiday' : hasActiveRequest ? 'Pending Admin' : 'Pending'}
+                  <View style={[styles.workingDot, isCompanyLeave && { backgroundColor: '#0284C7' }, statusData?.displayStatus === 'ABSENT' && { backgroundColor: '#DC2626' }]} />
+                  <Text style={[styles.workingText, isCompanyLeave && { color: '#0369A1' }, statusData?.displayStatus === 'ABSENT' && { color: '#DC2626' }]}>
+                    {isCheckedIn
+                      ? 'Working'
+                      : isCompleted
+                      ? 'Shift Ended'
+                      : isCompanyLeave
+                      ? 'Holiday'
+                      : hasActiveRequest
+                      ? 'Pending Admin'
+                      : statusData?.displayStatus === 'ABSENT'
+                      ? 'Marked Absent'
+                      : 'Pending'}
                   </Text>
                 </View>
+                {Boolean((statusData?.attendance as any)?.officeName || statusData?.office?.officeName) && (
+                  <View style={styles.officeTagRow}>
+                    <Text style={styles.officeTagText}>
+                      🏢 {(statusData?.attendance as any)?.officeName || statusData?.office?.officeName}
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <View style={styles.timeBlock}>
@@ -974,22 +1041,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
           {/* QUICK SHORTCUTS FOR SALES (Rules 28) */}
           {userRole === 'SALES' && (
-            <View style={styles.salesShortcutsRow}>
-              <TouchableOpacity
-                style={[styles.salesActionCard, { backgroundColor: '#0066CC' }]}
-                onPress={onOpenQuotations}
-              >
-                <Text style={{ fontSize: 18, color: '#FFFFFF' }}>➕</Text>
-                <Text style={styles.salesActionCardText}>Create Quotation</Text>
-              </TouchableOpacity>
+            <View style={{ gap: 8, marginBottom: 12 }}>
+              <View style={styles.salesShortcutsRow}>
+                <TouchableOpacity
+                  style={[styles.salesActionCard, { backgroundColor: '#0066CC' }]}
+                  onPress={onOpenQuotations}
+                >
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>➕</Text>
+                  <Text style={styles.salesActionCardText}>Create Quotation</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.salesActionCard, { backgroundColor: '#0A1E3F' }]}
-                onPress={onOpenStock}
-              >
-                <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📦</Text>
-                <Text style={styles.salesActionCardText}>View Stock</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.salesActionCard, { backgroundColor: '#0A1E3F' }]}
+                  onPress={onOpenStock}
+                >
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📦</Text>
+                  <Text style={styles.salesActionCardText}>View Stock</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.salesShortcutsRow}>
+                <TouchableOpacity
+                  style={[styles.salesActionCard, { backgroundColor: '#D97706' }]}
+                  onPress={onOpenStockRequirements}
+                >
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📋</Text>
+                  <Text style={styles.salesActionCardText}>Stock Requests</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.salesActionCard, { backgroundColor: '#4338CA' }]}
+                  onPress={onOpenCatalogues}
+                >
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📚</Text>
+                  <Text style={styles.salesActionCardText}>AC Catalogues</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
@@ -2220,5 +2307,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  officeTagRow: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  officeTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0066CC',
   },
 });

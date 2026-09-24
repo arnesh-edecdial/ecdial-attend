@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 interface StockScreenProps {
   onClose?: () => void;
   userRole?: string;
+  onOpenStockRequirements?: () => void;
 }
 
 const DEFAULT_BRANDS = [
@@ -38,6 +39,7 @@ const DEFAULT_BRANDS = [
 export const StockScreen: React.FC<StockScreenProps> = ({
   onClose,
   userRole = 'SALES',
+  onOpenStockRequirements,
 }) => {
   const insets = useSafeAreaInsets();
   const [products, setProducts] = useState<any[]>([]);
@@ -280,6 +282,18 @@ export const StockScreen: React.FC<StockScreenProps> = ({
           )}
         </View>
       </View>
+
+      {/* SECTION SWITCHER: CURRENT STOCK vs STOCK REQUIREMENTS */}
+      {onOpenStockRequirements && (
+        <View style={styles.sectionSwitcher}>
+          <TouchableOpacity style={[styles.switcherTab, styles.switcherTabActive]}>
+            <Text style={[styles.switcherTabText, styles.switcherTabTextActive]}>📦 Current Stock</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.switcherTab} onPress={onOpenStockRequirements}>
+            <Text style={styles.switcherTabText}>📋 Stock Requirements ›</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Search Bar */}
       <View style={styles.searchContainer}>
@@ -1053,5 +1067,32 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13.5,
     fontWeight: '800',
+  },
+  sectionSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 8,
+  },
+  switcherTab: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+  },
+  switcherTabActive: {
+    backgroundColor: '#0066CC',
+  },
+  switcherTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  switcherTabTextActive: {
+    color: '#FFFFFF',
   },
 });

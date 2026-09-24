@@ -9,6 +9,7 @@ import {
   formatMinutesToDuration,
   formatTime12h,
   getTodayDateString,
+  isPastCutoffTime,
 } from '../utils/calculations';
 import { exportService } from '../services/export.service';
 import { qrService } from '../services/qr.service';
@@ -198,7 +199,7 @@ export const attendanceController = {
       } else if (!isWorkingDay) {
         displayStatus = 'WEEKLY_OFF';
       } else {
-        displayStatus = 'NOT_MARKED';
+        displayStatus = isPastCutoffTime('10:30') ? 'ABSENT' : 'NOT_MARKED';
       }
 
       res.json({
@@ -207,6 +208,8 @@ export const attendanceController = {
           date: todayStr,
           displayStatus,
           isCurrentlyWorking,
+          officeId: attendance?.officeId || office?.id || null,
+          officeName: attendance?.officeName || office?.officeName || null,
           incompletePreviousDay: incompletePreviousAttendance
             ? {
                 date: incompletePreviousAttendance.date,
@@ -246,7 +249,9 @@ export const attendanceController = {
             : null,
           office: office
             ? {
-                officeName: office.officeName,
+                id: office.id,
+                officeName: attendance?.officeName || office.officeName,
+                address: office.address,
                 allowedRadiusMeters: office.allowedRadiusMeters,
               }
             : null,
@@ -288,15 +293,20 @@ export const attendanceController = {
         return;
       }
 
-      // Office Configuration
-      const office = (await prisma.officeConfig.findFirst({ where: { isDefault: true } })) ||
-        (await prisma.officeConfig.findFirst()) || {
-          officeName: 'ECDIAL Headquarters',
+      // Office Configurations (Multi-office support for all configured locations)
+      const configuredOffices = await prisma.officeConfig.findMany({
+        orderBy: { slotIndex: 'asc' },
+      });
+      const offices = configuredOffices.length > 0 ? configuredOffices : [
+        {
+          id: 'default',
+          officeName: 'ECDIAL Headquarters - Coimbatore',
           latitude: 11.0168,
           longitude: 76.9558,
           allowedRadiusMeters: 200.0,
           qrRotationSeconds: 30,
-        };
+        },
+      ];
 
       // Validate Static Office QR Token
       const isValidToken =
@@ -324,24 +334,42 @@ export const attendanceController = {
         return;
       }
 
-      const geoResult = isWithinOfficeRadius(
-        Number(latitude),
-        Number(longitude),
-        office.latitude,
-        office.longitude,
-        office.allowedRadiusMeters
-      );
+      // Multi-office perimeter verification: Check which configured office the employee is attending
+      let matchingOffice: any = null;
+      let closestOffice: any = null;
+      let minDistance = Infinity;
 
-      if (!geoResult.isWithin) {
+      for (const off of offices) {
+        const geoCheck = isWithinOfficeRadius(
+          Number(latitude),
+          Number(longitude),
+          off.latitude,
+          off.longitude,
+          off.allowedRadiusMeters
+        );
+        if (geoCheck.distanceMeters < minDistance) {
+          minDistance = geoCheck.distanceMeters;
+          closestOffice = { office: off, geo: geoCheck };
+        }
+        if (geoCheck.isWithin) {
+          matchingOffice = { office: off, geo: geoCheck };
+          break;
+        }
+      }
+
+      if (!matchingOffice) {
         res.status(400).json({
           success: false,
           errorType: 'OUT_OF_OFFICE_RADIUS',
-          message: `You are outside office perimeter (${geoResult.distanceMeters}m away). Must be within ${office.allowedRadiusMeters}m.`,
-          distanceMeters: geoResult.distanceMeters,
-          allowedRadiusMeters: office.allowedRadiusMeters,
+          message: `You are outside office perimeter (${minDistance}m from ${closestOffice?.office?.officeName || 'office'}). Must be within ${closestOffice?.office?.allowedRadiusMeters || 200}m.`,
+          distanceMeters: minDistance,
+          allowedRadiusMeters: closestOffice?.office?.allowedRadiusMeters || 200,
         });
         return;
       }
+
+      const activeOffice = matchingOffice.office;
+      const geoResult = matchingOffice.geo;
 
       // Check existing attendance for today
       const existingAttendance = await prisma.attendance.findUnique({
@@ -372,6 +400,7 @@ export const attendanceController = {
               checkOutLongitude: Number(longitude),
               workingDurationMinutes: durMins,
               otMinutes: otMins,
+              ...(existingAttendance.officeName ? {} : { officeId: activeOffice.id, officeName: activeOffice.officeName }),
             },
           });
 
@@ -390,6 +419,7 @@ export const attendanceController = {
                 checkInTime: checkInDate.toISOString(),
                 checkOutTime: now.toISOString(),
                 workingDurationMinutes: durMins,
+                office: existingAttendance.officeName || activeOffice.officeName,
               }),
             },
           });
@@ -400,12 +430,13 @@ export const attendanceController = {
           res.json({
             success: true,
             action: 'CHECK_OUT',
-            message: `Checkout Successful ✓\nClosing Time: ${checkOutFormatted}\nWorked: ${durFormatted}`,
+            message: `Checkout Successful ✓\nClosing Time: ${checkOutFormatted}\nOffice: ${existingAttendance.officeName || activeOffice.officeName}\nWorked: ${durFormatted}`,
             data: {
               status: 'COMPLETED',
               checkInTime: formatTime12h(checkInDate),
               checkOutTime: checkOutFormatted,
               workingDuration: durFormatted,
+              officeName: existingAttendance.officeName || activeOffice.officeName,
               date: todayStr,
               distanceMeters: geoResult.distanceMeters,
             },
@@ -451,6 +482,8 @@ export const attendanceController = {
           checkInGpsAccuracy: Number(accuracy),
           checkInLatitude: Number(latitude),
           checkInLongitude: Number(longitude),
+          officeId: activeOffice.id,
+          officeName: activeOffice.officeName,
           status: 'PRESENT',
         },
         create: {
@@ -462,6 +495,8 @@ export const attendanceController = {
           checkInGpsAccuracy: Number(accuracy),
           checkInLatitude: Number(latitude),
           checkInLongitude: Number(longitude),
+          officeId: activeOffice.id,
+          officeName: activeOffice.officeName,
           status: 'PRESENT',
           notes: schedule && !schedule.isWorkingDay ? 'Present on Weekly Off' : null,
         },
@@ -479,7 +514,7 @@ export const attendanceController = {
           distance: geoResult.distanceMeters,
           gpsAccuracy: Number(accuracy),
           performedById: employee.id,
-          details: JSON.stringify({ checkInTime: now.toISOString() }),
+          details: JSON.stringify({ checkInTime: now.toISOString(), office: activeOffice.officeName }),
         },
       });
 
@@ -488,10 +523,12 @@ export const attendanceController = {
       res.json({
         success: true,
         action: 'CHECK_IN',
-        message: 'Attendance Marked ✓',
+        message: `Attendance Marked ✓\nOffice: ${activeOffice.officeName}`,
         data: {
           status: 'PRESENT',
           checkInTime: formattedTime,
+          officeName: activeOffice.officeName,
+          officeId: activeOffice.id,
           date: todayStr,
           distanceMeters: geoResult.distanceMeters,
         },
@@ -1024,8 +1061,8 @@ export const attendanceController = {
         } else if (!isWorkingDay) {
           status = 'WEEKLY_OFF';
           statusBadge = 'Scheduled Day Off';
-        } else if (isPastDate) {
-          // Past dates with no record are marked ABSENT
+        } else if (isPastDate || isPastCutoffTime('10:30')) {
+          // Past dates or today after 10:30 AM cutoff with no record are marked ABSENT
           absentCount++;
           status = 'ABSENT';
           statusBadge = '× Absent';
@@ -1047,6 +1084,8 @@ export const attendanceController = {
           status,
           statusBadge,
           isWorking,
+          officeId: attendance?.officeId || null,
+          officeName: attendance?.officeName || null,
           otMinutes: attendance?.otMinutes || 0,
           otStatus: attendance?.otStatus || 'NONE',
           attendanceId: attendance?.id || null,

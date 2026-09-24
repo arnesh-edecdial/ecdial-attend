@@ -12,7 +12,7 @@ export interface User {
 
 export interface TodayAttendanceStatus {
   date: string;
-  displayStatus: 'NOT_MARKED' | 'PRESENT' | 'CHECKED_IN' | 'COMPLETED' | 'WAITING_FOR_APPROVAL' | 'HOLIDAY' | 'COMPANY_LEAVE' | 'WEEKLY_OFF';
+  displayStatus: 'NOT_MARKED' | 'PRESENT' | 'CHECKED_IN' | 'COMPLETED' | 'WAITING_FOR_APPROVAL' | 'HOLIDAY' | 'COMPANY_LEAVE' | 'WEEKLY_OFF' | 'ABSENT';
   attendance: {
     id: string;
     checkInFormatted: string | null;
@@ -22,9 +22,12 @@ export interface TodayAttendanceStatus {
     otMinutes: number;
     otStatus: string;
     notes?: string;
+    officeId?: string | null;
+    officeName?: string | null;
   } | null;
   holiday: { name: string; description?: string } | null;
   isWeeklyOff: boolean;
+  isCurrentlyWorking?: boolean;
   schedule: { startTime: string; endTime: string; isWorkingDay: boolean } | null;
   office: { officeName: string; allowedRadiusMeters: number } | null;
 }
