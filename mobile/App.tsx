@@ -31,9 +31,14 @@ import { Quotation } from './src/types';
 import { notificationService, DeepLinkPayload } from './src/services/notificationService';
 import { canSkipAttendance } from './src/utils/roles';
 import { setAuthToken, setActiveEmployeeId } from './src/services/api';
+import { dataCache } from './src/services/dataCache';
 
 function MainApp() {
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    dataCache.init().catch((err) => console.warn('[App] dataCache init:', err));
+  }, []);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
     'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES'

@@ -13,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { mobileApi } from '../services/api';
+import { dataCache } from '../services/dataCache';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface StockScreenProps {
@@ -42,9 +43,12 @@ export const StockScreen: React.FC<StockScreenProps> = ({
   onOpenStockRequirements,
 }) => {
   const insets = useSafeAreaInsets();
-  const [products, setProducts] = useState<any[]>([]);
+  // Cache-first: initialize with cached data for instant 0ms rendering
+  const [products, setProducts] = useState<any[]>(() => {
+    return dataCache.get<any>('products:ALL:')?.data || [];
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => products.length === 0);
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'MAIN_UNIT' | 'LOW_SIDE'>('ALL');
   const [selectedBrandFilter, setSelectedBrandFilter] = useState<string>('ALL');
 
@@ -78,14 +82,22 @@ export const StockScreen: React.FC<StockScreenProps> = ({
     return item.category === 'LOW_SIDE' ? 'Universal' : 'Other';
   };
 
-  const fetchStock = async () => {
+  const fetchStock = async (forceRefresh: boolean = false) => {
     try {
-      setIsLoading(true);
-      const res = await mobileApi.listProducts(
+      if (forceRefresh && products.length === 0) setIsLoading(true);
+      const res = await mobileApi.getCachedProducts(
         categoryFilter === 'ALL' ? undefined : categoryFilter,
-        searchQuery || undefined
+        searchQuery || undefined,
+        {
+          forceRefresh,
+          onBackgroundUpdate: (fresh) => {
+            if (fresh && fresh.success && Array.isArray(fresh.data)) {
+              setProducts(fresh.data);
+            }
+          },
+        }
       );
-      if (res.success) {
+      if (res && res.success && Array.isArray(res.data)) {
         setProducts(res.data);
       }
     } catch (err) {
@@ -96,7 +108,7 @@ export const StockScreen: React.FC<StockScreenProps> = ({
   };
 
   useEffect(() => {
-    fetchStock();
+    fetchStock(false);
   }, [categoryFilter, searchQuery]);
 
   // Compute all available brands dynamically from products and defaults

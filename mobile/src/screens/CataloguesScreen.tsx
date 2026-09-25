@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
+import { dataCache } from '../services/dataCache';
 import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
 import { CataloguePreviewModal } from './CataloguePreviewModal';
 
@@ -35,8 +36,11 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
   const insets = useSafeAreaInsets();
   const isAdmin = ADMIN_MANAGEMENT_ROLES.includes(userRole.toUpperCase());
 
-  const [catalogues, setCatalogues] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Cache-first: initialize with cached data for instant 0ms rendering
+  const [catalogues, setCatalogues] = useState<any[]>(() => {
+    return dataCache.get<any>('catalogues:ALL:')?.data || [];
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => catalogues.length === 0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -62,11 +66,22 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
   const [selectedPdfDoc, setSelectedPdfDoc] = useState<any | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
 
-  const fetchCatalogues = async () => {
+  const fetchCatalogues = async (forceRefresh: boolean = false) => {
     try {
-      setIsLoading(true);
-      const res = await mobileApi.listCatalogues(selectedCategory);
-      if (res.success && Array.isArray(res.data)) {
+      if (forceRefresh && catalogues.length === 0) setIsLoading(true);
+      const res = await mobileApi.getCachedCatalogues(
+        selectedCategory,
+        searchQuery || undefined,
+        {
+          forceRefresh,
+          onBackgroundUpdate: (fresh) => {
+            if (fresh && fresh.success && Array.isArray(fresh.data)) {
+              setCatalogues(fresh.data);
+            }
+          },
+        }
+      );
+      if (res && res.success && Array.isArray(res.data)) {
         setCatalogues(res.data);
       }
     } catch (err) {
@@ -78,7 +93,7 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
   };
 
   useEffect(() => {
-    fetchCatalogues();
+    fetchCatalogues(false);
   }, [selectedCategory]);
 
   const formatFileSize = (bytes?: number | null): string => {

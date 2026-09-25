@@ -32,13 +32,14 @@ export async function downloadAndSaveFile(options: {
   headers?: Record<string, string>;
   dialogTitle?: string;
   showShareFallbackOnAndroid?: boolean;
+  forceRefresh?: boolean;
 }): Promise<DownloadResult> {
-  const { url, rawFilename, extension, mimeType, headers, dialogTitle, showShareFallbackOnAndroid } = options;
+  const { url, rawFilename, extension, mimeType, headers, dialogTitle, showShareFallbackOnAndroid, forceRefresh = false } = options;
   const cleanName = sanitizeDownloadFilename(rawFilename, `ECDIAL_Export_${Date.now()}`);
   const targetFilename = cleanName.endsWith(`.${extension}`) ? cleanName : `${cleanName}.${extension}`;
 
   try {
-    // 1. Download to dedicated local cache sandbox first
+    // 1. Download or reuse local cache sandbox
     const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
     const exportsDir = `${cacheDir}exports/`;
     const dirInfo = await FileSystem.getInfoAsync(exportsDir);
@@ -46,22 +47,31 @@ export async function downloadAndSaveFile(options: {
       await FileSystem.makeDirectoryAsync(exportsDir, { intermediates: true }).catch(() => {});
     }
     const tempUri = `${exportsDir}${targetFilename}`;
-    // Clear any previous file with the exact name so we always have fresh content
-    await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
 
-    const downloadResult = await FileSystem.downloadAsync(url, tempUri, { headers: headers || {} });
+    // Check if valid local cached file already exists
+    const existingFile = await FileSystem.getInfoAsync(tempUri);
+    const hasValidCache = existingFile.exists && typeof (existingFile as any).size === 'number' && (existingFile as any).size > 100;
 
-    if (!downloadResult || downloadResult.status !== 200) {
-      return {
-        success: false,
-        uri: null,
-        filename: targetFilename,
-        error: `Server responded with HTTP ${downloadResult?.status || 'Error'}.`,
-      };
+    let targetUri = tempUri;
+    if (!hasValidCache || forceRefresh) {
+      if (forceRefresh) {
+        await FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+      }
+      const downloadResult = await FileSystem.downloadAsync(url, tempUri, { headers: headers || {} });
+
+      if (!downloadResult || downloadResult.status !== 200) {
+        return {
+          success: false,
+          uri: null,
+          filename: targetFilename,
+          error: `Server responded with HTTP ${downloadResult?.status || 'Error'}.`,
+        };
+      }
+      targetUri = downloadResult.uri;
     }
 
     // 2. Physical File Integrity Verification
-    const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+    const fileInfo = await FileSystem.getInfoAsync(targetUri);
     if (!fileInfo.exists || typeof (fileInfo as any).size !== 'number' || (fileInfo as any).size < 100) {
       return {
         success: false,
@@ -77,7 +87,7 @@ export async function downloadAndSaveFile(options: {
         // Try StorageAccessFramework to save directly to public folder (e.g. Downloads)
         const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
         if (permissions.granted) {
-          const base64Data = await FileSystem.readAsStringAsync(downloadResult.uri, {
+          const base64Data = await FileSystem.readAsStringAsync(targetUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
 
@@ -109,7 +119,7 @@ export async function downloadAndSaveFile(options: {
 
       // If user cancelled SAF or SAF is unavailable, use native Share/Save dialog
       if (showShareFallbackOnAndroid && (await Sharing.isAvailableAsync())) {
-        await Sharing.shareAsync(downloadResult.uri, {
+        await Sharing.shareAsync(targetUri, {
           mimeType,
           dialogTitle: dialogTitle || `Save ${targetFilename}`,
           UTI: extension === 'pdf' ? 'com.adobe.pdf' : 'org.openxmlformats.spreadsheetml.sheet',
@@ -117,14 +127,14 @@ export async function downloadAndSaveFile(options: {
 
         return {
           success: true,
-          uri: downloadResult.uri,
+          uri: targetUri,
           filename: targetFilename,
         };
       }
     } else {
       // iOS: Trigger native share / quick-look save sheet
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(downloadResult.uri, {
+        await Sharing.shareAsync(targetUri, {
           mimeType,
           dialogTitle: dialogTitle || `Save ${targetFilename}`,
           UTI: extension === 'pdf' ? 'com.adobe.pdf' : 'org.openxmlformats.spreadsheetml.sheet',
@@ -140,7 +150,7 @@ export async function downloadAndSaveFile(options: {
 
     return {
       success: true,
-      uri: downloadResult.uri,
+      uri: targetUri,
       filename: targetFilename,
     };
   } catch (err: any) {
@@ -186,11 +196,14 @@ export async function shareDocument(options: {
         await FileSystem.makeDirectoryAsync(exportsDir, { intermediates: true }).catch(() => {});
       }
       const tempPath = `${exportsDir}${targetFilename}`;
-      await FileSystem.deleteAsync(tempPath, { idempotent: true }).catch(() => {});
-
-      const res = await FileSystem.downloadAsync(url, tempPath, { headers: headers || {} });
-      if (res && res.status === 200 && res.uri) {
-        fileToShare = res.uri;
+      const existingInfo = await FileSystem.getInfoAsync(tempPath);
+      if (existingInfo.exists && typeof (existingInfo as any).size === 'number' && (existingInfo as any).size > 100) {
+        fileToShare = tempPath;
+      } else {
+        const res = await FileSystem.downloadAsync(url, tempPath, { headers: headers || {} });
+        if (res && res.status === 200 && res.uri) {
+          fileToShare = res.uri;
+        }
       }
     }
 

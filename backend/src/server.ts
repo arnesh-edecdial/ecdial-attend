@@ -15,7 +15,8 @@ app.use(
   cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-employee-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-employee-id', 'If-None-Match', 'If-Modified-Since'],
+    exposedHeaders: ['ETag'],
   })
 );
 

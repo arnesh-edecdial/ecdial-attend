@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApi } from '../services/api';
+import { dataCache } from '../services/dataCache';
 import { calculateRequirementUrgency } from '../utils/urgency';
 
 interface StockRequirementsScreenProps {
@@ -33,9 +34,11 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
   const insets = useSafeAreaInsets();
   const isAdmin = ADMIN_MANAGEMENT_ROLES.includes(userRole.toUpperCase());
 
-  // Data states
-  const [requirements, setRequirements] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Data states - cache-first
+  const [requirements, setRequirements] = useState<any[]>(() => {
+    return dataCache.get<any>(`stock_req:${isAdmin ? 'ADMIN' : 'STAFF'}:PENDING:ALL:`)?.data || [];
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => requirements.length === 0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'PENDING' | 'ALL' | 'MY'>('PENDING');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -67,21 +70,25 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
   const [editStatus, setEditStatus] = useState<string>('PENDING');
   const [editNote, setEditNote] = useState<string>('');
 
-  const fetchRequirements = async () => {
+  const fetchRequirements = async (forceRefresh: boolean = false) => {
     try {
-      setIsLoading(true);
-      let res;
-      if (isAdmin && activeTab !== 'MY') {
-        res = await mobileApi.listStockRequirements({
-          status: activeTab === 'PENDING' ? 'PENDING' : undefined,
-          priority: priorityFilter === 'ALL' ? undefined : priorityFilter,
-          search: searchQuery || undefined,
-        });
-      } else {
-        res = await mobileApi.getMyStockRequirements();
-      }
+      if (forceRefresh && requirements.length === 0) setIsLoading(true);
+      const res = await mobileApi.getCachedStockRequirements(
+        isAdmin,
+        activeTab,
+        priorityFilter === 'ALL' ? undefined : priorityFilter,
+        searchQuery || undefined,
+        {
+          forceRefresh,
+          onBackgroundUpdate: (fresh) => {
+            if (fresh && fresh.success && Array.isArray(fresh.data)) {
+              setRequirements(fresh.data);
+            }
+          },
+        }
+      );
 
-      if (res.success && Array.isArray(res.data)) {
+      if (res && res.success && Array.isArray(res.data)) {
         setRequirements(res.data);
       }
     } catch (err) {
@@ -93,7 +100,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
   };
 
   useEffect(() => {
-    fetchRequirements();
+    fetchRequirements(false);
   }, [activeTab, priorityFilter]);
 
   // Load Customers & Products for creation

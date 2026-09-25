@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { dataCache, CACHE_TTL } from './dataCache';
 
 // --------------------------------------------------------------------------
 // PRODUCTION CLOUD API URL (Paste your Railway / Render / Live URL here)
@@ -9,7 +10,6 @@ import Constants from 'expo-constants';
 export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend-production.up.railway.app/api';
 
 function getApiBaseUrl(): string {
-  // 1. If a production cloud URL is specified, always use it
   if (PRODUCTION_API_URL && PRODUCTION_API_URL.trim().length > 0) {
     return PRODUCTION_API_URL.trim();
   }
@@ -18,7 +18,6 @@ function getApiBaseUrl(): string {
     return 'http://localhost:4000/api';
   }
 
-  // 2. Extract host IP from Expo debugger host (e.g. 192.168.151.50:8081 -> 192.168.151.50:4000)
   const hostUri =
     Constants.expoConfig?.hostUri ||
     Constants.manifest2?.extra?.expoGo?.debuggerHost ||
@@ -53,7 +52,16 @@ export function getActiveEmployeeId() {
   return activeEmployeeId;
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export interface ApiResponseWithMeta<T = any> {
+  data: T;
+  etag?: string | null;
+  notModified?: boolean;
+}
+
+export async function requestWithMeta<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<ApiResponseWithMeta<T>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
@@ -61,19 +69,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers as Record<string, string> || {}),
   };
 
+  const url = `${getApiBaseUrl()}${endpoint}`;
   let response: Response;
   try {
-    const url = `${getApiBaseUrl()}${endpoint}`;
-    response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    response = await fetch(url, { ...options, headers });
   } catch (netErr: any) {
     const netError: any = new Error('Unable to connect to Ecdial backend. Please verify your phone is on the same Wi-Fi network.');
     netError.errorType = 'NETWORK_ERROR';
     throw netError;
   }
 
+  if (response.status === 304) {
+    return { data: undefined as any, notModified: true };
+  }
+
+  const etag = response.headers.get('ETag') || response.headers.get('etag');
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
@@ -82,7 +92,45 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw error;
   }
 
-  return data;
+  return { data, etag, notModified: false };
+}
+
+async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase();
+  const url = `${getApiBaseUrl()}${endpoint}`;
+
+  // Automatically deduplicate identical concurrent GET requests
+  if (method === 'GET') {
+    return dataCache.dedupe(url, async () => {
+      const res = await requestWithMeta<T>(endpoint, options);
+      return res.data;
+    });
+  }
+
+  // Non-GET requests (mutations)
+  const res = await requestWithMeta<T>(endpoint, options);
+
+  // Invalidate relevant cache patterns on mutation
+  if (endpoint.includes('/attendance')) {
+    dataCache.invalidate('attendance');
+  }
+  if (endpoint.includes('/stock-requirements')) {
+    dataCache.invalidate('stock-requirements');
+  }
+  if (endpoint.includes('/catalogues')) {
+    dataCache.invalidate('catalogues');
+  }
+  if (endpoint.includes('/catalog/products')) {
+    dataCache.invalidate('products');
+  }
+  if (endpoint.includes('/customers')) {
+    dataCache.invalidate('customers');
+  }
+  if (endpoint.includes('/auth/employees')) {
+    dataCache.invalidate('employees');
+  }
+
+  return res.data;
 }
 
 export const mobileApi = {
@@ -220,7 +268,7 @@ export const mobileApi = {
     return request<any>(`/customers?${params.toString()}`);
   },
   getCustomer: (id: string) => request<any>(`/customers/${id}`),
-  createCustomer: (payload: { name?: string; address?: string; mobile?: string; email?: string; notes?: string }) =>
+  createCustomer: (payload: any) =>
     request<any>('/customers', { method: 'POST', body: JSON.stringify(payload) }),
   updateCustomer: (id: string, payload: any) =>
     request<any>(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
@@ -228,24 +276,29 @@ export const mobileApi = {
     request<any>(`/customers/${id}`, { method: 'DELETE' }),
 
   // Quotations
-  createQuotation: (payload: any) =>
-    request<any>('/quotations', { method: 'POST', body: JSON.stringify(payload) }),
-  listQuotations: (createdBy?: string, status?: string) => {
+  listQuotations: (search?: string, status?: string) => {
     const params = new URLSearchParams();
-    if (createdBy) params.append('createdBy', createdBy);
+    if (search) params.append('search', search);
     if (status) params.append('status', status);
     return request<any>(`/quotations?${params.toString()}`);
   },
   getQuotation: (id: string) => request<any>(`/quotations/${id}`),
-  getQuotationById: (id: string) => request<any>(`/quotations/${id}`),
+  createQuotation: (payload: any) =>
+    request<any>('/quotations', { method: 'POST', body: JSON.stringify(payload) }),
   updateQuotation: (id: string, payload: any) =>
     request<any>(`/quotations/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteQuotation: (id: string) =>
     request<any>(`/quotations/${id}`, { method: 'DELETE' }),
+  changeQuotationStatus: (id: string, status: string, notes?: string) =>
+    request<any>(`/quotations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, notes }) }),
+  getQuotationPdfUrl: (id: string, filename?: string) =>
+    `${getApiBaseUrl()}/quotations/${id}/pdf${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
   getPdfUrl: (id: string, filename?: string) =>
-    `${getApiBaseUrl()}/quotations/${id}/pdf${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
+    `${getApiBaseUrl()}/quotations/${id}/pdf${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
 
-  // Attendance Request Aliases
+  // Attendance Requests (Staff self-service)
+  createAttendanceRequest: (payload: any) =>
+    request<any>('/attendance/requests', { method: 'POST', body: JSON.stringify(payload) }),
   submitAttendanceRequest: (payload: any) =>
     request<any>('/attendance/requests', { method: 'POST', body: JSON.stringify(payload) }),
   getMyAttendanceRequests: () => request<any>('/attendance/requests/my'),
@@ -314,5 +367,154 @@ export const mobileApi = {
   deleteCatalogue: (id: string) =>
     request<any>(`/catalogues/${id}`, { method: 'DELETE' }),
   getCataloguePdfUrl: (id: string, filename?: string) =>
-    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
+    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
+
+  // --------------------------------------------------------------------------
+  // SWR Cache-First Helper Methods (Instant Load + Quiet Background Revalidate)
+  // --------------------------------------------------------------------------
+  getCachedTodayStatus: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      `attendance:status:${activeEmployeeId}`,
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/status/today', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.ATTENDANCE_STATUS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedTodayDashboard: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      'attendance:dashboard:today',
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/dashboard/today', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.DASHBOARD,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedOfficeConfigs: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      'office:configs:all',
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/office-configs', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.OFFICE_CONFIG,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedProducts: (
+    category?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `products:${category || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (category && category !== 'ALL') q.append('category', category);
+        if (search) q.append('search', search);
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/catalog/products?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.PRODUCTS_STOCK,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedCatalogues: (
+    category?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `catalogues:${category || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (category && category !== 'ALL') q.append('category', category);
+        if (search && search.trim().length > 0) q.append('search', search.trim());
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/catalogues?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.CATALOGUES,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedStockRequirements: (
+    isAdmin: boolean,
+    tab: string,
+    priority?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `stock_req:${isAdmin ? 'ADMIN' : 'STAFF'}:${tab}:${priority || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        if (isAdmin && tab !== 'MY') {
+          const q = new URLSearchParams();
+          if (tab === 'PENDING') q.append('status', 'PENDING');
+          if (priority && priority !== 'ALL') q.append('priority', priority);
+          if (search) q.append('search', search);
+          return requestWithMeta<any>(`/stock-requirements?${q.toString()}`, { headers });
+        } else {
+          return requestWithMeta<any>('/stock-requirements/my', { headers });
+        }
+      },
+      {
+        ttlMs: CACHE_TTL.STOCK_REQUIREMENTS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedCustomers: (search?: string, options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    const cacheKey = `customers:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (search) q.append('search', search);
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/customers?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.CUSTOMERS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
 };

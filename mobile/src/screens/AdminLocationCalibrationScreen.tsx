@@ -75,8 +75,8 @@ export const AdminLocationCalibrationScreen: React.FC<AdminLocationCalibrationSc
         populateSlotData(selectedSlot, res.data);
       }
 
-      // Fetch admin device current location for live distance test
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      // Check admin device current location for live distance test (without prompting)
+      const { status } = await Location.getForegroundPermissionsAsync();
       if (status === 'granted') {
         const currentLoc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,

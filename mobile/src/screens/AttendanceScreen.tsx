@@ -14,6 +14,7 @@ import {
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
+import { dataCache } from '../services/dataCache';
 import * as Location from 'expo-location';
 import { TodayAttendanceStatus } from '../types';
 import { DynamicQRCode } from '../components/DynamicQRCode';
@@ -61,10 +62,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   userName = 'Employee',
   userRole = 'EMPLOYEE',
 }) => {
-  const [statusData, setStatusData] = useState<TodayAttendanceStatus | null>(null);
-  const [dashboardData, setDashboardData] = useState<any | null>(null);
+  // Initialize from cache for instant 0ms rendering without blanking or spinners
+  const [statusData, setStatusData] = useState<TodayAttendanceStatus | null>(() => {
+    return dataCache.get<TodayAttendanceStatus>(`attendance:status:${getActiveEmployeeId()}`) || null;
+  });
+  const [dashboardData, setDashboardData] = useState<any | null>(() => {
+    return dataCache.get('attendance:dashboard:today') || null;
+  });
   const [officeQR, setOfficeQR] = useState<any | null>(null);
-  const [officeConfig, setOfficeConfig] = useState<any | null>(null);
+  const [officeConfig, setOfficeConfig] = useState<any | null>(() => {
+    const cachedOffices = dataCache.get<any[]>('office:configs:all');
+    return Array.isArray(cachedOffices) && cachedOffices.length > 0 ? cachedOffices[0] : null;
+  });
   const [calendarDays, setCalendarDays] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDownloadingQR, setIsDownloadingQR] = useState<boolean>(false);
@@ -104,45 +113,61 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const fetchStatus = async (silent: boolean = false) => {
     try {
-      if (!silent) setIsLoading(true);
+      if (!silent && !statusData) setIsLoading(true);
       const d = new Date();
       const [statusRes, dashRes, qrRes, calRes, officeRes, notifRes] = await Promise.all([
-        mobileApi.getTodayStatus(),
-        canSkipAttendance(userRole) ? mobileApi.getTodayDashboard() : Promise.resolve(null),
+        mobileApi.getCachedTodayStatus({
+          forceRefresh: !silent,
+          onBackgroundUpdate: (fresh) => {
+            if (fresh) setStatusData(fresh);
+          },
+        }),
+        canSkipAttendance(userRole)
+          ? mobileApi.getCachedTodayDashboard({
+              forceRefresh: !silent,
+              onBackgroundUpdate: (fresh) => {
+                if (fresh) setDashboardData(fresh);
+              },
+            })
+          : Promise.resolve(null),
         canSkipAttendance(userRole) ? mobileApi.getTodayQR() : Promise.resolve(null),
         mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
-        mobileApi.getOfficeConfig().catch(() => null),
+        mobileApi.getCachedOfficeConfigs({
+          forceRefresh: !silent,
+          onBackgroundUpdate: (freshConfigs) => {
+            if (Array.isArray(freshConfigs) && freshConfigs.length > 0) setOfficeConfig(freshConfigs[0]);
+          },
+        }).catch(() => null),
         mobileApi.listNotifications().catch(() => null),
       ]);
 
-      if (statusRes && statusRes.success) setStatusData(statusRes.data);
-      if (dashRes && dashRes.success) setDashboardData(dashRes.data);
+      if (statusRes) setStatusData(statusRes);
+      if (dashRes) setDashboardData(dashRes);
       if (qrRes && qrRes.success) setOfficeQR(qrRes.data);
       if (calRes && calRes.success) setCalendarDays(calRes.data.days);
-      if (officeRes && officeRes.success && officeRes.data) setOfficeConfig(officeRes.data);
+      if (officeRes && Array.isArray(officeRes) && officeRes.length > 0) setOfficeConfig(officeRes[0]);
       if (notifRes && notifRes.success && notifRes.data) {
         setUnreadNotifsCount(notifRes.data.unreadCount || 0);
       }
 
-      // Check device GPS location (only update location if not silent or coords missing)
-      if (!silent || !deviceCoords) {
-        try {
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const loc = (await Location.getLastKnownPositionAsync()) ||
-              (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
-            if (loc && loc.coords) {
-              setDeviceCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
-            }
+      // Check device GPS location quietly WITHOUT prompting if permission is already granted.
+      // A refresh MUST NEVER prompt or pop up the OS location permission dialog!
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = (await Location.getLastKnownPositionAsync()) ||
+            (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+          if (loc && loc.coords) {
+            setDeviceCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
           }
-        } catch (locErr) {
-          console.log('[Attendance GPS Check]', locErr);
         }
+      } catch (locErr) {
+        console.log('[Attendance GPS Check]', locErr);
       }
     } catch (err) {
       console.error('Failed to load status', err);
     } finally {
-      if (!silent) setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
