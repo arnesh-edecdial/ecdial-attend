@@ -367,7 +367,156 @@ export const mobileApi = {
   deleteCatalogue: (id: string) =>
     request<any>(`/catalogues/${id}`, { method: 'DELETE' }),
   getCataloguePdfUrl: (id: string, filename?: string) =>
-    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
+    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
+
+  // --------------------------------------------------------------------------
+  // SWR Cache-First Helper Methods (Instant Load + Quiet Background Revalidate)
+  // --------------------------------------------------------------------------
+  getCachedTodayStatus: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      `attendance:status:${activeEmployeeId}`,
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/status/today', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.ATTENDANCE_STATUS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedTodayDashboard: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      'attendance:dashboard:today',
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/dashboard/today', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.DASHBOARD,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedOfficeConfigs: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    return dataCache.fetchWithCache(
+      'office:configs:all',
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>('/attendance/office-configs', { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.OFFICE_CONFIG,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedProducts: (
+    category?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `products:${category || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (category && category !== 'ALL') q.append('category', category);
+        if (search) q.append('search', search);
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/catalog/products?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.PRODUCTS_STOCK,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedCatalogues: (
+    category?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `catalogues:${category || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (category && category !== 'ALL') q.append('category', category);
+        if (search && search.trim().length > 0) q.append('search', search.trim());
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/catalogues?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.CATALOGUES,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedStockRequirements: (
+    isAdmin: boolean,
+    tab: string,
+    priority?: string,
+    search?: string,
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+  ) => {
+    const cacheKey = `stock_req:${isAdmin ? 'ADMIN' : 'STAFF'}:${tab}:${priority || 'ALL'}:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        if (isAdmin && tab !== 'MY') {
+          const q = new URLSearchParams();
+          if (tab === 'PENDING') q.append('status', 'PENDING');
+          if (priority && priority !== 'ALL') q.append('priority', priority);
+          if (search) q.append('search', search);
+          return requestWithMeta<any>(`/stock-requirements?${q.toString()}`, { headers });
+        } else {
+          return requestWithMeta<any>('/stock-requirements/my', { headers });
+        }
+      },
+      {
+        ttlMs: CACHE_TTL.STOCK_REQUIREMENTS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
+
+  getCachedCustomers: (search?: string, options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+    const cacheKey = `customers:${search || ''}`;
+    return dataCache.fetchWithCache(
+      cacheKey,
+      async (etag) => {
+        const q = new URLSearchParams();
+        if (search) q.append('search', search);
+        const headers: Record<string, string> = {};
+        if (etag) headers['If-None-Match'] = etag;
+        return requestWithMeta<any>(`/customers?${q.toString()}`, { headers });
+      },
+      {
+        ttlMs: CACHE_TTL.CUSTOMERS,
+        forceRefresh: options?.forceRefresh,
+        onBackgroundUpdate: options?.onBackgroundUpdate,
+      }
+    );
+  },
 
   // --------------------------------------------------------------------
   // Service Intake

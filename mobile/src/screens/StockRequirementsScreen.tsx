@@ -751,7 +751,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                   customerSearch.trim().length === 0
                     ? true
                     : (c.name || '').toLowerCase().includes(customerSearch.toLowerCase()) ||
-                      (c.mobile || '').includes(customerSearch)
+                    (c.mobile || '').includes(customerSearch)
                 )
                 .map((c) => (
                   <TouchableOpacity
@@ -801,7 +801,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                   productSearch.trim().length === 0
                     ? true
                     : (p.name || '').toLowerCase().includes(productSearch.toLowerCase()) ||
-                      (p.model || '').toLowerCase().includes(productSearch.toLowerCase())
+                    (p.model || '').toLowerCase().includes(productSearch.toLowerCase())
                 )
                 .map((p) => (
                   <TouchableOpacity
