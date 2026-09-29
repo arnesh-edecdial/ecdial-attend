@@ -367,154 +367,99 @@ export const mobileApi = {
   deleteCatalogue: (id: string) =>
     request<any>(`/catalogues/${id}`, { method: 'DELETE' }),
   getCataloguePdfUrl: (id: string, filename?: string) =>
-    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
+    `${getApiBaseUrl()}/catalogues/${id}/download${filename ? `?filename=${encodeURIComponent(filename)}&v=${Date.now()}` : `?v=${Date.now()}`}`,
 
-  // --------------------------------------------------------------------------
-  // SWR Cache-First Helper Methods (Instant Load + Quiet Background Revalidate)
-  // --------------------------------------------------------------------------
-  getCachedTodayStatus: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
-    return dataCache.fetchWithCache(
-      `attendance:status:${activeEmployeeId}`,
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>('/attendance/status/today', { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.ATTENDANCE_STATUS,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
+  // --------------------------------------------------------------------
+  // Service Intake
+  // --------------------------------------------------------------------
+  getServiceIntakeOptions: () =>
+    request<any>('/service-intakes/options'),
+
+  listServiceIntakes: (params?: {
+    status?: string;
+    customerId?: string;
+    site?: string;
+    reportedById?: string;
+    takingTo?: string;
+    search?: string;
+    archived?: boolean;
+    page?: number;
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.append('status', params.status);
+    if (params?.customerId) q.append('customerId', params.customerId);
+    if (params?.site) q.append('site', params.site);
+    if (params?.reportedById) q.append('reportedById', params.reportedById);
+    if (params?.takingTo) q.append('takingTo', params.takingTo);
+    if (params?.search) q.append('search', params.search);
+    if (params?.archived) q.append('archived', 'true');
+    if (params?.page) q.append('page', String(params.page));
+    if (params?.limit) q.append('limit', String(params.limit));
+    return request<any>(`/service-intakes?${q.toString()}`);
   },
 
-  getCachedTodayDashboard: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
-    return dataCache.fetchWithCache(
-      'attendance:dashboard:today',
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>('/attendance/dashboard/today', { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.DASHBOARD,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
+  getServiceIntake: (id: string) =>
+    request<any>(`/service-intakes/${id}`),
+
+  createServiceIntake: (payload: {
+    customerId: string;
+    siteName?: string;
+    problems: string[];
+    takingTo: 'SHOWROOM' | 'OFFICE' | 'SERVICE_CENTER';
+    notes?: string;
+    items?: Array<{ itemType: 'INDOOR_UNIT' | 'OUTDOOR_UNIT'; productId?: string; serialNumber?: string; notes?: string }>;
+  }) =>
+    request<any>('/service-intakes', { method: 'POST', body: JSON.stringify(payload) }),
+
+  updateServiceIntake: (id: string, payload: Partial<{
+    customerId: string; siteName: string; problems: string[]; takingTo: string; notes: string;
+  }>) =>
+    request<any>(`/service-intakes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  changeServiceIntakeStatus: (id: string, status: string, note?: string) =>
+    request<any>(`/service-intakes/${id}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
+
+  archiveServiceIntake: (id: string) =>
+    request<any>(`/service-intakes/${id}/archive`, { method: 'POST' }),
+
+  addServiceIntakeNote: (id: string, note: string, itemId?: string) =>
+    request<any>(`/service-intakes/${id}/notes`, { method: 'POST', body: JSON.stringify({ note, itemId }) }),
+
+  addServiceIntakeItem: (id: string, item: {
+    itemType: 'INDOOR_UNIT' | 'OUTDOOR_UNIT'; productId?: string; serialNumber?: string; notes?: string;
+  }) =>
+    request<any>(`/service-intakes/${id}/items`, { method: 'POST', body: JSON.stringify(item) }),
+
+  updateServiceIntakeItem: (id: string, itemId: string, payload: Partial<{
+    productId: string | null; serialNumber: string; notes: string;
+  }>) =>
+    request<any>(`/service-intakes/${id}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  changeServiceItemStatus: (id: string, itemId: string, status: string, note?: string) =>
+    request<any>(`/service-intakes/${id}/items/${itemId}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
+
+  changeServiceItemResponsible: (id: string, itemId: string, employeeId: string) =>
+    request<any>(`/service-intakes/${id}/items/${itemId}/responsible`, { method: 'POST', body: JSON.stringify({ employeeId }) }),
+
+  /**
+   * Uploads raw image bytes read from a local file:// URI (no base64, no multipart).
+   * itemId omitted = photo attached to the intake itself rather than one unit.
+   */
+  uploadServiceIntakeImage: async (id: string, localUri: string, mimeType: string, itemId?: string) => {
+    const fileRes = await fetch(localUri);
+    const blob = await fileRes.blob();
+    const path = itemId ? `/service-intakes/${id}/items/${itemId}/images` : `/service-intakes/${id}/images`;
+    return request<any>(path, {
+      method: 'POST',
+      body: blob,
+      headers: { 'Content-Type': mimeType || blob.type || 'image/jpeg' },
+    });
   },
 
-  getCachedOfficeConfigs: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
-    return dataCache.fetchWithCache(
-      'office:configs:all',
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>('/attendance/office-configs', { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.OFFICE_CONFIG,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
-  },
+  deleteServiceIntakeImage: (id: string, imageId: string) =>
+    request<any>(`/service-intakes/${id}/images/${imageId}`, { method: 'DELETE' }),
 
-  getCachedProducts: (
-    category?: string,
-    search?: string,
-    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
-  ) => {
-    const cacheKey = `products:${category || 'ALL'}:${search || ''}`;
-    return dataCache.fetchWithCache(
-      cacheKey,
-      async (etag) => {
-        const q = new URLSearchParams();
-        if (category && category !== 'ALL') q.append('category', category);
-        if (search) q.append('search', search);
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>(`/catalog/products?${q.toString()}`, { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.PRODUCTS_STOCK,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
-  },
-
-  getCachedCatalogues: (
-    category?: string,
-    search?: string,
-    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
-  ) => {
-    const cacheKey = `catalogues:${category || 'ALL'}:${search || ''}`;
-    return dataCache.fetchWithCache(
-      cacheKey,
-      async (etag) => {
-        const q = new URLSearchParams();
-        if (category && category !== 'ALL') q.append('category', category);
-        if (search && search.trim().length > 0) q.append('search', search.trim());
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>(`/catalogues?${q.toString()}`, { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.CATALOGUES,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
-  },
-
-  getCachedStockRequirements: (
-    isAdmin: boolean,
-    tab: string,
-    priority?: string,
-    search?: string,
-    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
-  ) => {
-    const cacheKey = `stock_req:${isAdmin ? 'ADMIN' : 'STAFF'}:${tab}:${priority || 'ALL'}:${search || ''}`;
-    return dataCache.fetchWithCache(
-      cacheKey,
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        if (isAdmin && tab !== 'MY') {
-          const q = new URLSearchParams();
-          if (tab === 'PENDING') q.append('status', 'PENDING');
-          if (priority && priority !== 'ALL') q.append('priority', priority);
-          if (search) q.append('search', search);
-          return requestWithMeta<any>(`/stock-requirements?${q.toString()}`, { headers });
-        } else {
-          return requestWithMeta<any>('/stock-requirements/my', { headers });
-        }
-      },
-      {
-        ttlMs: CACHE_TTL.STOCK_REQUIREMENTS,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
-  },
-
-  getCachedCustomers: (search?: string, options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
-    const cacheKey = `customers:${search || ''}`;
-    return dataCache.fetchWithCache(
-      cacheKey,
-      async (etag) => {
-        const q = new URLSearchParams();
-        if (search) q.append('search', search);
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>(`/customers?${q.toString()}`, { headers });
-      },
-      {
-        ttlMs: CACHE_TTL.CUSTOMERS,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
-      }
-    );
-  },
+  getServiceIntakeImageUrl: (storageFileName: string) =>
+    `${getApiBaseUrl()}/service-intakes/images/${storageFileName}`,
 };

@@ -42,6 +42,13 @@ model User {
   notifications      AppNotification[]
   deviceTokens       DevicePushToken[]
   stockRequirements  StockRequirement[]   @relation("SalesStockRequirements")
+  createdServiceIntakes  ServiceIntake[]      @relation("IntakeCreatedBy")
+  closedServiceIntakes   ServiceIntake[]      @relation("IntakeClosedBy")
+  assignedServiceItems   ServiceIntakeItem[]  @relation("ItemResponsibleEmployee")
+  closedServiceItems     ServiceIntakeItem[]  @relation("ItemClosedBy")
+  uploadedIntakeImages   ServiceIntakeImage[] @relation("ImageUploadedBy")
+  performedIntakeEvents  ServiceIntakeEvent[] @relation("EventPerformedBy")
+  createdServiceOptions  ServiceIntakeOption[] @relation("ServiceOptionCreatedBy")
 }
 
 model EmployeeSchedule {
@@ -164,7 +171,8 @@ model Product {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  stockRequirements StockRequirement[]
+  stockRequirements  StockRequirement[]
+  serviceIntakeItems ServiceIntakeItem[]
 }
 
 model Customer {
@@ -179,6 +187,7 @@ model Customer {
 
   quotations        Quotation[]
   stockRequirements StockRequirement[]
+  serviceIntakes    ServiceIntake[]
 
   @@index([createdAt(sort: Desc)])
   @@index([mobile])
@@ -327,3 +336,138 @@ model Catalogue {
   @@index([category])
 }
 
+// ============================================================
+// SERVICE INTAKE — rebuilt models
+// ============================================================
+
+model ServiceIntake {
+  id           String   @id @default(uuid())
+  intakeNumber String   @unique // e.g. "SI-000001"
+
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName String?   // legacy fallback display only; new rows always set customerId
+
+  siteName     String?   // canonical tag value, e.g. "Project Site"
+  problems     String[]  // one or more canonical problem tags; ["Unknown Problem"] if none given
+  takingTo     String?   // "SHOWROOM" | "OFFICE" | "SERVICE_CENTER"
+
+  status       String    @default("NOT_STARTED") // NOT_STARTED, ONGOING, SENT_FOR_REPAIR, REPAIRED, NOT_REPAIRED
+  notes        String?   @db.Text
+
+  receivedAt   DateTime  @default(now())
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?     @relation("IntakeClosedBy", fields: [closedById], references: [id])
+
+  archivedAt   DateTime?
+
+  createdById  String    // reporting person — always the authenticated creator
+  createdBy    User      @relation("IntakeCreatedBy", fields: [createdById], references: [id])
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  items        ServiceIntakeItem[]
+  images       ServiceIntakeImage[]
+  events       ServiceIntakeEvent[]
+
+  @@index([intakeNumber])
+  @@index([customerId])
+  @@index([receivedAt(sort: Desc)])
+  @@index([status])
+  @@index([archivedAt])
+  @@index([createdById])
+}
+
+model ServiceIntakeItem {
+  id                      String    @id @default(uuid())
+  intakeId                String
+  intake                  ServiceIntake @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+
+  itemType                String    // "INDOOR_UNIT" | "OUTDOOR_UNIT" (legacy rows may hold MOTOR/PCB_BOARD/OTHER)
+  itemTypeLabel           String?
+
+  productId               String?
+  product                 Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productModel            String?
+  serialNumber            String?
+
+  status                  String    @default("NOT_STARTED") // same 5 values as ServiceIntake.status
+
+  responsibleEmployeeId   String?
+  responsibleEmployeeName String?
+  responsibleEmployee     User?     @relation("ItemResponsibleEmployee", fields: [responsibleEmployeeId], references: [id], onDelete: SetNull)
+
+  notes                   String?   @db.Text
+
+  closedAt                DateTime?
+  closedById               String?
+  closedBy                User?     @relation("ItemClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  images                  ServiceIntakeImage[]
+  events                  ServiceIntakeEvent[]
+
+  @@index([intakeId])
+  @@index([productId])
+  @@index([serialNumber])
+  @@index([status])
+  @@index([responsibleEmployeeId])
+}
+
+model ServiceIntakeImage {
+  id              String             @id @default(uuid())
+  intakeId        String
+  intake          ServiceIntake      @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  itemId          String?            // null = photo attached to the intake itself, not one unit
+  item            ServiceIntakeItem? @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  imageUrl        String
+  storageFileName String
+  fileSize        Int?
+  uploadedById    String?
+  uploadedBy      User?              @relation("ImageUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime           @default(now())
+
+  @@index([intakeId])
+  @@index([itemId])
+}
+
+model ServiceIntakeEvent {
+  id              String             @id @default(uuid())
+  intakeId        String
+  itemId          String?
+  eventType       String             // "INTAKE_CREATED", "ITEM_ADDED", "ITEM_UPDATED", "PRODUCT_CHANGED", "SERIAL_CHANGED", "IMAGE_ADDED", "IMAGE_REMOVED", "STATUS_CHANGED", "SITE_CHANGED", "PROBLEMS_CHANGED", "TAKING_TO_CHANGED", "NOTES_CHANGED", "CUSTOMER_CHANGED", "RESPONSIBLE_CHANGED", "NOTE_ADDED", "ARCHIVED"
+  title           String
+  description     String?            @db.Text
+  oldValue        String?
+  newValue        String?
+  metadata        String?            @db.Text
+  performedById   String?
+  performedByName String
+  createdAt       DateTime           @default(now())
+
+  intake          ServiceIntake      @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  item            ServiceIntakeItem? @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  performedBy     User?              @relation("EventPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
+
+  @@index([intakeId])
+  @@index([itemId])
+  @@index([eventType])
+  @@index([createdAt(sort: Desc)])
+}
+
+model ServiceIntakeOption {
+  id          String   @id @default(uuid())
+  kind        String   // "SITE" | "PROBLEM"
+  label       String
+  createdById String?
+  createdBy   User?    @relation("ServiceOptionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([kind, label])
+  @@index([kind])
+}
