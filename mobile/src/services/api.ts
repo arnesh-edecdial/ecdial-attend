@@ -60,7 +60,8 @@ export interface ApiResponseWithMeta<T = any> {
 
 export async function requestWithMeta<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs = 20000
 ): Promise<ApiResponseWithMeta<T>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -71,12 +72,22 @@ export async function requestWithMeta<T>(
 
   const url = `${getApiBaseUrl()}${endpoint}`;
   let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    response = await fetch(url, { ...options, headers });
+    response = await fetch(url, { ...options, headers, signal: options.signal || controller.signal });
   } catch (netErr: any) {
-    const netError: any = new Error('Unable to connect to Ecdial backend. Please verify your phone is on the same Wi-Fi network.');
-    netError.errorType = 'NETWORK_ERROR';
+    const timedOut = netErr?.name === 'AbortError' && !options.signal;
+    const netError: any = new Error(
+      timedOut
+        ? `ECDIAL backend did not respond within ${Math.round(timeoutMs / 1000)} seconds.`
+        : 'Unable to connect to ECDIAL backend. Please verify your network connection.'
+    );
+    netError.errorType = timedOut ? 'TIMEOUT' : 'NETWORK_ERROR';
     throw netError;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (response.status === 304) {
@@ -128,6 +139,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
   if (endpoint.includes('/auth/employees')) {
     dataCache.invalidate('employees');
+  }
+  if (endpoint.includes('/service-intakes')) {
+    dataCache.invalidate('service-intakes');
   }
 
   return res.data;
@@ -545,6 +559,8 @@ export const mobileApi = {
     if (params?.archived) q.append('archived', 'true');
     if (params?.page) q.append('page', String(params.page));
     if (params?.limit) q.append('limit', String(params.limit));
+    if (!params?.page) q.append('page', '1');
+    if (!params?.limit) q.append('limit', '30');
     return request<any>(`/service-intakes?${q.toString()}`);
   },
 

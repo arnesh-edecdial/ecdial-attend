@@ -76,81 +76,120 @@ async function logEvent(
 type Kind = 'SITE' | 'PROBLEM';
 const DEFAULTS: Record<Kind, string[]> = { SITE: DEFAULT_SITES, PROBLEM: DEFAULT_PROBLEMS };
 
-async function optionList(kind: Kind, db: Tx | typeof prisma = prisma): Promise<string[]> {
-  const custom = await db.serviceIntakeOption.findMany({ where: { kind }, orderBy: { createdAt: 'asc' }, select: { label: true } });
-  return [...DEFAULTS[kind], ...custom.map((c) => c.label)];
+function optionList(kind: Kind): string[] {
+  return [...DEFAULTS[kind]];
 }
 
-/** Returns canonical spelling for each value and persists genuinely new ones. */
-async function canonicalizeAndPersist(tx: Tx, kind: Kind, values: string[], userId: string): Promise<string[]> {
-  const known = await optionList(kind, tx);
+/** Canonicalise against the configured defaults without requiring a Prisma option table. */
+function canonicalize(kind: Kind, values: string[]): string[] {
+  const known = optionList(kind);
   const byLower = new Map(known.map((k) => [k.toLowerCase(), k]));
   const out: string[] = [];
   for (const raw of values) {
     const v = raw.trim().slice(0, kind === 'SITE' ? LIMITS.site : LIMITS.label);
     if (!v) continue;
-    let canon = byLower.get(v.toLowerCase());
-    if (!canon) {
-      await tx.serviceIntakeOption.upsert({
-        where: { kind_label: { kind, label: v } },
-        update: {},
-        create: { kind, label: v, createdById: userId },
-      });
-      byLower.set(v.toLowerCase(), v);
-      canon = v;
-    }
-    if (!out.includes(canon)) out.push(canon);
+    const canon = byLower.get(v.toLowerCase()) ?? v;
+    if (!out.some((x) => x.toLowerCase() === canon.toLowerCase())) out.push(canon);
   }
   return out;
 }
 
 function cleanProblems(input: unknown): string[] {
-  const arr = Array.isArray(input) ? input.filter((x): x is string => typeof x === 'string') : [];
+  const arr = Array.isArray(input)
+    ? input.filter((x): x is string => typeof x === 'string')
+    : typeof input === 'string'
+      ? input.split(',')
+      : [];
   const trimmed = Array.from(new Set(arr.map((p) => p.trim()).filter(Boolean))).slice(0, LIMITS.maxProblems);
-  // "Unknown Problem" is exclusive; empty selection falls back to it.
   if (trimmed.length === 0) return [UNKNOWN_PROBLEM];
   const withoutUnknown = trimmed.filter((p) => p.toLowerCase() !== UNKNOWN_PROBLEM.toLowerCase());
   return withoutUnknown.length > 0 ? withoutUnknown : [UNKNOWN_PROBLEM];
+}
+
+/**
+ * ServiceIntake.problems is a Prisma String[] column.
+ * Keep these helpers tolerant of old string/JSON-string rows so the API
+ * remains safe if legacy data is encountered, but always write a real
+ * string array to Prisma.
+ */
+function encodeProblems(problems: string[]): string[] {
+  return problems;
+}
+
+function decodeProblems(value: string[] | string | null | undefined): string[] {
+  if (!value) return [UNKNOWN_PROBLEM];
+  if (Array.isArray(value)) return cleanProblems(value);
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return cleanProblems(parsed);
+  } catch {
+    // Legacy rows may contain comma-separated text.
+  }
+  return cleanProblems(value);
 }
 
 /* ------------------------------------------------------------------ */
 /* Status helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-/**
- * Overall status derived from the units.
- * all same -> that status; any Sent for Repair -> Sent for Repair;
- * mixed finished + unfinished -> Ongoing; mixed Repaired/Not Repaired -> Not Repaired.
- */
-function deriveStatus(statuses: string[]): ServiceStatus | null {
-  if (statuses.length === 0) return null;
-  const set = new Set(statuses);
-  if (set.size === 1) return statuses[0] as ServiceStatus;
-  if (set.has('SENT_FOR_REPAIR')) return 'SENT_FOR_REPAIR';
-  const allTerminal = statuses.every((s) => TERMINAL_STATUSES.includes(s as ServiceStatus));
-  return allTerminal ? 'NOT_REPAIRED' : 'ONGOING';
-}
-
 const terminalFields = (status: ServiceStatus, w: Who) =>
   TERMINAL_STATUSES.includes(status)
     ? { closedAt: new Date(), closedById: w.id }
     : { closedAt: null, closedById: null };
 
-async function recomputeIntakeStatus(tx: Tx, intakeId: string, w: Who) {
-  const [intake, items] = await Promise.all([
-    tx.serviceIntake.findUniqueOrThrow({ where: { id: intakeId }, select: { status: true } }),
-    tx.serviceIntakeItem.findMany({ where: { intakeId }, select: { status: true } }),
-  ]);
-  const next = deriveStatus(items.map((i) => i.status));
-  if (!next || next === intake.status) return;
-  await tx.serviceIntake.update({ where: { id: intakeId }, data: { status: next, ...terminalFields(next, w) } });
-  await logEvent(tx, w, {
-    intakeId,
-    eventType: 'STATUS_CHANGED',
-    title: `Status: ${label(intake.status)} → ${label(next)}`,
-    oldValue: intake.status,
-    newValue: next,
+/**
+ * The current Prisma schema stores status on ServiceIntake, not on
+ * ServiceIntakeItem. Keep the item API compatible by exposing the intake
+ * status to the client, while persisting the real stage on the intake.
+ */
+function withItemStatus<T extends { items?: any[] }>(value: T): T {
+  const status = (value as any).status;
+  if (!Array.isArray(value.items)) return value;
+  return {
+    ...value,
+    items: value.items.map((item: any) => ({ ...item, status })),
+  };
+}
+
+async function requireFreshStagePhoto(
+  tx: Tx,
+  intakeId: string,
+  itemId?: string,
+): Promise<void> {
+  const latestStageEvent = await tx.serviceIntakeEvent.findFirst({
+    where: {
+      intakeId,
+      eventType: 'STATUS_CHANGED',
+      ...(itemId ? { itemId } : { itemId: null }),
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
   });
+
+  const intake = await tx.serviceIntake.findUnique({
+    where: { id: intakeId },
+    select: { receivedAt: true },
+  });
+  if (!intake) throw new HttpError(404, 'Service intake not found.');
+
+  const since = latestStageEvent?.createdAt ?? intake.receivedAt;
+  const photo = await tx.serviceIntakeImage.findFirst({
+    where: {
+      intakeId,
+      ...(itemId ? { itemId } : { itemId: null }),
+      createdAt: { gt: since },
+    },
+    select: { id: true },
+  });
+
+  if (!photo) {
+    throw new HttpError(
+      400,
+      itemId
+        ? 'Upload a new photo for this unit before changing its service stage.'
+        : 'Upload a new photo before changing the service stage.',
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -210,7 +249,8 @@ export const serviceIntakeController = {
   /** GET /options — tag lists + static config used by the mobile UI. */
   getOptions: async (_req: AuthenticatedRequest, res: Response) => {
     try {
-      const [sites, problems] = await Promise.all([optionList('SITE'), optionList('PROBLEM')]);
+      const sites = optionList('SITE');
+      const problems = optionList('PROBLEM');
       res.json({
         success: true,
         data: {
@@ -282,7 +322,7 @@ export const serviceIntakeController = {
             customerName: true, // legacy fallback
             customer: { select: { id: true, name: true, mobile: true } },
             createdBy: { select: { id: true, name: true } },
-            items: { orderBy: { createdAt: 'asc' }, select: { id: true, itemType: true, status: true } },
+            items: { orderBy: { createdAt: 'asc' }, select: { id: true, itemType: true } },
             _count: { select: { images: true } },
           },
         }),
@@ -290,7 +330,7 @@ export const serviceIntakeController = {
 
       res.json({
         success: true,
-        data: rows.map((r) => ({ ...r, ageDays: ageDays(r.receivedAt, r.closedAt) })),
+        data: rows.map((r) => ({ ...r, problems: decodeProblems(r.problems), ageDays: ageDays(r.receivedAt, r.closedAt), items: r.items.map((item) => ({ ...item, status: r.status })) })),
         pagination: { total, page, limit: take, totalPages: Math.ceil(total / take) },
       });
     } catch (err) {
@@ -318,7 +358,7 @@ export const serviceIntakeController = {
         },
       });
       if (!intake) return void res.status(404).json({ success: false, message: 'Service intake not found.' });
-      res.json({ success: true, data: { ...intake, ageDays: ageDays(intake.receivedAt, intake.closedAt) } });
+      res.json({ success: true, data: withItemStatus({ ...intake, problems: decodeProblems(intake.problems), ageDays: ageDays(intake.receivedAt, intake.closedAt) }) });
     } catch (err) {
       fail(res, err, 'Failed to retrieve service intake.', 'SI get');
     }
@@ -336,23 +376,24 @@ export const serviceIntakeController = {
       const units: UnitInput[] = Array.isArray(items) ? items : [];
       if (units.length > 20) throw new HttpError(400, 'Too many units in one intake.');
 
-      const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
       if (!customer) throw new HttpError(400, 'Selected customer was not found.');
 
       let created: any;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           created = await prisma.$transaction(async (tx) => {
-            const [site] = siteName ? await canonicalizeAndPersist(tx, 'SITE', [String(siteName)], w.id) : [null];
-            const probs = await canonicalizeAndPersist(tx, 'PROBLEM', cleanProblems(problems), w.id);
+            const [site] = siteName ? canonicalize('SITE', [String(siteName)]) : [null];
+            const probs = canonicalize('PROBLEM', cleanProblems(problems));
             const intakeNumber = await nextIntakeNumber(tx);
 
             const intake = await tx.serviceIntake.create({
               data: {
                 intakeNumber,
                 customerId,
+                customerName: customer.name || 'Unnamed Customer',
                 siteName: site ?? null,
-                problems: probs,
+                problems: encodeProblems(probs),
                 takingTo,
                 notes: str(notes, LIMITS.notes),
                 status: 'NOT_STARTED',
@@ -372,7 +413,7 @@ export const serviceIntakeController = {
               const data = await buildItemData(tx, units[i]);
               // explicit createdAt keeps unit order stable (now() is identical within one transaction)
               const item = await tx.serviceIntakeItem.create({
-                data: { ...data, intakeId: intake.id, status: 'NOT_STARTED', createdAt: new Date(base + i) },
+                data: { ...data, intakeId: intake.id, createdAt: new Date(base + i) },
               });
               createdItems.push(item);
               await logEvent(tx, w, {
@@ -413,17 +454,17 @@ export const serviceIntakeController = {
         const data: Prisma.ServiceIntakeUpdateInput = {};
 
         if (body.siteName !== undefined) {
-          const [site] = body.siteName ? await canonicalizeAndPersist(tx, 'SITE', [String(body.siteName)], w.id) : [null];
+          const [site] = body.siteName ? canonicalize('SITE', [String(body.siteName)]) : [null];
           if ((site ?? null) !== existing.siteName) {
             data.siteName = site ?? null;
             await logEvent(tx, w, { intakeId: id, eventType: 'SITE_CHANGED', title: 'Site Changed', oldValue: existing.siteName, newValue: site ?? null, description: `${existing.siteName ?? 'None'} → ${site ?? 'None'}` });
           }
         }
         if (body.problems !== undefined) {
-          const probs = await canonicalizeAndPersist(tx, 'PROBLEM', cleanProblems(body.problems), w.id);
-          if (probs.join('|') !== existing.problems.join('|')) {
-            data.problems = probs;
-            await logEvent(tx, w, { intakeId: id, eventType: 'PROBLEMS_CHANGED', title: 'Problems Changed', oldValue: existing.problems.join(', '), newValue: probs.join(', '), description: `${existing.problems.join(', ') || 'None'} → ${probs.join(', ')}` });
+          const probs = canonicalize('PROBLEM', cleanProblems(body.problems));
+          if (probs.join('|') !== decodeProblems(existing.problems).join('|')) {
+            data.problems = encodeProblems(probs);
+            await logEvent(tx, w, { intakeId: id, eventType: 'PROBLEMS_CHANGED', title: 'Problems Changed', oldValue: decodeProblems(existing.problems).join(', '), newValue: probs.join(', '), description: `${decodeProblems(existing.problems).join(', ') || 'None'} → ${probs.join(', ')}` });
           }
         }
         if (body.takingTo !== undefined) {
@@ -457,7 +498,7 @@ export const serviceIntakeController = {
     }
   },
 
-  /** POST /:id/status — sets the overall status AND every unit (real user action). */
+  /** POST /:id/status — stage change requires a fresh intake-level photo. */
   changeIntakeStatus: async (req: AuthenticatedRequest, res: Response) => {
     try {
       const w = who(req);
@@ -466,26 +507,32 @@ export const serviceIntakeController = {
       const { status, note } = req.body ?? {};
       if (!isStatus(status)) throw new HttpError(400, 'Invalid status.');
 
-      const existing = await prisma.serviceIntake.findUnique({ where: { id }, select: { status: true } });
+      const existing = await prisma.serviceIntake.findUnique({
+        where: { id },
+        select: { status: true },
+      });
       if (!existing) throw new HttpError(404, 'Service intake not found.');
 
+      if (existing.status === status) {
+        return void res.json({ success: true, message: `Status is already ${label(status)}.` });
+      }
+
       await prisma.$transaction(async (tx) => {
-        await tx.serviceIntake.update({ where: { id }, data: { status, ...terminalFields(status, w) } });
-        await tx.serviceIntakeItem.updateMany({
-          where: { intakeId: id, status: { not: status } },
+        await requireFreshStagePhoto(tx, id);
+        await tx.serviceIntake.update({
+          where: { id },
           data: { status, ...terminalFields(status, w) },
         });
-        if (existing.status !== status) {
-          await logEvent(tx, w, {
-            intakeId: id,
-            eventType: 'STATUS_CHANGED',
-            title: `Status: ${label(existing.status)} → ${label(status)}`,
-            description: str(note, LIMITS.notes),
-            oldValue: existing.status,
-            newValue: status,
-          });
-        }
+        await logEvent(tx, w, {
+          intakeId: id,
+          eventType: 'STATUS_CHANGED',
+          title: `Status: ${label(existing.status)} → ${label(status)}`,
+          description: str(note, LIMITS.notes),
+          oldValue: existing.status,
+          newValue: status,
+        });
       });
+
       res.json({ success: true, message: `Status set to ${label(status)}.` });
     } catch (err) {
       fail(res, err, 'Failed to change status.', 'SI status');
@@ -502,7 +549,7 @@ export const serviceIntakeController = {
 
       const item = await prisma.$transaction(async (tx) => {
         const data = await buildItemData(tx, req.body ?? {});
-        const created = await tx.serviceIntakeItem.create({ data: { ...data, intakeId: id, status: 'NOT_STARTED' } });
+        const created = await tx.serviceIntakeItem.create({ data: { ...data, intakeId: id } });
         await logEvent(tx, w, {
           intakeId: id,
           itemId: created.id,
@@ -510,7 +557,6 @@ export const serviceIntakeController = {
           title: `Unit Added: ${data.itemTypeLabel}`,
           description: [data.productModel, data.serialNumber && `S/N ${data.serialNumber}`].filter(Boolean).join(' · ') || null,
         });
-        await recomputeIntakeStatus(tx, id, w);
         return created;
       });
       res.status(201).json({ success: true, message: 'Unit added.', data: item });
@@ -570,7 +616,7 @@ export const serviceIntakeController = {
     }
   },
 
-  /** POST /:id/items/:itemId/status — per-unit status; overall status follows. */
+  /** POST /:id/items/:itemId/status — schema has no per-item status column. */
   changeItemStatus: async (req: AuthenticatedRequest, res: Response) => {
     try {
       const w = who(req);
@@ -579,25 +625,35 @@ export const serviceIntakeController = {
       const { status, note } = req.body ?? {};
       if (!isStatus(status)) throw new HttpError(400, 'Invalid status.');
 
-      const item = await prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id } });
+      const [intake, item] = await Promise.all([
+        prisma.serviceIntake.findUnique({ where: { id }, select: { status: true } }),
+        prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id }, select: { id: true, itemTypeLabel: true } }),
+      ]);
+      if (!intake) throw new HttpError(404, 'Service intake not found.');
       if (!item) throw new HttpError(404, 'Unit not found in this intake.');
 
+      if (intake.status === status) {
+        return void res.json({ success: true, message: `Status is already ${label(status)}.` });
+      }
+
       await prisma.$transaction(async (tx) => {
-        await tx.serviceIntakeItem.update({ where: { id: itemId }, data: { status, ...terminalFields(status, w) } });
-        if (item.status !== status) {
-          await logEvent(tx, w, {
-            intakeId: id,
-            itemId,
-            eventType: 'STATUS_CHANGED',
-            title: `${item.itemTypeLabel || 'Unit'}: ${label(item.status)} → ${label(status)}`,
-            description: str(note, LIMITS.notes),
-            oldValue: item.status,
-            newValue: status,
-          });
-        }
-        await recomputeIntakeStatus(tx, id, w);
+        await requireFreshStagePhoto(tx, id, itemId);
+        await tx.serviceIntake.update({
+          where: { id },
+          data: { status, ...terminalFields(status, w) },
+        });
+        await logEvent(tx, w, {
+          intakeId: id,
+          itemId,
+          eventType: 'STATUS_CHANGED',
+          title: `${item.itemTypeLabel || 'Unit'}: ${label(intake.status)} → ${label(status)}`,
+          description: str(note, LIMITS.notes),
+          oldValue: intake.status,
+          newValue: status,
+        });
       });
-      res.json({ success: true, message: `Unit status set to ${label(status)}.` });
+
+      res.json({ success: true, message: `Unit stage set to ${label(status)}.` });
     } catch (err) {
       fail(res, err, 'Failed to change unit status.', 'SI itemStatus');
     }

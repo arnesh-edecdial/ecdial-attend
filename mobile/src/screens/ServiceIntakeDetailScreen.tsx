@@ -212,7 +212,12 @@ export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole 
   }
 
   const custName = intake.customer?.name || intake.customerName || 'Unnamed Customer';
-  const intakeColors = STATUS_COLORS[intake.status];
+  const intakeColors = STATUS_COLORS[intake.status] ?? {
+    bg: '#F1F5F9',
+    text: '#475569',
+    border: '#CBD5E1',
+  };
+  const intakeStatusLabel = STATUS_LABELS[intake.status] ?? intake.status ?? 'Unknown Status';
 
   return (
     <View style={styles.container}>
@@ -237,7 +242,7 @@ export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole 
               style={[styles.statusBadge, { backgroundColor: intakeColors.bg, borderColor: intakeColors.border }]}
               onPress={() => setStatusModalItemId('INTAKE')}
             >
-              <Text style={[styles.statusText, { color: intakeColors.text }]}>{STATUS_LABELS[intake.status]}</Text>
+              <Text style={[styles.statusText, { color: intakeColors.text }]}>{intakeStatusLabel}</Text>
             </TouchableOpacity>
           </View>
           <Text style={styles.metaLine}>Reported by {intake.createdBy?.name} · {formatDateTime(intake.receivedAt)}</Text>
@@ -292,7 +297,12 @@ export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole 
           </View>
 
           {intake.items.map((item) => {
-            const colors = STATUS_COLORS[item.status];
+            const colors = STATUS_COLORS[item.status] ?? {
+              bg: '#F1F5F9',
+              text: '#475569',
+              border: '#CBD5E1',
+            };
+            const itemStatusLabel = STATUS_LABELS[item.status] ?? item.status ?? 'Unknown Status';
             const editing = editingItemId === item.id;
             return (
               <View key={item.id} style={styles.unitCard}>
@@ -302,7 +312,7 @@ export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole 
                     style={[styles.statusBadge, { backgroundColor: colors.bg, borderColor: colors.border }]}
                     onPress={() => setStatusModalItemId(item.id)}
                   >
-                    <Text style={[styles.statusText, { color: colors.text }]}>{STATUS_LABELS[item.status]}</Text>
+                    <Text style={[styles.statusText, { color: colors.text }]}>{itemStatusLabel}</Text>
                   </TouchableOpacity>
                 </View>
 

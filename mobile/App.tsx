@@ -26,6 +26,7 @@ import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
 import { AdminEmployeesScreen } from './src/screens/AdminEmployeesScreen';
 import { AdminLocationCalibrationScreen } from './src/screens/AdminLocationCalibrationScreen';
+import { ServiceIntakeListScreen } from './src/screens/ServiceIntakeListScreen';
 import { AppDrawer } from './src/components/AppDrawer';
 import { Quotation } from './src/types';
 import { notificationService, DeepLinkPayload } from './src/services/notificationService';
@@ -41,7 +42,7 @@ function MainApp() {
   }, []);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
-    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES'
+    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES' | 'SERVICE_INTAKE'
   >('HOME');
   const [activeModal, setActiveModal] = useState<
     'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION' | 'CUSTOMERS_MODAL'
@@ -82,6 +83,8 @@ function MainApp() {
       setCurrentTab('STOCK_REQUIREMENTS');
     } else if (screen === 'CATALOGUES' || screen === 'CATALOGUE') {
       setCurrentTab('CATALOGUES');
+    } else if (screen === 'SERVICE_INTAKE' || screen === 'SERVICE_INTAKES') {
+      setCurrentTab('SERVICE_INTAKE');
     } else if (screen === 'CALENDAR') {
       setCurrentTab('CALENDAR');
     } else {
@@ -167,6 +170,11 @@ function MainApp() {
       setCurrentTab('STOCK_REQUIREMENTS');
     } else if (screenId === 'CATALOGUES') {
       setCurrentTab('CATALOGUES');
+    } else if (screenId === 'SERVICE_INTAKE') {
+      // Service Intake is a full tab screen, so make sure no modal overlay
+      // is left active and then switch the main content to the intake screen.
+      setActiveModal('NONE');
+      setCurrentTab('SERVICE_INTAKE');
     } else if (screenId === 'CUSTOMERS') {
       setCurrentTab('CUSTOMERS');
     } else if (screenId === 'QUOTATIONS') {
@@ -220,6 +228,10 @@ function MainApp() {
             onOpenCatalogues={() => setCurrentTab('CATALOGUES')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
             onOpenCustomers={() => setCurrentTab('CUSTOMERS')}
+            onOpenServiceIntake={() => {
+              setActiveModal('NONE');
+              setCurrentTab('SERVICE_INTAKE');
+            }}
             onOpenLocationCalibration={() => setActiveModal('LOCATION_CALIBRATION')}
             onNavigateNotification={handleDeepLink}
           />
@@ -259,6 +271,11 @@ function MainApp() {
           />
         ) : currentTab === 'CUSTOMERS' ? (
           <CustomerScreen
+            userRole={activeUserRole}
+            onClose={() => setCurrentTab('HOME')}
+          />
+        ) : currentTab === 'SERVICE_INTAKE' ? (
+          <ServiceIntakeListScreen
             userRole={activeUserRole}
             onClose={() => setCurrentTab('HOME')}
           />

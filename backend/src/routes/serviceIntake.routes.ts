@@ -5,11 +5,17 @@ import { serviceIntakeController as c } from '../controllers/serviceIntake.contr
 
 const router = Router();
 const rawImage = express.raw({ type: 'image/*', limit: '12mb' });
-
 router.use(authMiddleware);
 
-router.get('/options', c.getOptions);
-router.get('/', c.listIntakes);
+router.get('/options', (req, res, next) => {
+    console.log('🔥 SERVICE INTAKE OPTIONS ROUTE HIT');
+    next();
+}, c.getOptions);
+
+router.get('/', (req, res, next) => {
+    console.log('🔥 SERVICE INTAKE LIST ROUTE HIT');
+    next();
+}, c.listIntakes);
 router.get('/images/:filename', c.serveImage);
 router.get('/:id', c.getIntake);
 router.post('/', c.createIntake);

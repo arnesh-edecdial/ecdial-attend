@@ -40,6 +40,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
         { id: 'ADMIN_MACHINES', label: 'Machine Models', icon: '❄️' },
         { id: 'QUOTATIONS', label: 'All Quotations', icon: '📄' },
+        { id: 'SERVICE_INTAKE', label: 'Service Intake', icon: '🔧' },
         { id: 'LOCATION_CALIBRATION', label: 'Location & Geofence Calibration', icon: '📍' },
       ];
     }

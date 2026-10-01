@@ -37,6 +37,7 @@ interface AttendanceScreenProps {
   onOpenCustomers?: () => void;
   onOpenStockRequirements?: () => void;
   onOpenCatalogues?: () => void;
+  onOpenServiceIntake?: () => void;
   onOpenLocationCalibration?: () => void;
   onNavigateNotification?: (screen: string, entityId?: string | null, metadata?: any) => void;
   userName?: string;
@@ -57,6 +58,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   onOpenCustomers,
   onOpenStockRequirements,
   onOpenCatalogues,
+  onOpenServiceIntake,
   onOpenLocationCalibration,
   onNavigateNotification,
   userName = 'Employee',
@@ -124,11 +126,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         }),
         canSkipAttendance(userRole)
           ? mobileApi.getCachedTodayDashboard({
-              forceRefresh: !silent,
-              onBackgroundUpdate: (fresh) => {
-                if (fresh) setDashboardData(fresh);
-              },
-            })
+            forceRefresh: !silent,
+            onBackgroundUpdate: (fresh) => {
+              if (fresh) setDashboardData(fresh);
+            },
+          })
           : Promise.resolve(null),
         canSkipAttendance(userRole) ? mobileApi.getTodayQR() : Promise.resolve(null),
         mobileApi.getCalendar(undefined, d.getFullYear(), d.getMonth() + 1),
@@ -474,8 +476,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               {canSkipAttendance(userRole)
                 ? 'Admin Management Dashboard'
                 : userRole === 'SALES'
-                ? 'Sales & Quotations Portal'
-                : 'Have a productive day at work!'}
+                  ? 'Sales & Quotations Portal'
+                  : 'Have a productive day at work!'}
             </Text>
           </View>
         </View>
@@ -808,6 +810,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               </View>
               <Text style={styles.actionCardTitle}>Catalogues</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenServiceIntake}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#F5F3FF' }]}>
+                <Text style={{ fontSize: 20 }}>🔧</Text>
+              </View>
+              <Text style={styles.actionCardTitle}>Service Intake</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -876,14 +885,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   {statusData?.displayStatus === 'ABSENT'
                     ? 'Absent'
                     : isCheckedIn
-                    ? 'Checked In'
-                    : isCompleted
-                    ? 'Completed'
-                    : isCompanyLeave
-                    ? 'Company Leave'
-                    : hasActiveRequest
-                    ? 'Under Approval'
-                    : 'Not Marked'}
+                      ? 'Checked In'
+                      : isCompleted
+                        ? 'Completed'
+                        : isCompanyLeave
+                          ? 'Company Leave'
+                          : hasActiveRequest
+                            ? 'Under Approval'
+                            : 'Not Marked'}
                 </Text>
                 <View style={[styles.workingPill, isCompanyLeave && { backgroundColor: '#E0F2FE' }]}>
                   <View style={[styles.workingDot, isCompanyLeave && { backgroundColor: '#0284C7' }, statusData?.displayStatus === 'ABSENT' && { backgroundColor: '#DC2626' }]} />
@@ -891,14 +900,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     {isCheckedIn
                       ? 'Working'
                       : isCompleted
-                      ? 'Shift Ended'
-                      : isCompanyLeave
-                      ? 'Holiday'
-                      : hasActiveRequest
-                      ? 'Pending Admin'
-                      : statusData?.displayStatus === 'ABSENT'
-                      ? 'Marked Absent'
-                      : 'Pending'}
+                        ? 'Shift Ended'
+                        : isCompanyLeave
+                          ? 'Holiday'
+                          : hasActiveRequest
+                            ? 'Pending Admin'
+                            : statusData?.displayStatus === 'ABSENT'
+                              ? 'Marked Absent'
+                              : 'Pending'}
                   </Text>
                 </View>
                 {Boolean((statusData?.attendance as any)?.officeName || statusData?.office?.officeName) && (
@@ -1038,15 +1047,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   {isOutsidePerimeter
                     ? 'QR Scan Disabled (Outside Office)'
                     : isCheckedIn
-                    ? 'Scan QR to Check Out'
-                    : 'Scan QR to Check In'}
+                      ? 'Scan QR to Check Out'
+                      : 'Scan QR to Check In'}
                 </Text>
                 <Text style={styles.scanBannerSub}>
                   {isOutsidePerimeter
                     ? `Must be within ${allowedRadius}m to scan QR`
                     : isCheckedIn
-                    ? 'Scan office QR code to end your day'
-                    : 'Scan office QR code to start your day'}
+                      ? 'Scan office QR code to end your day'
+                      : 'Scan office QR code to start your day'}
                 </Text>
               </View>
 
@@ -1119,10 +1128,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               {hasActiveRequest
                 ? 'UNDER APPROVAL'
                 : isOutsidePerimeter
-                ? '📝 Submit Attendance / Remote Request'
-                : isCheckedIn
-                ? 'Request Closing / Offsite'
-                : 'Request Attendance'}
+                  ? '📝 Submit Attendance / Remote Request'
+                  : isCheckedIn
+                    ? 'Request Closing / Offsite'
+                    : 'Request Attendance'}
             </Text>
           </TouchableOpacity>
         </View>

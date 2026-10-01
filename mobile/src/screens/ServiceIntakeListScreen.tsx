@@ -28,6 +28,7 @@ export const ServiceIntakeListScreen: React.FC<Props> = ({ userRole = 'ADMIN', o
   const [intakes, setIntakes] = useState<ServiceIntake[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<ServiceStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,18 +39,33 @@ export const ServiceIntakeListScreen: React.FC<Props> = ({ userRole = 'ADMIN', o
 
   const fetchIntakes = useCallback(async () => {
     try {
+      setLoadError(null);
       const res = await mobileApi.listServiceIntakes({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
         search: searchQuery.trim() || undefined,
+        page: 1,
+        limit: 30,
       });
-      if (res.success && Array.isArray(res.data)) setIntakes(res.data);
+      if (res.success && Array.isArray(res.data)) {
+        setIntakes(res.data);
+      } else {
+        setIntakes([]);
+        setLoadError(res.message || 'Unable to load Service Intake records.');
+      }
+    } catch (err: any) {
+      setIntakes([]);
+      setLoadError(err?.message || 'Unable to load Service Intake records.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   }, [statusFilter, searchQuery]);
 
-  useEffect(() => { setIsLoading(true); fetchIntakes(); }, [fetchIntakes]);
+  useEffect(() => {
+    setIsLoading(true);
+    const timer = setTimeout(() => { void fetchIntakes(); }, 250);
+    return () => clearTimeout(timer);
+  }, [fetchIntakes]);
 
   const onRefresh = () => { setIsRefreshing(true); fetchIntakes(); };
 
@@ -89,7 +105,18 @@ export const ServiceIntakeListScreen: React.FC<Props> = ({ userRole = 'ADMIN', o
       </View>
 
       {isLoading ? (
-        <ActivityIndicator style={{ marginTop: 60 }} color="#10B981" />
+        <View style={styles.centered}>
+          <ActivityIndicator color="#10B981" />
+          <Text style={styles.loadingText}>Loading Service Intake…</Text>
+        </View>
+      ) : loadError ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorTitle}>Couldn’t load Service Intake</Text>
+          <Text style={styles.errorSub}>{loadError}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setIsLoading(true); void fetchIntakes(); }}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <FlatList
           data={intakes}
@@ -103,14 +130,40 @@ export const ServiceIntakeListScreen: React.FC<Props> = ({ userRole = 'ADMIN', o
             </View>
           }
           renderItem={({ item }) => {
-            const colors = STATUS_COLORS[item.status];
-            const custName = item.customer?.name || item.customerName || 'Unnamed Customer';
+            console.log('[SERVICE INTAKE STATUS]', {
+              id: item.id,
+              intakeNumber: item.intakeNumber,
+              status: item.status,
+              availableStatuses: Object.keys(STATUS_COLORS),
+            });
+
+            // Safe fallback if backend returns an unknown status
+            const colors =
+              STATUS_COLORS[item.status] ?? {
+                bg: '#F1F5F9',
+                text: '#475569',
+                border: '#CBD5E1',
+              };
+
+            // Safe fallback for unknown/invalid status
+            const statusLabel =
+              STATUS_LABELS[item.status] ??
+              item.status ??
+              'Unknown Status';
+
+            const custName =
+              item.customer?.name ||
+              item.customerName ||
+              'Unnamed Customer';
+
             return (
               <TouchableOpacity style={styles.card} onPress={() => setSelectedId(item.id)}>
                 <View style={styles.cardTop}>
                   <Text style={styles.intakeNumber}>{item.intakeNumber}</Text>
                   <View style={[styles.statusBadge, { backgroundColor: colors.bg, borderColor: colors.border }]}>
-                    <Text style={[styles.statusText, { color: colors.text }]}>{STATUS_LABELS[item.status]}</Text>
+                    <Text style={[styles.statusText, { color: colors.text }]}>
+                      {statusLabel}
+                    </Text>
                   </View>
                 </View>
                 <Text style={styles.customerName} numberOfLines={1}>{custName}</Text>
@@ -164,7 +217,12 @@ const styles = StyleSheet.create({
   filterBtn: { paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF', justifyContent: 'center' },
   filterBtnText: { fontSize: 12, fontWeight: '700', color: '#334155' },
   list: { padding: 16, gap: 12 },
-  centered: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 24 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  loadingText: { marginTop: 10, fontSize: 13, color: '#64748B' },
+  errorTitle: { fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 6, textAlign: 'center' },
+  errorSub: { fontSize: 12, color: '#64748B', textAlign: 'center', marginBottom: 16 },
+  retryBtn: { backgroundColor: '#0F172A', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
+  retryText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
   emptyTitle: { fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
   emptySub: { fontSize: 13, color: '#64748B', textAlign: 'center' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 12 },
