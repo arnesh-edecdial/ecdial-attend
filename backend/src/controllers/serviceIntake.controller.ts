@@ -132,23 +132,48 @@ function decodeProblems(value: string[] | string | null | undefined): string[] {
 /* Status helpers                                                      */
 /* ------------------------------------------------------------------ */
 
+/** Aggregate status is retained for legacy reporting/list filters.
+ * Actual service stage belongs to each ServiceIntakeItem. */
+function deriveStatus(statuses: string[]): ServiceStatus {
+  if (!statuses.length) return 'NOT_STARTED';
+  const set = new Set(statuses);
+  if (set.size === 1) return statuses[0] as ServiceStatus;
+  if (set.has('SENT_FOR_REPAIR')) return 'SENT_FOR_REPAIR';
+  const allTerminal = statuses.every((x) => TERMINAL_STATUSES.includes(x as ServiceStatus));
+  return allTerminal ? 'NOT_REPAIRED' : 'ONGOING';
+}
+
 const terminalFields = (status: ServiceStatus, w: Who) =>
   TERMINAL_STATUSES.includes(status)
     ? { closedAt: new Date(), closedById: w.id }
     : { closedAt: null, closedById: null };
 
-/**
- * The current Prisma schema stores status on ServiceIntake, not on
- * ServiceIntakeItem. Keep the item API compatible by exposing the intake
- * status to the client, while persisting the real stage on the intake.
- */
 function withItemStatus<T extends { items?: any[] }>(value: T): T {
-  const status = (value as any).status;
-  if (!Array.isArray(value.items)) return value;
-  return {
-    ...value,
-    items: value.items.map((item: any) => ({ ...item, status })),
-  };
+  return value;
+}
+
+async function recomputeIntakeStatus(tx: Tx, intakeId: string, w: Who) {
+  const [intake, items] = await Promise.all([
+    tx.serviceIntake.findUniqueOrThrow({ where: { id: intakeId }, select: { status: true, lifecycleStatus: true } }),
+    tx.serviceIntakeItem.findMany({ where: { intakeId }, select: { status: true } }),
+  ]);
+  const next = deriveStatus(items.map((i) => i.status));
+  const allTerminal = items.length > 0 && items.every((i) => TERMINAL_STATUSES.includes(i.status as ServiceStatus));
+  const nextLifecycle = allTerminal ? 'CLOSED' : 'OPEN';
+  const data: any = {};
+  if (next !== intake.status) {
+    data.status = next;
+    Object.assign(data, terminalFields(next, w));
+  }
+  if (nextLifecycle !== intake.lifecycleStatus) data.lifecycleStatus = nextLifecycle;
+  if (!Object.keys(data).length) return;
+  await tx.serviceIntake.update({ where: { id: intakeId }, data });
+  if (next !== intake.status) {
+    await logEvent(tx, w, { intakeId, eventType: 'STATUS_CHANGED', title: `Overall summary: ${label(intake.status)} → ${label(next)}`, oldValue: intake.status, newValue: next });
+  }
+  if (nextLifecycle !== intake.lifecycleStatus) {
+    await logEvent(tx, w, { intakeId, eventType: 'LIFECYCLE_CHANGED', title: `Intake: ${intake.lifecycleStatus} → ${nextLifecycle}`, oldValue: intake.lifecycleStatus, newValue: nextLifecycle });
+  }
 }
 
 async function requireFreshStagePhoto(
@@ -206,11 +231,24 @@ async function nextIntakeNumber(tx: Tx): Promise<string> {
 /* Unit input                                                          */
 /* ------------------------------------------------------------------ */
 
-type UnitInput = { itemType?: string; productId?: string | null; serialNumber?: string; notes?: string };
+type UnitInput = {
+  itemType?: string;
+  itemName?: string;
+  productId?: string | null;
+  identifierType?: string;
+  identifierValue?: string;
+  serialNumber?: string;
+  notes?: string;
+};
 
 async function buildItemData(tx: Tx, u: UnitInput) {
-  const itemType = u.itemType && ITEM_TYPE_LABELS[u.itemType] ? u.itemType : null;
-  if (!itemType) throw new HttpError(400, 'Unit type must be Indoor Unit or Outdoor Unit.');
+  const rawType = typeof u.itemType === 'string' ? u.itemType.trim().toUpperCase() : '';
+  const itemType = ITEM_TYPE_LABELS[rawType] ? rawType : 'OTHER';
+  const customName = str(u.itemName, LIMITS.itemName);
+  if (itemType === 'OTHER' && !customName) {
+    throw new HttpError(400, 'Please enter a name for the custom service item.');
+  }
+
   let productId: string | null = null;
   let productModel: string | null = null;
   if (u.productId) {
@@ -219,12 +257,21 @@ async function buildItemData(tx: Tx, u: UnitInput) {
     productId = p.id;
     productModel = p.model || p.name;
   }
+
+  const identifierType = str(u.identifierType, LIMITS.label);
+  const identifierValue = str(u.identifierValue ?? u.serialNumber, LIMITS.identifier);
+
   return {
     itemType,
-    itemTypeLabel: ITEM_TYPE_LABELS[itemType],
+    itemTypeLabel: customName || ITEM_TYPE_LABELS[itemType],
+    itemName: customName,
+    identifierType,
+    identifierValue,
+    // Keep legacy serialNumber populated for compatibility/search when the identifier is a serial number.
+    serialNumber: identifierType?.toLowerCase() === 'serial number' ? identifierValue : str(u.serialNumber, LIMITS.serial),
+    problems: [],
     productId,
     productModel,
-    serialNumber: str(u.serialNumber, LIMITS.serial),
     notes: str(u.notes, LIMITS.notes),
   };
 }
@@ -314,6 +361,7 @@ export const serviceIntakeController = {
             id: true,
             intakeNumber: true,
             status: true,
+            lifecycleStatus: true,
             siteName: true,
             problems: true,
             takingTo: true,
@@ -322,7 +370,7 @@ export const serviceIntakeController = {
             customerName: true, // legacy fallback
             customer: { select: { id: true, name: true, mobile: true } },
             createdBy: { select: { id: true, name: true } },
-            items: { orderBy: { createdAt: 'asc' }, select: { id: true, itemType: true } },
+            items: { orderBy: { createdAt: 'asc' }, select: { id: true, itemType: true, itemTypeLabel: true, itemName: true, problems: true, identifierType: true, identifierValue: true, status: true, images: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, storageFileName: true, createdAt: true } } } },
             _count: { select: { images: true } },
           },
         }),
@@ -330,7 +378,7 @@ export const serviceIntakeController = {
 
       res.json({
         success: true,
-        data: rows.map((r) => ({ ...r, problems: decodeProblems(r.problems), ageDays: ageDays(r.receivedAt, r.closedAt), items: r.items.map((item) => ({ ...item, status: r.status })) })),
+        data: rows.map((r) => ({ ...r, problems: decodeProblems(r.problems), ageDays: ageDays(r.receivedAt, r.closedAt), items: r.items.map((item) => ({ ...item, problems: decodeProblems(item.problems) })), currentImage: r.items.flatMap((i) => i.images || []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null })),
         pagination: { total, page, limit: take, totalPages: Math.ceil(total / take) },
       });
     } catch (err) {
@@ -358,7 +406,7 @@ export const serviceIntakeController = {
         },
       });
       if (!intake) return void res.status(404).json({ success: false, message: 'Service intake not found.' });
-      res.json({ success: true, data: withItemStatus({ ...intake, problems: decodeProblems(intake.problems), ageDays: ageDays(intake.receivedAt, intake.closedAt) }) });
+      res.json({ success: true, data: withItemStatus({ ...intake, problems: decodeProblems(intake.problems), items: intake.items.map((item) => ({ ...item, problems: decodeProblems(item.problems) })), ageDays: ageDays(intake.receivedAt, intake.closedAt) }) });
     } catch (err) {
       fail(res, err, 'Failed to retrieve service intake.', 'SI get');
     }
@@ -396,7 +444,8 @@ export const serviceIntakeController = {
                 problems: encodeProblems(probs),
                 takingTo,
                 notes: str(notes, LIMITS.notes),
-                status: 'NOT_STARTED',
+                status: units.length ? 'NOT_STARTED' : 'NOT_STARTED',
+                lifecycleStatus: 'OPEN',
                 createdById: w.id, // reporting person
               },
             });
@@ -420,8 +469,8 @@ export const serviceIntakeController = {
                 intakeId: intake.id,
                 itemId: item.id,
                 eventType: 'ITEM_ADDED',
-                title: `Unit Added: ${data.itemTypeLabel}`,
-                description: [data.productModel, data.serialNumber && `S/N ${data.serialNumber}`].filter(Boolean).join(' · ') || null,
+                title: `Item Added: ${data.itemTypeLabel}`,
+                description: [data.productModel, data.identifierType && data.identifierValue ? `${data.identifierType}: ${data.identifierValue}` : null].filter(Boolean).join(' · ') || null,
               });
             }
             return { ...intake, items: createdItems }; // items in creation order — mobile maps photos by index
@@ -498,45 +547,9 @@ export const serviceIntakeController = {
     }
   },
 
-  /** POST /:id/status — stage change requires a fresh intake-level photo. */
+  /** POST /:id/status — retained for compatibility; item statuses are now independent. */
   changeIntakeStatus: async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const w = who(req);
-      if (!w) return void res.status(401).json({ success: false, message: 'Authentication required.' });
-      const { id } = req.params;
-      const { status, note } = req.body ?? {};
-      if (!isStatus(status)) throw new HttpError(400, 'Invalid status.');
-
-      const existing = await prisma.serviceIntake.findUnique({
-        where: { id },
-        select: { status: true },
-      });
-      if (!existing) throw new HttpError(404, 'Service intake not found.');
-
-      if (existing.status === status) {
-        return void res.json({ success: true, message: `Status is already ${label(status)}.` });
-      }
-
-      await prisma.$transaction(async (tx) => {
-        await requireFreshStagePhoto(tx, id);
-        await tx.serviceIntake.update({
-          where: { id },
-          data: { status, ...terminalFields(status, w) },
-        });
-        await logEvent(tx, w, {
-          intakeId: id,
-          eventType: 'STATUS_CHANGED',
-          title: `Status: ${label(existing.status)} → ${label(status)}`,
-          description: str(note, LIMITS.notes),
-          oldValue: existing.status,
-          newValue: status,
-        });
-      });
-
-      res.json({ success: true, message: `Status set to ${label(status)}.` });
-    } catch (err) {
-      fail(res, err, 'Failed to change status.', 'SI status');
-    }
+    return res.status(400).json({ success: false, message: 'Service stage belongs to individual items. Change the status on the required item.' });
   },
 
   /** POST /:id/items */
@@ -554,69 +567,71 @@ export const serviceIntakeController = {
           intakeId: id,
           itemId: created.id,
           eventType: 'ITEM_ADDED',
-          title: `Unit Added: ${data.itemTypeLabel}`,
-          description: [data.productModel, data.serialNumber && `S/N ${data.serialNumber}`].filter(Boolean).join(' · ') || null,
+          title: `Item Added: ${data.itemTypeLabel}`,
+          description: [data.productModel, data.identifierType && data.identifierValue ? `${data.identifierType}: ${data.identifierValue}` : null].filter(Boolean).join(' · ') || null,
         });
+        await recomputeIntakeStatus(tx, id, w);
         return created;
       });
-      res.status(201).json({ success: true, message: 'Unit added.', data: item });
+      res.status(201).json({ success: true, message: 'Service item added.', data: item });
     } catch (err) {
       fail(res, err, 'Failed to add unit.', 'SI addItem');
     }
   },
 
-  /** PATCH /:id/items/:itemId — model, serial, notes. */
+  /** PATCH /:id/items/:itemId — generic item details. */
   updateItem: async (req: AuthenticatedRequest, res: Response) => {
     try {
       const w = who(req);
       if (!w) return void res.status(401).json({ success: false, message: 'Authentication required.' });
       const { id, itemId } = req.params;
-      const { productId, serialNumber, notes } = req.body ?? {};
-
+      const { productId, itemName, problems, identifierType, identifierValue, serialNumber, notes } = req.body ?? {};
       const item = await prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id } });
-      if (!item) throw new HttpError(404, 'Unit not found in this intake.');
+      if (!item) throw new HttpError(404, 'Service item not found in this intake.');
 
       const updated = await prisma.$transaction(async (tx) => {
         const data: Prisma.ServiceIntakeItemUpdateInput = {};
-        const name = item.itemTypeLabel || ITEM_TYPE_LABELS[item.itemType] || 'Unit';
-
+        const name = item.itemName || item.itemTypeLabel || ITEM_TYPE_LABELS[item.itemType] || 'Item';
+        if (itemName !== undefined) {
+          const v = str(itemName, LIMITS.itemName);
+          if (item.itemType === 'OTHER' && !v) throw new HttpError(400, 'Custom item name is required.');
+          if (v !== (item.itemName ?? null)) { data.itemName = v; data.itemTypeLabel = v || ITEM_TYPE_LABELS[item.itemType] || item.itemType; await logEvent(tx, w, { intakeId: id, itemId, eventType: 'ITEM_UPDATED', title: `${name}: Name Changed`, oldValue: item.itemName, newValue: v }); }
+        }
         if (productId !== undefined && (productId || null) !== item.productId) {
           if (productId) {
             const p = await tx.product.findUnique({ where: { id: String(productId) }, select: { id: true, name: true, model: true } });
             if (!p) throw new HttpError(400, 'Selected model was not found.');
-            const model = p.model || p.name;
-            data.product = { connect: { id: p.id } };
-            data.productModel = model;
-            await logEvent(tx, w, { intakeId: id, itemId, eventType: 'PRODUCT_CHANGED', title: `${name}: Model Changed`, oldValue: item.productModel, newValue: model, description: `${item.productModel ?? 'None'} → ${model}` });
-          } else {
-            data.product = { disconnect: true };
-            data.productModel = null;
-            await logEvent(tx, w, { intakeId: id, itemId, eventType: 'PRODUCT_CHANGED', title: `${name}: Model Cleared`, oldValue: item.productModel });
+            const model = p.model || p.name; data.product = { connect: { id: p.id } }; data.productModel = model;
+            await logEvent(tx, w, { intakeId: id, itemId, eventType: 'PRODUCT_CHANGED', title: `${name}: Model Changed`, oldValue: item.productModel, newValue: model });
+          } else { data.product = { disconnect: true }; data.productModel = null; await logEvent(tx, w, { intakeId: id, itemId, eventType: 'PRODUCT_CHANGED', title: `${name}: Model Cleared`, oldValue: item.productModel }); }
+        }
+        const nextIdentifier = identifierValue !== undefined ? str(identifierValue, LIMITS.identifier) : (serialNumber !== undefined ? str(serialNumber, LIMITS.serial) : undefined);
+        if (identifierType !== undefined && identifierType !== item.identifierType) { data.identifierType = str(identifierType, LIMITS.label); await logEvent(tx, w, { intakeId: id, itemId, eventType: 'ITEM_UPDATED', title: `${name}: Identifier Type Changed`, oldValue: item.identifierType, newValue: str(identifierType, LIMITS.label) }); }
+        if (nextIdentifier !== undefined && nextIdentifier !== item.identifierValue) { data.identifierValue = nextIdentifier; if ((identifierType ?? item.identifierType)?.toLowerCase() === 'serial number') data.serialNumber = nextIdentifier; await logEvent(tx, w, { intakeId: id, itemId, eventType: 'SERIAL_CHANGED', title: `${name}: Identifier Changed`, oldValue: item.identifierValue, newValue: nextIdentifier }); }
+        if (problems !== undefined) {
+          const nextProblems = canonicalize('PROBLEM', cleanProblems(problems));
+          const previousProblems = decodeProblems(item.problems);
+          if (nextProblems.join('|') !== previousProblems.join('|')) {
+            data.problems = nextProblems;
+            await logEvent(tx, w, {
+              intakeId: id,
+              itemId,
+              eventType: 'ITEM_PROBLEMS_CHANGED',
+              title: `${name}: Problems Changed`,
+              oldValue: previousProblems.join(', '),
+              newValue: nextProblems.join(', '),
+              description: `${previousProblems.join(', ') || 'None'} → ${nextProblems.join(', ')}`,
+            });
           }
         }
-        if (serialNumber !== undefined) {
-          const s = str(serialNumber, LIMITS.serial);
-          if (s !== (item.serialNumber ?? null)) {
-            data.serialNumber = s;
-            await logEvent(tx, w, { intakeId: id, itemId, eventType: 'SERIAL_CHANGED', title: `${name}: Serial Changed`, oldValue: item.serialNumber, newValue: s, description: `${item.serialNumber ?? 'None'} → ${s ?? 'None'}` });
-          }
-        }
-        if (notes !== undefined) {
-          const n = str(notes, LIMITS.notes);
-          if (n !== (item.notes ?? null)) {
-            data.notes = n;
-            await logEvent(tx, w, { intakeId: id, itemId, eventType: 'ITEM_UPDATED', title: `${name}: Notes Changed` });
-          }
-        }
+        if (notes !== undefined) { const n = str(notes, LIMITS.notes); if (n !== (item.notes ?? null)) { data.notes = n; await logEvent(tx, w, { intakeId: id, itemId, eventType: 'ITEM_UPDATED', title: `${name}: Notes Changed` }); } }
         return Object.keys(data).length ? tx.serviceIntakeItem.update({ where: { id: itemId }, data }) : item;
       });
-      res.json({ success: true, message: 'Unit updated.', data: updated });
-    } catch (err) {
-      fail(res, err, 'Failed to update unit.', 'SI updateItem');
-    }
+      res.json({ success: true, message: 'Service item updated.', data: updated });
+    } catch (err) { fail(res, err, 'Failed to update service item.', 'SI updateItem'); }
   },
 
-  /** POST /:id/items/:itemId/status — schema has no per-item status column. */
+  /** POST /:id/items/:itemId/status — each item owns its own status. */
   changeItemStatus: async (req: AuthenticatedRequest, res: Response) => {
     try {
       const w = who(req);
@@ -624,39 +639,20 @@ export const serviceIntakeController = {
       const { id, itemId } = req.params;
       const { status, note } = req.body ?? {};
       if (!isStatus(status)) throw new HttpError(400, 'Invalid status.');
-
-      const [intake, item] = await Promise.all([
-        prisma.serviceIntake.findUnique({ where: { id }, select: { status: true } }),
-        prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id }, select: { id: true, itemTypeLabel: true } }),
-      ]);
-      if (!intake) throw new HttpError(404, 'Service intake not found.');
-      if (!item) throw new HttpError(404, 'Unit not found in this intake.');
-
-      if (intake.status === status) {
-        return void res.json({ success: true, message: `Status is already ${label(status)}.` });
-      }
+      const item = await prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id }, select: { id: true, itemTypeLabel: true, itemName: true, status: true } });
+      if (!item) throw new HttpError(404, 'Service item not found in this intake.');
+      if (item.status === status) return void res.json({ success: true, message: `Status is already ${label(status)}.` });
 
       await prisma.$transaction(async (tx) => {
-        await requireFreshStagePhoto(tx, id, itemId);
-        await tx.serviceIntake.update({
-          where: { id },
-          data: { status, ...terminalFields(status, w) },
-        });
-        await logEvent(tx, w, {
-          intakeId: id,
-          itemId,
-          eventType: 'STATUS_CHANGED',
-          title: `${item.itemTypeLabel || 'Unit'}: ${label(intake.status)} → ${label(status)}`,
-          description: str(note, LIMITS.notes),
-          oldValue: intake.status,
-          newValue: status,
-        });
+        if (!TERMINAL_STATUSES.includes(status)) {
+          await requireFreshStagePhoto(tx, id, itemId);
+        }
+        await tx.serviceIntakeItem.update({ where: { id: itemId }, data: { status, ...terminalFields(status, w) } });
+        await logEvent(tx, w, { intakeId: id, itemId, eventType: 'STATUS_CHANGED', title: `${item.itemName || item.itemTypeLabel || 'Item'}: ${label(item.status)} → ${label(status)}`, description: str(note, LIMITS.notes), oldValue: item.status, newValue: status });
+        await recomputeIntakeStatus(tx, id, w);
       });
-
-      res.json({ success: true, message: `Unit stage set to ${label(status)}.` });
-    } catch (err) {
-      fail(res, err, 'Failed to change unit status.', 'SI itemStatus');
-    }
+      res.json({ success: true, message: `Item status set to ${label(status)}.` });
+    } catch (err) { fail(res, err, 'Failed to change item status.', 'SI itemStatus'); }
   },
 
   /** POST /:id/items/:itemId/responsible — separate from the reporting person. */
@@ -737,9 +733,9 @@ export const serviceIntakeController = {
       if (!intake) throw new HttpError(404, 'Service intake not found.');
       let unitLabel = 'intake';
       if (itemId) {
-        const item = await prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id }, select: { itemTypeLabel: true } });
+        const item = await prisma.serviceIntakeItem.findFirst({ where: { id: itemId, intakeId: id }, select: { itemTypeLabel: true, itemName: true } });
         if (!item) throw new HttpError(404, 'Unit not found in this intake.');
-        unitLabel = item.itemTypeLabel || 'unit';
+        unitLabel = item.itemName || item.itemTypeLabel || 'item';
       }
 
       fs.mkdirSync(SERVICE_INTAKE_DIR, { recursive: true });
@@ -792,6 +788,31 @@ export const serviceIntakeController = {
     }
   },
 
+  /** POST /:id/lifecycle — explicit OPEN/CLOSED lifecycle; ARCHIVED uses archive endpoint. */
+  changeLifecycle: async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const w = who(req);
+      if (!w) return void res.status(401).json({ success: false, message: 'Authentication required.' });
+      const { id } = req.params;
+      const lifecycleStatus = String(req.body?.lifecycleStatus || '').toUpperCase();
+      if (!['OPEN', 'CLOSED'].includes(lifecycleStatus)) throw new HttpError(400, 'Lifecycle status must be OPEN or CLOSED.');
+      if (lifecycleStatus === 'CLOSED') {
+        const items = await prisma.serviceIntakeItem.findMany({ where: { intakeId: id }, select: { status: true } });
+        if (!items.length || !items.every((i) => TERMINAL_STATUSES.includes(i.status as ServiceStatus))) {
+          throw new HttpError(400, 'An intake can be closed only after all service items are Repaired or Not Repaired.');
+        }
+      }
+      const existing = await prisma.serviceIntake.findUnique({ where: { id }, select: { lifecycleStatus: true } });
+      if (!existing) throw new HttpError(404, 'Service intake not found.');
+      if (existing.lifecycleStatus === lifecycleStatus) return void res.json({ success: true, message: `Intake is already ${lifecycleStatus}.` });
+      await prisma.$transaction(async (tx) => {
+        await tx.serviceIntake.update({ where: { id }, data: { lifecycleStatus, ...(lifecycleStatus === 'CLOSED' ? { closedAt: new Date(), closedById: w.id } : { closedAt: null, closedById: null }) } });
+        await logEvent(tx, w, { intakeId: id, eventType: 'LIFECYCLE_CHANGED', title: `Intake: ${existing.lifecycleStatus} → ${lifecycleStatus}`, oldValue: existing.lifecycleStatus, newValue: lifecycleStatus });
+      });
+      res.json({ success: true, message: `Intake ${lifecycleStatus.toLowerCase()}.` });
+    } catch (err) { fail(res, err, 'Failed to change intake lifecycle.', 'SI lifecycle'); }
+  },
+
   /** POST /:id/archive — soft delete (privileged). */
   archiveIntake: async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -801,7 +822,7 @@ export const serviceIntakeController = {
       const { id } = req.params;
       if (!(await prisma.serviceIntake.findUnique({ where: { id }, select: { id: true } }))) throw new HttpError(404, 'Service intake not found.');
       await prisma.$transaction(async (tx) => {
-        await tx.serviceIntake.update({ where: { id }, data: { archivedAt: new Date() } });
+        await tx.serviceIntake.update({ where: { id }, data: { archivedAt: new Date(), lifecycleStatus: 'ARCHIVED' } });
         await logEvent(tx, w, { intakeId: id, eventType: 'ARCHIVED', title: 'Service Intake Archived' });
       });
       res.json({ success: true, message: 'Service intake archived.' });

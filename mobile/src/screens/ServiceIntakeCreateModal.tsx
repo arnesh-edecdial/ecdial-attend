@@ -5,9 +5,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApi } from '../services/api';
-import { TagSelector } from '../components/TagSelector';
 import { PhotoGrid, PhotoItem } from '../components/PhotoGrid';
-import { ServiceIntakeOptions, TakingTo, UnitType, TAKING_TO_LABELS, UNIT_TYPE_LABELS, NewUnitInput } from '../types/serviceIntake';
+import { ServiceIntakeOptions, TakingTo, UnitType, TAKING_TO_LABELS, UNIT_TYPE_LABELS, ITEM_TYPE_OPTIONS, NewUnitInput } from '../types/serviceIntake';
 
 interface Props {
   visible: boolean;
@@ -25,6 +24,60 @@ interface SelectedCustomer {
 let unitSeq = 0;
 const newUnitId = () => `local-${Date.now()}-${unitSeq++}`;
 
+
+interface LocalTagSelectorProps {
+  label: string;
+  options: string[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  multi?: boolean;
+  exclusiveOption?: string;
+  onAddNew: () => void;
+}
+
+const LocalTagSelector: React.FC<LocalTagSelectorProps> = ({
+  label, options, selected, onChange, multi = false, exclusiveOption, onAddNew,
+}) => {
+  const toggle = (value: string) => {
+    if (multi) {
+      if (exclusiveOption && value === exclusiveOption) {
+        onChange([value]);
+        return;
+      }
+      const next = selected.includes(value)
+        ? selected.filter((x) => x !== value)
+        : [...selected.filter((x) => !exclusiveOption || x !== exclusiveOption), value];
+      onChange(next);
+      return;
+    }
+    onChange(selected.includes(value) ? [] : [value]);
+  };
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.selectorHeader}>
+        <Text style={styles.sectionLabel}>{label}</Text>
+        <TouchableOpacity style={styles.addChipButton} onPress={onAddNew} activeOpacity={0.75}>
+          <Text style={styles.addChipButtonText}>+ Add New</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.chipWrap}>
+        {options.map((value) => {
+          const active = selected.includes(value);
+          return (
+            <TouchableOpacity key={value} style={[styles.tagChip, active && styles.tagChipActive]} onPress={() => toggle(value)} activeOpacity={0.75}>
+              <Text style={[styles.tagChipText, active && styles.tagChipTextActive]}>{value}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      {selected.length > 0 && (
+        <Text style={styles.selectedHint}>{selected.length} selected</Text>
+      )}
+    </View>
+  );
+};
+
 export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, onSuccess }) => {
   const insets = useSafeAreaInsets();
 
@@ -38,6 +91,8 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
   const [products, setProducts] = useState<any[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [addOptionKind, setAddOptionKind] = useState<'SITE' | 'PROBLEM' | null>(null);
+  const [newOptionText, setNewOptionText] = useState('');
 
   // --------------------------------------------------------------------
   // Customer selection — mirrors the "Select Customer" picker used on
@@ -68,7 +123,7 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
   }, [visible]);
 
   const resetForm = () => {
-    setSelectedCustomer(null); setSite([]); setProblems([]); setTakingTo(null); setNotes(''); setUnits([]);
+    setSelectedCustomer(null); setSite([]); setProblems([]); setTakingTo(null); setNotes(''); setUnits([]); setNewOptionText(''); setAddOptionKind(null);
   };
 
   const fetchCustomersForPicker = async (search?: string) => {
@@ -127,6 +182,33 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
   const addUnit = (itemType: UnitType) => {
     setUnits((u) => [...u, { id: newUnitId(), itemType, localImages: [], photos: [] }]);
   };
+  const openAddOption = (kind: 'SITE' | 'PROBLEM') => {
+    setNewOptionText('');
+    setAddOptionKind(kind);
+  };
+
+  const addCustomOption = () => {
+    const value = newOptionText.trim();
+    const kind = addOptionKind;
+    if (!kind || !value) return;
+
+    if (kind === 'SITE') {
+      setSite([value]);
+      setOptions((o) => o ? {
+        ...o,
+        sites: o.sites.includes(value) ? o.sites : [...o.sites, value],
+      } : o);
+    } else {
+      setProblems((p) => p.includes(value) ? p : [...p, value]);
+      setOptions((o) => o ? {
+        ...o,
+        problems: o.problems.includes(value) ? o.problems : [...o.problems, value],
+      } : o);
+    }
+
+    setNewOptionText('');
+    setAddOptionKind(null);
+  };
   const removeUnit = (id: string) => setUnits((u) => u.filter((x) => x.id !== id));
   const patchUnit = (id: string, patch: Partial<NewUnitInput>) =>
     setUnits((u) => u.map((x) => (x.id === id ? { ...x, ...patch } : x)));
@@ -157,7 +239,7 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
         problems: problems.length ? problems : [options?.unknownProblem || 'Unknown Problem'],
         takingTo,
         notes: notes.trim() || undefined,
-        items: units.map((u) => ({ itemType: u.itemType, productId: u.productId || undefined, serialNumber: u.serialNumber, notes: u.notes })),
+        items: units.map((u) => ({ itemType: u.itemType, itemName: u.itemName, productId: u.productId || undefined, identifierType: u.identifierType, identifierValue: u.identifierValue, notes: u.notes })),
       };
       const res = await mobileApi.createServiceIntake(payload);
       if (!res.success || !res.data) throw new Error(res.message || 'Failed to create service intake.');
@@ -213,22 +295,22 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
               )}
             </View>
 
-            <TagSelector
+            <LocalTagSelector
               label="Site"
               options={options.sites}
               selected={site}
               onChange={setSite}
-              onAddNew={() => { }}
+              onAddNew={() => openAddOption('SITE')}
             />
 
-            <TagSelector
+            <LocalTagSelector
               label="Problem"
               options={options.problems}
               selected={problems}
               onChange={setProblems}
               multi
               exclusiveOption={options.unknownProblem}
-              onAddNew={() => { }}
+              onAddNew={() => openAddOption('PROBLEM')}
             />
 
             <View style={styles.section}>
@@ -245,45 +327,31 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
                 ))}
               </View>
             </View>
-
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Units</Text>
-              <View style={styles.row}>
-                <TouchableOpacity style={styles.addUnitBtn} onPress={() => addUnit('INDOOR_UNIT')}>
-                  <Text style={styles.addUnitText}>+ Add Indoor Unit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.addUnitBtn} onPress={() => addUnit('OUTDOOR_UNIT')}>
-                  <Text style={styles.addUnitText}>+ Add Outdoor Unit</Text>
-                </TouchableOpacity>
+              <Text style={styles.sectionLabel}>Service Items</Text>
+              <Text style={styles.helperText}>Add anything that needs to be inspected or repaired.</Text>
+              <View style={styles.typeGrid}>
+                {ITEM_TYPE_OPTIONS.map((type) => (
+                  <TouchableOpacity key={type} style={styles.typeChip} onPress={() => addUnit(type)}>
+                    <Text style={styles.typeChipText}>+ {UNIT_TYPE_LABELS[type]}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-
               {units.map((u, idx) => (
                 <View key={u.id} style={styles.unitCard}>
                   <View style={styles.unitHeader}>
                     <Text style={styles.unitTitle}>{UNIT_TYPE_LABELS[u.itemType]} {idx + 1}</Text>
                     <TouchableOpacity onPress={() => removeUnit(u.id)}><Text style={styles.removeUnitText}>Remove</Text></TouchableOpacity>
                   </View>
-
+                  {u.itemType === 'OTHER' && <TextInput style={styles.input} placeholder="Item name (e.g. Capacitor)" value={u.itemName || ''} onChangeText={(t) => patchUnit(u.id, { itemName: t })} />}
                   <TouchableOpacity style={styles.modelSelect} onPress={() => { setProductSearch(''); setProductPicker({ unitId: u.id }); }}>
                     <Text style={u.productId ? styles.modelSelected : styles.modelPlaceholder}>
-                      {u.productId ? products.find((p) => p.id === u.productId)?.model || products.find((p) => p.id === u.productId)?.name : 'Select Model (optional)'}
+                      {u.productId ? products.find((p) => p.id === u.productId)?.model || products.find((p) => p.id === u.productId)?.name : 'Select Model / Product (optional)'}
                     </Text>
                   </TouchableOpacity>
-
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Serial Number (optional)"
-                    value={u.serialNumber}
-                    onChangeText={(t) => patchUnit(u.id, { serialNumber: t })}
-                  />
-                  <TextInput
-                    style={[styles.input, styles.multiline]}
-                    placeholder="Notes"
-                    value={u.notes}
-                    onChangeText={(t) => patchUnit(u.id, { notes: t })}
-                    multiline
-                  />
-
+                  <TextInput style={styles.input} placeholder="Identifier type (e.g. Serial Number, Board No.)" value={u.identifierType || ''} onChangeText={(t) => patchUnit(u.id, { identifierType: t })} />
+                  <TextInput style={styles.input} placeholder="Identifier value (optional)" value={u.identifierValue || ''} onChangeText={(t) => patchUnit(u.id, { identifierValue: t })} />
+                  <TextInput style={[styles.input, styles.multiline]} placeholder="Notes" value={u.notes} onChangeText={(t) => patchUnit(u.id, { notes: t })} multiline />
                   <PhotoGrid photos={u.photos} onAdd={(uris) => addUnitPhotos(u.id, uris)} onRemove={(id) => removeUnitPhoto(u.id, id)} />
                 </View>
               ))}
@@ -295,6 +363,19 @@ export const ServiceIntakeCreateModal: React.FC<Props> = ({ visible, onClose, on
             </View>
           </ScrollView>
         )}
+
+        <Modal visible={!!addOptionKind} transparent animationType="fade" onRequestClose={() => { setNewOptionText(''); setAddOptionKind(null); }}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.optionModal}>
+              <Text style={styles.modalTitle}>Add {addOptionKind === 'SITE' ? 'Site' : 'Problem'}</Text>
+              <TextInput autoFocus returnKeyType="done" onSubmitEditing={addCustomOption} style={styles.input} placeholder={addOptionKind === 'SITE' ? 'Site name' : 'Problem name'} value={newOptionText} onChangeText={setNewOptionText} />
+              <View style={styles.editRow}>
+                <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setAddOptionKind(null)}><Text style={styles.smallBtnGhostText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.smallBtn} onPress={addCustomOption}><Text style={styles.smallBtnText}>Add</Text></TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 14) }]}>
           <TouchableOpacity style={[styles.submitBtn, isSubmitting && { opacity: 0.6 }]} onPress={handleSubmit} disabled={isSubmitting}>
@@ -473,6 +554,15 @@ const styles = StyleSheet.create({
   body: { padding: 16 },
   section: { marginBottom: 20 },
   sectionLabel: { fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
+  selectorHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  addChipButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
+  addChipButtonText: { color: '#047857', fontSize: 11, fontWeight: '800' },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tagChip: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+  tagChipActive: { backgroundColor: '#0F172A', borderColor: '#0F172A' },
+  tagChipText: { fontSize: 12, fontWeight: '700', color: '#334155' },
+  tagChipTextActive: { color: '#FFFFFF' },
+  selectedHint: { fontSize: 11, color: '#64748B', marginTop: 7 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 
   // Customer — "select" button + selected banner on the main form
@@ -488,6 +578,12 @@ const styles = StyleSheet.create({
   destChipText: { fontSize: 13, fontWeight: '700', color: '#334155' },
   destChipTextActive: { color: '#FFFFFF' },
   addUnitBtn: { flex: 1, minWidth: '45%', paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: '#10B981', alignItems: 'center', backgroundColor: '#ECFDF5' },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  typeChip: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' },
+  typeChipText: { color: '#334155', fontSize: 12, fontWeight: '700' },
+  helperText: { color: '#64748B', fontSize: 12, marginTop: -4, marginBottom: 2 },
+  optionModal: { backgroundColor: '#FFFFFF', marginHorizontal: 24, borderRadius: 20, padding: 18 },
+  editRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 },
   addUnitText: { color: '#10B981', fontWeight: '800', fontSize: 13 },
   unitCard: { marginTop: 14, padding: 14, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' },
   unitHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },

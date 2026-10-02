@@ -1,17 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
-  Modal, Alert, TextInput, Image, RefreshControl,
+  Modal, Alert, TextInput, RefreshControl, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { mobileApi } from '../services/api';
-import { ServiceIntakeTimeline } from '../components/ServiceIntakeTimeline'; // existing shared component — reused as-is
-import { TagSelector } from '../components/TagSelector';
-import { PhotoGrid, PhotoItem } from '../components/PhotoGrid';
+import { getAuthToken, mobileApi } from '../services/api';
+import { ServiceIntakeTimeline } from '../components/ServiceIntakeTimeline';
+import { PhotoGrid } from '../components/PhotoGrid';
 import {
-  ServiceIntake, ServiceIntakeItem, ServiceStatus, UnitType,
-  STATUS_LABELS, STATUS_COLORS, STATUS_ORDER, TAKING_TO_LABELS, UNIT_TYPE_LABELS,
-  ServiceIntakeOptions,
+  ServiceIntake, ServiceIntakeItem, ServiceStatus, ServiceIntakeOptions,
+  STATUS_LABELS, STATUS_COLORS, STATUS_ORDER, TAKING_TO_LABELS,
+  ITEM_TYPE_OPTIONS, UNIT_TYPE_LABELS, UnitType,
 } from '../types/serviceIntake';
 
 interface Props {
@@ -21,69 +20,56 @@ interface Props {
   onRefreshList?: () => void;
 }
 
-const PRIVILEGED_ROLES = ['ADMIN', 'SERVICE_MANAGER', 'IT_ADMIN', 'MANAGER'];
+const BLOCKED_ROLES = ['HR', 'IT_ADMIN', 'IT'];
+const TERMINAL: ServiceStatus[] = ['REPAIRED', 'NOT_REPAIRED'];
+const canEditService = (role: string) => !BLOCKED_ROLES.includes(String(role || '').toUpperCase());
 
 const formatDateTime = (iso: string) => {
   try {
     return new Date(iso).toLocaleString('en-US', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-  } catch {
-    return iso;
-  }
+  } catch { return iso; }
 };
 
 export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole = 'ADMIN', onClose, onRefreshList }) => {
   const insets = useSafeAreaInsets();
-  const canManageCustomer = PRIVILEGED_ROLES.includes(userRole);
-
+  const canManage = canEditService(userRole);
   const [intake, setIntake] = useState<ServiceIntake | null>(null);
   const [options, setOptions] = useState<ServiceIntakeOptions | null>(null);
   const [employees, setEmployees] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const [previewImage, setPreviewImage] = useState<{ uri: string } | null>(null);
-  const [noteModalVisible, setNoteModalVisible] = useState(false);
-  const [noteText, setNoteText] = useState('');
+  const [statusItemId, setStatusItemId] = useState<string | null>(null);
   const [noteItemId, setNoteItemId] = useState<string | null>(null);
-
-  const [statusModalItemId, setStatusModalItemId] = useState<'INTAKE' | string | null>(null);
-  const [responsibleModalItemId, setResponsibleModalItemId] = useState<string | null>(null);
-
-  // Add-unit modal
-  const [addUnitVisible, setAddUnitVisible] = useState(false);
-  const [addUnitType, setAddUnitType] = useState<UnitType>('INDOOR_UNIT');
-  const [addUnitProductId, setAddUnitProductId] = useState<string | null>(null);
-  const [addUnitSerial, setAddUnitSerial] = useState('');
-  const [addUnitNotes, setAddUnitNotes] = useState('');
-  const [addUnitBusy, setAddUnitBusy] = useState(false);
-
-  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [responsibleItemId, setResponsibleItemId] = useState<string | null>(null);
+  const [addItemVisible, setAddItemVisible] = useState(false);
+  const [addType, setAddType] = useState<UnitType>('INDOOR_UNIT');
+  const [addName, setAddName] = useState('');
+  const [addIdentifierType, setAddIdentifierType] = useState('');
+  const [addIdentifierValue, setAddIdentifierValue] = useState('');
+  const [addProductId, setAddProductId] = useState<string | null>(null);
+  const [addNotes, setAddNotes] = useState('');
+  const [productPicker, setProductPicker] = useState(false);
   const [productSearch, setProductSearch] = useState('');
-
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [editSerial, setEditSerial] = useState('');
-  const [editNotes, setEditNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [previewGallery, setPreviewGallery] = useState<Array<{ id: string; uri: string }>>([]);
+  const [previewIndex, setPreviewIndex] = useState(0);
 
   const fetchIntake = useCallback(async () => {
     try {
       const res = await mobileApi.getServiceIntake(intakeId);
       if (res.success && res.data) setIntake(res.data);
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to load service intake details.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
+      Alert.alert('Error', err.message || 'Failed to load service intake.');
+    } finally { setIsLoading(false); setIsRefreshing(false); }
   }, [intakeId]);
 
   useEffect(() => {
     fetchIntake();
     (async () => {
       const [optRes, empRes, prodRes] = await Promise.all([
-        mobileApi.getServiceIntakeOptions(),
-        mobileApi.listEmployees(),
-        mobileApi.listProducts(),
+        mobileApi.getServiceIntakeOptions(), mobileApi.listEmployees(), mobileApi.listProducts(),
       ]);
       if (optRes.success) setOptions(optRes.data);
       if (empRes.success && Array.isArray(empRes.data)) setEmployees(empRes.data);
@@ -91,406 +77,267 @@ export const ServiceIntakeDetailScreen: React.FC<Props> = ({ intakeId, userRole 
     })();
   }, [fetchIntake]);
 
-  const onRefresh = () => { setIsRefreshing(true); fetchIntake(); };
+  const imagesForItem = (itemId: string) => (intake?.images || []).filter((img) => img.itemId === itemId);
 
-  const imagesForItem = (itemId: string | null) => (intake?.images || []).filter((img) => img.itemId === itemId);
+  const buildPhotoItems = (itemId: string) => imagesForItem(itemId)
+    .slice()
+    .sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
+    .map((img) => ({ id: img.id, uri: mobileApi.getServiceIntakeImageUrl(img.storageFileName) }));
 
-  /* ---- Status ---- */
-  const applyStatus = async (status: ServiceStatus) => {
-    if (!intake) return;
-    try {
-      if (statusModalItemId === 'INTAKE') {
-        await mobileApi.changeServiceIntakeStatus(intake.id, status);
-      } else if (statusModalItemId) {
-        await mobileApi.changeServiceItemStatus(intake.id, statusModalItemId, status);
-      }
-      setStatusModalItemId(null);
-      fetchIntake();
-      onRefreshList?.();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to change status.');
-    }
+  const openPreview = (photos: Array<{ id: string; uri: string }>, index: number) => {
+    if (!photos.length) return;
+    setPreviewGallery(photos);
+    setPreviewIndex(Math.max(0, Math.min(index, photos.length - 1)));
   };
 
-  /* ---- Responsible ---- */
-  const applyResponsible = async (employeeId: string) => {
-    if (!intake || !responsibleModalItemId) return;
-    try {
-      await mobileApi.changeServiceItemResponsible(intake.id, responsibleModalItemId, employeeId);
-      setResponsibleModalItemId(null);
-      fetchIntake();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to assign employee.');
-    }
+  const closePreview = () => {
+    setPreviewGallery([]);
+    setPreviewIndex(0);
+  };
+  const latestImage = (item: ServiceIntakeItem) => imagesForItem(item.id).slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0];
+  const latestStatusEvent = (itemId: string) => (intake?.events || []).filter((e) => e.itemId === itemId && e.eventType === 'STATUS_CHANGED').sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0];
+
+  const hasFreshPhoto = (item: ServiceIntakeItem) => {
+    const image = latestImage(item); const event = latestStatusEvent(item);
+    return !!image && (!event || +new Date(image.createdAt) > +new Date(event.createdAt));
   };
 
-  /* ---- Notes ---- */
-  const submitNote = async () => {
-    if (!intake || !noteText.trim()) return;
-    try {
-      await mobileApi.addServiceIntakeNote(intake.id, noteText.trim(), noteItemId || undefined);
-      setNoteModalVisible(false); setNoteText(''); setNoteItemId(null);
-      fetchIntake();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to add note.');
-    }
-  };
-
-  /* ---- Site / Problems (inline edit) ---- */
-  const updateSite = async (values: string[]) => {
-    if (!intake) return;
-    try { await mobileApi.updateServiceIntake(intake.id, { siteName: values[0] }); fetchIntake(); }
-    catch (err: any) { Alert.alert('Error', err.message || 'Failed to update site.'); }
-  };
-  const updateProblems = async (values: string[]) => {
-    if (!intake) return;
-    try { await mobileApi.updateServiceIntake(intake.id, { problems: values }); fetchIntake(); }
-    catch (err: any) { Alert.alert('Error', err.message || 'Failed to update problem.'); }
-  };
-
-  /* ---- Photos ---- */
-  const addPhotosToIntake = async (uris: string[], itemId?: string) => {
-    if (!intake) return;
+  const uploadPhotos = async (itemId: string, uris: string[]) => {
+    if (!canManage) return;
     for (const uri of uris) {
-      try {
-        await mobileApi.uploadServiceIntakeImage(intake.id, uri, 'image/jpeg', itemId);
-      } catch (e) {
-        console.warn('[Photo upload failed]', e);
-      }
+      try { await mobileApi.uploadServiceIntakeImage(intakeId, uri, 'image/jpeg', itemId); }
+      catch (e: any) { Alert.alert('Upload failed', e.message || 'One photo could not be uploaded.'); }
     }
-    fetchIntake();
-  };
-  const removePhoto = async (imageId: string) => {
-    if (!intake) return;
-    try { await mobileApi.deleteServiceIntakeImage(intake.id, imageId); fetchIntake(); }
-    catch (err: any) { Alert.alert('Error', err.message || 'Failed to remove photo.'); }
+    await fetchIntake(); onRefreshList?.();
   };
 
-  /* ---- Add unit ---- */
-  const submitAddUnit = async () => {
-    if (!intake) return;
-    setAddUnitBusy(true);
+  const changeStatus = async (status: ServiceStatus) => {
+    if (!intake || !statusItemId || !canManage) return;
+    const item = intake.items.find((x) => x.id === statusItemId);
+    if (!item) return;
+    if (status !== item.status && !TERMINAL.includes(status) && !hasFreshPhoto(item)) {
+      setStatusItemId(null);
+      Alert.alert('Photo required', 'Upload a new updated photo for this item before changing its service stage. Repaired / Not Repaired can be completed without another photo.');
+      return;
+    }
     try {
-      await mobileApi.addServiceIntakeItem(intake.id, {
-        itemType: addUnitType,
-        productId: addUnitProductId || undefined,
-        serialNumber: addUnitSerial || undefined,
-        notes: addUnitNotes || undefined,
+      await mobileApi.changeServiceItemStatus(intake.id, item.id, status);
+      setStatusItemId(null); await fetchIntake(); onRefreshList?.();
+    } catch (err: any) { Alert.alert('Error', err.message || 'Failed to change status.'); }
+  };
+
+  const addPhotosForItem = (itemId: string, uris: string[]) => uploadPhotos(itemId, uris);
+
+  const addItem = async () => {
+    if (!canManage) return;
+    if (addType === 'OTHER' && !addName.trim()) return Alert.alert('Item name required', 'Enter a name for the custom item.');
+    setBusy(true);
+    try {
+      await mobileApi.addServiceIntakeItem(intakeId, {
+        itemType: addType, itemName: addName.trim() || undefined,
+        productId: addProductId || undefined,
+        identifierType: addIdentifierType.trim() || undefined,
+        identifierValue: addIdentifierValue.trim() || undefined,
+        notes: addNotes.trim() || undefined,
       });
-      setAddUnitVisible(false);
-      setAddUnitProductId(null); setAddUnitSerial(''); setAddUnitNotes('');
-      fetchIntake();
-      onRefreshList?.();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to add unit.');
-    } finally {
-      setAddUnitBusy(false);
-    }
+      setAddItemVisible(false); setAddName(''); setAddIdentifierType(''); setAddIdentifierValue(''); setAddProductId(null); setAddNotes('');
+      await fetchIntake(); onRefreshList?.();
+    } catch (err: any) { Alert.alert('Error', err.message || 'Failed to add item.'); }
+    finally { setBusy(false); }
   };
 
-  /* ---- Edit unit (model/serial/notes) ---- */
-  const startEditItem = (item: ServiceIntakeItem) => {
-    setEditingItemId(item.id); setEditSerial(item.serialNumber || ''); setEditNotes(item.notes || '');
-  };
-  const saveEditItem = async () => {
-    if (!intake || !editingItemId) return;
-    try {
-      await mobileApi.updateServiceIntakeItem(intake.id, editingItemId, { serialNumber: editSerial, notes: editNotes });
-      setEditingItemId(null);
-      fetchIntake();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to update unit.');
-    }
+  const submitNote = async () => {
+    if (!noteText.trim()) return;
+    try { await mobileApi.addServiceIntakeNote(intakeId, noteText.trim(), noteItemId || undefined); setNoteText(''); setNoteItemId(null); await fetchIntake(); }
+    catch (err: any) { Alert.alert('Error', err.message || 'Failed to add note.'); }
   };
 
-  if (isLoading || !intake) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator color="#10B981" />
-      </View>
-    );
-  }
-
-  const custName = intake.customer?.name || intake.customerName || 'Unnamed Customer';
-  const intakeColors = STATUS_COLORS[intake.status] ?? {
-    bg: '#F1F5F9',
-    text: '#475569',
-    border: '#CBD5E1',
+  const assignResponsible = async (employeeId: string) => {
+    if (!responsibleItemId) return;
+    try { await mobileApi.changeServiceItemResponsible(intakeId, responsibleItemId, employeeId); setResponsibleItemId(null); await fetchIntake(); }
+    catch (err: any) { Alert.alert('Error', err.message || 'Failed to assign employee.'); }
   };
-  const intakeStatusLabel = STATUS_LABELS[intake.status] ?? intake.status ?? 'Unknown Status';
+
+  const filteredProducts = useMemo(() => products.filter((p) => !productSearch.trim() || `${p.name} ${p.model}`.toLowerCase().includes(productSearch.toLowerCase())), [products, productSearch]);
+
+  if (isLoading || !intake) return <View style={styles.centered}><ActivityIndicator color="#10B981" /></View>;
+
+  const customerName = intake.customer?.name || intake.customerName || 'Unnamed Customer';
+  const itemCount = intake.items?.length || 0;
+  const statusCounts = intake.items.reduce<Record<string, number>>((acc, item) => { acc[item.status] = (acc[item.status] || 0) + 1; return acc; }, {});
 
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 16) }]}>
-        <TouchableOpacity style={styles.backBtn} onPress={onClose}><Text style={styles.backBtnText}>←</Text></TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>{intake.intakeNumber}</Text>
-        <View style={{ width: 36 }} />
+        <TouchableOpacity style={styles.backBtn} onPress={onClose}><Text style={styles.backText}>←</Text></TouchableOpacity>
+        <View style={{ flex: 1 }}><Text style={styles.headerTitle}>{intake.intakeNumber}</Text><Text style={styles.headerSub}>{intake.lifecycleStatus || 'OPEN'} · {itemCount} item{itemCount === 1 ? '' : 's'}</Text></View>
+        {canManage && <TouchableOpacity style={styles.editBtn} onPress={() => setAddItemVisible(true)}><Text style={styles.editText}>+ Item</Text></TouchableOpacity>}
       </View>
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: Math.max(insets.bottom, 24) + 30 }}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#10B981" />}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={() => { setIsRefreshing(true); fetchIntake(); }} tintColor="#10B981" />}
       >
-        {/* Summary card */}
-        <View style={styles.card}>
-          <View style={styles.summaryTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.customerName}>{custName}</Text>
-              {!!intake.customer?.mobile && <Text style={styles.metaLine}>{intake.customer.mobile}</Text>}
-            </View>
-            <TouchableOpacity
-              style={[styles.statusBadge, { backgroundColor: intakeColors.bg, borderColor: intakeColors.border }]}
-              onPress={() => setStatusModalItemId('INTAKE')}
-            >
-              <Text style={[styles.statusText, { color: intakeColors.text }]}>{intakeStatusLabel}</Text>
-            </TouchableOpacity>
+        <View style={styles.topCard}>
+          <Text style={styles.customerName}>{customerName}</Text>
+          {!!intake.customer?.mobile && <Text style={styles.meta}>{intake.customer.mobile}</Text>}
+          <View style={styles.metaGrid}>
+            {!!intake.siteName && <Text style={styles.meta}>📍 {intake.siteName}</Text>}
+            {!!intake.takingTo && <Text style={styles.meta}>→ {TAKING_TO_LABELS[intake.takingTo]}</Text>}
+            <Text style={styles.meta}>Reported by {intake.createdBy?.name || 'System'}</Text>
+            <Text style={styles.meta}>{formatDateTime(intake.receivedAt)}</Text>
           </View>
-          <Text style={styles.metaLine}>Reported by {intake.createdBy?.name} · {formatDateTime(intake.receivedAt)}</Text>
-          <Text style={styles.metaLine}>Age: {intake.ageDays} day{intake.ageDays === 1 ? '' : 's'}</Text>
-          {!!intake.takingTo && <Text style={styles.metaLine}>Taking To: {TAKING_TO_LABELS[intake.takingTo]}</Text>}
+          <View style={styles.chipsRow}>{(intake.problems || []).map((p) => <View key={p} style={styles.infoChip}><Text style={styles.infoChipText}>{p}</Text></View>)}</View>
+          <View style={styles.summaryLine}>
+            {Object.entries(statusCounts).map(([status, count]) => <Text key={status} style={styles.summaryText}>{count} {STATUS_LABELS[status as ServiceStatus] || status}</Text>)}
+          </View>
         </View>
 
-        {/* Site & Problem */}
-        {options && (
-          <View style={styles.card}>
-            <TagSelector label="Site" options={options.sites} selected={intake.siteName ? [intake.siteName] : []} onChange={updateSite} onAddNew={() => { }} />
-            <TagSelector
-              label="Problem"
-              options={options.problems}
-              selected={intake.problems || []}
-              onChange={updateProblems}
-              multi
-              exclusiveOption={options.unknownProblem}
-              onAddNew={() => { }}
-            />
-          </View>
-        )}
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Service Items</Text><Text style={styles.sectionHint}>Latest photo + current state</Text></View>
 
-        {/* Notes */}
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Notes</Text>
-          <Text style={styles.notesText}>{intake.notes || 'No notes.'}</Text>
-        </View>
-
-        {/* Intake-level photos */}
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Photos</Text>
-          <PhotoGrid
-            photos={imagesForItem(null).map((img) => ({ id: img.id, uri: mobileApi.getServiceIntakeImageUrl(img.storageFileName) }))}
-            onAdd={(uris) => addPhotosToIntake(uris)}
-            onRemove={(id) => removePhoto(id)}
-          />
-        </View>
-
-        {/* Units */}
-        <View style={styles.card}>
-          <View style={styles.summaryTop}>
-            <Text style={styles.sectionLabel}>Units</Text>
-          </View>
-          <View style={styles.addUnitRow}>
-            <TouchableOpacity style={styles.addUnitBtn} onPress={() => { setAddUnitType('INDOOR_UNIT'); setAddUnitVisible(true); }}>
-              <Text style={styles.addUnitText}>+ Add Indoor Unit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.addUnitBtn} onPress={() => { setAddUnitType('OUTDOOR_UNIT'); setAddUnitVisible(true); }}>
-              <Text style={styles.addUnitText}>+ Add Outdoor Unit</Text>
-            </TouchableOpacity>
-          </View>
-
-          {intake.items.map((item) => {
-            const colors = STATUS_COLORS[item.status] ?? {
-              bg: '#F1F5F9',
-              text: '#475569',
-              border: '#CBD5E1',
-            };
-            const itemStatusLabel = STATUS_LABELS[item.status] ?? item.status ?? 'Unknown Status';
-            const editing = editingItemId === item.id;
-            return (
-              <View key={item.id} style={styles.unitCard}>
-                <View style={styles.summaryTop}>
-                  <Text style={styles.unitTitle}>{item.itemTypeLabel || UNIT_TYPE_LABELS[item.itemType]}</Text>
-                  <TouchableOpacity
-                    style={[styles.statusBadge, { backgroundColor: colors.bg, borderColor: colors.border }]}
-                    onPress={() => setStatusModalItemId(item.id)}
-                  >
-                    <Text style={[styles.statusText, { color: colors.text }]}>{itemStatusLabel}</Text>
-                  </TouchableOpacity>
+        {intake.items.map((item) => {
+          const colors = STATUS_COLORS[item.status] || STATUS_COLORS.NOT_STARTED;
+          const photos = imagesForItem(item.id);
+          const image = latestImage(item);
+          return (
+            <View key={item.id} style={styles.itemCard}>
+              <View style={styles.itemTop}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.itemTitle}>{item.itemName || item.itemTypeLabel || UNIT_TYPE_LABELS[item.itemType] || 'Service Item'}</Text>
+                  {!!item.productModel && <Text style={styles.itemMeta}>Model: {item.productModel}</Text>}
+                  {!!item.identifierValue && <Text style={styles.itemMeta}>{item.identifierType || 'Identifier'}: {item.identifierValue}</Text>}
                 </View>
-
-                {editing ? (
-                  <>
-                    <TextInput style={styles.input} placeholder="Serial Number" value={editSerial} onChangeText={setEditSerial} />
-                    <TextInput style={[styles.input, styles.multiline]} placeholder="Notes" value={editNotes} onChangeText={setEditNotes} multiline />
-                    <View style={styles.editRow}>
-                      <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setEditingItemId(null)}><Text style={styles.smallBtnGhostText}>Cancel</Text></TouchableOpacity>
-                      <TouchableOpacity style={styles.smallBtn} onPress={saveEditItem}><Text style={styles.smallBtnText}>Save</Text></TouchableOpacity>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    {!!item.productModel && <Text style={styles.metaLine}>Model: {item.productModel}</Text>}
-                    <Text style={styles.metaLine}>Serial: {item.serialNumber || '—'}</Text>
-                    <Text style={styles.metaLine}>Responsible: {item.responsibleEmployeeName || 'Unassigned'}</Text>
-                    {!!item.notes && <Text style={styles.metaLine}>{item.notes}</Text>}
-
-                    <PhotoGrid
-                      photos={imagesForItem(item.id).map((img) => ({ id: img.id, uri: mobileApi.getServiceIntakeImageUrl(img.storageFileName) }))}
-                      onAdd={(uris) => addPhotosToIntake(uris, item.id)}
-                      onRemove={(id) => removePhoto(id)}
-                    />
-
-                    <View style={styles.unitActions}>
-                      <TouchableOpacity style={styles.smallBtnGhost} onPress={() => startEditItem(item)}><Text style={styles.smallBtnGhostText}>Edit</Text></TouchableOpacity>
-                      <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setResponsibleModalItemId(item.id)}><Text style={styles.smallBtnGhostText}>Assign</Text></TouchableOpacity>
-                      <TouchableOpacity style={styles.smallBtnGhost} onPress={() => { setNoteItemId(item.id); setNoteModalVisible(true); }}><Text style={styles.smallBtnGhostText}>Add Note</Text></TouchableOpacity>
-                    </View>
-                  </>
-                )}
+                <TouchableOpacity disabled={!canManage} onPress={() => canManage && setStatusItemId(item.id)} style={[styles.statusPill, { backgroundColor: colors.bg, borderColor: colors.border }]}>
+                  <Text style={[styles.statusPillText, { color: colors.text }]}>{STATUS_LABELS[item.status] || item.status}</Text>
+                </TouchableOpacity>
               </View>
-            );
-          })}
-        </View>
 
-        {/* Timeline */}
-        <View style={styles.card}>
-          <View style={styles.summaryTop}>
-            <Text style={styles.sectionLabel}>History</Text>
-            <TouchableOpacity onPress={() => { setNoteItemId(null); setNoteModalVisible(true); }}>
-              <Text style={styles.addNoteLink}>+ Add Note</Text>
-            </TouchableOpacity>
-          </View>
+              {image ? (
+                <TouchableOpacity
+                  onPress={() => openPreview(buildPhotoItems(item.id), Math.max(0, buildPhotoItems(item.id).length - 1))}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.latestLabel}>Latest photo · tap to preview{photos.length > 1 ? ` · ${photos.length} photos` : ''}</Text>
+                </TouchableOpacity>
+              ) : <Text style={styles.noPhoto}>No photo uploaded yet</Text>}
+              <PhotoGrid
+                photos={buildPhotoItems(item.id)}
+                onAdd={canManage ? (uris) => addPhotosForItem(item.id, uris) : () => {}}
+                onRemove={undefined}
+                onPreview={(photo, index) => openPreview(buildPhotoItems(item.id), index)}
+                disabled={!canManage}
+              />
+
+              {canManage && <View style={styles.itemActions}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => { setNoteItemId(item.id); }}><Text style={styles.actionText}>Add Note</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => setResponsibleItemId(item.id)}><Text style={styles.actionText}>Assign</Text></TouchableOpacity>
+              </View>}
+            </View>
+          );
+        })}
+
+        {intake.items.length === 0 && <View style={styles.emptyCard}><Text style={styles.emptyTitle}>No service items yet</Text><Text style={styles.emptyText}>Tap + Item to add a motor, PCB, fan, unit or custom component.</Text></View>}
+
+        <View style={styles.timelineCard}>
+          <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>History</Text>{canManage && <TouchableOpacity onPress={() => setNoteItemId('INTAKE')}><Text style={styles.addNote}>+ Add Note</Text></TouchableOpacity>}</View>
           <ServiceIntakeTimeline events={intake.events || []} />
         </View>
       </ScrollView>
 
-      {/* Status picker modal */}
-      <Modal visible={!!statusModalItemId} transparent animationType="fade" onRequestClose={() => setStatusModalItemId(null)}>
-        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setStatusModalItemId(null)}>
-          <View style={styles.sheet}>
-            {STATUS_ORDER.map((s) => (
-              <TouchableOpacity key={s} style={styles.sheetRow} onPress={() => applyStatus(s)}>
-                <Text style={styles.sheetRowText}>{STATUS_LABELS[s]}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
+      <Modal visible={!!statusItemId} transparent animationType="fade" onRequestClose={() => setStatusItemId(null)}>
+        <View style={styles.overlay}><View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>Update Service Status</Text>
+          <Text style={styles.sheetHint}>Upload a new photo before changing to an active service stage. Completion does not require another photo.</Text>
+          {STATUS_ORDER.map((status) => <TouchableOpacity key={status} style={styles.statusOption} onPress={() => changeStatus(status)}><Text style={styles.statusOptionText}>{STATUS_LABELS[status]}</Text></TouchableOpacity>)}
+          <TouchableOpacity style={styles.cancelBtn} onPress={() => setStatusItemId(null)}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
+        </View></View>
       </Modal>
 
-      {/* Responsible picker modal */}
-      <Modal visible={!!responsibleModalItemId} transparent animationType="fade" onRequestClose={() => setResponsibleModalItemId(null)}>
-        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setResponsibleModalItemId(null)}>
-          <ScrollView style={styles.sheet}>
-            {employees.map((e) => (
-              <TouchableOpacity key={e.id} style={styles.sheetRow} onPress={() => applyResponsible(e.id)}>
-                <Text style={styles.sheetRowText}>{e.name}</Text>
-                <Text style={styles.sheetRowSub}>{e.role} · {e.employeeCode}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Note modal */}
-      <Modal visible={noteModalVisible} transparent animationType="fade" onRequestClose={() => setNoteModalVisible(false)}>
-        <View style={styles.sheetOverlay}>
-          <View style={styles.sheet}>
-            <Text style={styles.sectionLabel}>Add Note</Text>
-            <TextInput style={[styles.input, styles.multiline]} placeholder="Note" value={noteText} onChangeText={setNoteText} multiline autoFocus />
-            <View style={styles.editRow}>
-              <TouchableOpacity style={styles.smallBtnGhost} onPress={() => { setNoteModalVisible(false); setNoteText(''); }}><Text style={styles.smallBtnGhostText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.smallBtn} onPress={submitNote}><Text style={styles.smallBtnText}>Add</Text></TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Add unit modal */}
-      <Modal visible={addUnitVisible} animationType="slide" onRequestClose={() => setAddUnitVisible(false)}>
+      <Modal visible={addItemVisible} animationType="slide" onRequestClose={() => setAddItemVisible(false)}>
         <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
-          <View style={styles.header}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => setAddUnitVisible(false)}><Text style={styles.backBtnText}>✕</Text></TouchableOpacity>
-            <Text style={styles.title}>Add {UNIT_TYPE_LABELS[addUnitType]}</Text>
-            <View style={{ width: 36 }} />
-          </View>
-          <ScrollView style={{ padding: 16 }}>
-            <TouchableOpacity style={styles.input} onPress={() => { setProductSearch(''); setProductPickerOpen(true); }}>
-              <Text style={addUnitProductId ? styles.metaLine : { color: '#94A3B8' }}>
-                {addUnitProductId ? (products.find((p) => p.id === addUnitProductId)?.model || products.find((p) => p.id === addUnitProductId)?.name) : 'Select Model (optional)'}
-              </Text>
-            </TouchableOpacity>
-            <TextInput style={styles.input} placeholder="Serial Number (optional)" value={addUnitSerial} onChangeText={setAddUnitSerial} />
-            <TextInput style={[styles.input, styles.multiline]} placeholder="Notes" value={addUnitNotes} onChangeText={setAddUnitNotes} multiline />
-            <TouchableOpacity style={[styles.smallBtn, addUnitBusy && { opacity: 0.6 }, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={submitAddUnit} disabled={addUnitBusy}>
-              {addUnitBusy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.smallBtnText}>Add Unit</Text>}
-            </TouchableOpacity>
+          <View style={styles.header}><TouchableOpacity style={styles.backBtn} onPress={() => setAddItemVisible(false)}><Text style={styles.backText}>✕</Text></TouchableOpacity><Text style={styles.headerTitle}>Add Service Item</Text><View style={{ width: 70 }} /></View>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            <Text style={styles.formLabel}>Item type</Text>
+            <View style={styles.typeGrid}>{ITEM_TYPE_OPTIONS.map((type) => <TouchableOpacity key={type} style={[styles.typeChip, addType === type && styles.typeChipActive]} onPress={() => setAddType(type)}><Text style={[styles.typeChipText, addType === type && styles.typeChipTextActive]}>{UNIT_TYPE_LABELS[type]}</Text></TouchableOpacity>)}</View>
+            {addType === 'OTHER' && <TextInput style={styles.input} placeholder="Custom item name" value={addName} onChangeText={setAddName} />}
+            <TouchableOpacity style={styles.input} onPress={() => setProductPicker(true)}><Text style={{ color: addProductId ? '#0F172A' : '#94A3B8' }}>{addProductId ? (products.find((p) => p.id === addProductId)?.model || products.find((p) => p.id === addProductId)?.name) : 'Model / Product (optional)'}</Text></TouchableOpacity>
+            <TextInput style={styles.input} placeholder="Identifier type (Serial Number, Board No., Rating...)" value={addIdentifierType} onChangeText={setAddIdentifierType} />
+            <TextInput style={styles.input} placeholder="Identifier value (optional)" value={addIdentifierValue} onChangeText={setAddIdentifierValue} />
+            <TextInput style={[styles.input, styles.multiline]} placeholder="Notes (optional)" value={addNotes} onChangeText={setAddNotes} multiline />
+            <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: .6 }]} disabled={busy} onPress={addItem}>{busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryText}>Add Item</Text>}</TouchableOpacity>
           </ScrollView>
         </View>
       </Modal>
 
-      {/* Product picker */}
-      <Modal visible={productPickerOpen} animationType="slide" onRequestClose={() => setProductPickerOpen(false)}>
-        <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}>
-          <View style={styles.header}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => setProductPickerOpen(false)}><Text style={styles.backBtnText}>✕</Text></TouchableOpacity>
-            <Text style={styles.title}>Select Model</Text>
-            <View style={{ width: 36 }} />
-          </View>
-          <TextInput style={[styles.input, { margin: 16 }]} placeholder="Search model..." value={productSearch} onChangeText={setProductSearch} />
-          <ScrollView>
-            {products.filter((p) => !productSearch || `${p.name} ${p.model}`.toLowerCase().includes(productSearch.toLowerCase())).map((p) => (
-              <TouchableOpacity key={p.id} style={styles.prodRow} onPress={() => { setAddUnitProductId(p.id); setProductPickerOpen(false); }}>
-                <Text style={styles.customerName}>{p.name}</Text>
-                {!!p.model && <Text style={styles.metaLine}>{p.model}</Text>}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+      <Modal visible={productPicker} animationType="slide" onRequestClose={() => setProductPicker(false)}>
+        <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]}><View style={styles.header}><TouchableOpacity style={styles.backBtn} onPress={() => setProductPicker(false)}><Text style={styles.backText}>✕</Text></TouchableOpacity><Text style={styles.headerTitle}>Select Model</Text><View style={{ width: 36 }} /></View><TextInput style={[styles.input, { margin: 16 }]} placeholder="Search model" value={productSearch} onChangeText={setProductSearch} /><ScrollView>{filteredProducts.map((p) => <TouchableOpacity key={p.id} style={styles.productRow} onPress={() => { setAddProductId(p.id); setProductPicker(false); }}><Text style={styles.customerName}>{p.name}</Text>{!!p.model && <Text style={styles.meta}>{p.model}</Text>}</TouchableOpacity>)}</ScrollView></View>
+      </Modal>
+
+      <Modal visible={previewGallery.length > 0} transparent animationType="fade" onRequestClose={closePreview}>
+        <View style={styles.previewOverlay}>
+          <TouchableOpacity style={styles.previewClose} onPress={closePreview} activeOpacity={0.8}>
+            <Text style={styles.previewCloseText}>✕</Text>
+          </TouchableOpacity>
+          {previewGallery.length > 0 && (
+            <>
+              <Image
+                source={{
+                  uri: previewGallery[previewIndex].uri,
+                  headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : undefined,
+                }}
+                style={styles.previewImage}
+                resizeMode="contain"
+              />
+              {previewGallery.length > 1 && (
+                <>
+                  <TouchableOpacity
+                    style={[styles.galleryArrow, styles.galleryArrowLeft, previewIndex === 0 && styles.galleryArrowDisabled]}
+                    disabled={previewIndex === 0}
+                    onPress={() => setPreviewIndex((i) => Math.max(0, i - 1))}
+                  >
+                    <Text style={styles.galleryArrowText}>‹</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.galleryArrow, styles.galleryArrowRight, previewIndex === previewGallery.length - 1 && styles.galleryArrowDisabled]}
+                    disabled={previewIndex === previewGallery.length - 1}
+                    onPress={() => setPreviewIndex((i) => Math.min(previewGallery.length - 1, i + 1))}
+                  >
+                    <Text style={styles.galleryArrowText}>›</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              <View style={styles.previewCounter}>
+                <Text style={styles.previewCounterText}>{previewIndex + 1} / {previewGallery.length}</Text>
+              </View>
+            </>
+          )}
         </View>
       </Modal>
 
-      {/* Fullscreen image preview */}
-      <Modal visible={!!previewImage} transparent animationType="fade" onRequestClose={() => setPreviewImage(null)}>
-        <TouchableOpacity style={styles.imageOverlay} activeOpacity={1} onPress={() => setPreviewImage(null)}>
-          {previewImage && <Image source={{ uri: previewImage.uri }} style={styles.imageFull} resizeMode="contain" />}
-        </TouchableOpacity>
-      </Modal>
+      <Modal visible={!!responsibleItemId} transparent animationType="fade" onRequestClose={() => setResponsibleItemId(null)}><View style={styles.overlay}><ScrollView style={styles.sheet}>{employees.map((e) => <TouchableOpacity key={e.id} style={styles.statusOption} onPress={() => assignResponsible(e.id)}><Text style={styles.statusOptionText}>{e.name}</Text><Text style={styles.sheetHint}>{e.role} · {e.employeeCode}</Text></TouchableOpacity>)}</ScrollView></View></Modal>
+
+      <Modal visible={!!noteItemId} transparent animationType="fade" onRequestClose={() => setNoteItemId(null)}><View style={styles.overlay}><View style={styles.sheet}><Text style={styles.sheetTitle}>Add Note</Text><TextInput autoFocus style={[styles.input, styles.multiline]} placeholder="Write a note" value={noteText} onChangeText={setNoteText} multiline /><View style={styles.itemActions}><TouchableOpacity style={styles.cancelBtn} onPress={() => { setNoteItemId(null); setNoteText(''); }}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={styles.primarySmall} onPress={submitNote}><Text style={styles.primaryText}>Add</Text></TouchableOpacity></View></View></View></Modal>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 14, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderColor: '#E2E8F0' },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  backBtnText: { fontSize: 18, color: '#0F172A', fontWeight: '800' },
-  title: { fontSize: 16, fontWeight: '800', color: '#0F172A', flex: 1, textAlign: 'center' },
-  card: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 },
-  summaryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  customerName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
-  metaLine: { fontSize: 12, color: '#475569', marginBottom: 2 },
-  statusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1 },
-  statusText: { fontSize: 12, fontWeight: '800' },
-  sectionLabel: { fontSize: 13, fontWeight: '800', color: '#0F172A', marginBottom: 8 },
-  notesText: { fontSize: 13, color: '#334155' },
-  addUnitRow: { flexDirection: 'row', gap: 10, marginBottom: 6 },
-  addUnitBtn: { flex: 1, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: '#10B981', alignItems: 'center', backgroundColor: '#ECFDF5' },
-  addUnitText: { color: '#10B981', fontWeight: '800', fontSize: 13 },
-  unitCard: { marginTop: 12, padding: 14, borderRadius: 16, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' },
-  unitTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
-  input: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10, fontSize: 13, color: '#0F172A', backgroundColor: '#FFFFFF' },
-  multiline: { minHeight: 60, textAlignVertical: 'top' },
-  editRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
-  unitActions: { flexDirection: 'row', gap: 16, marginTop: 10 },
-  smallBtn: { backgroundColor: '#0F172A', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
-  smallBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
-  smallBtnGhost: { paddingVertical: 6 },
-  smallBtnGhostText: { color: '#10B981', fontWeight: '800', fontSize: 13 },
-  addNoteLink: { color: '#10B981', fontWeight: '700', fontSize: 12 },
-  sheetOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.4)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 18, maxHeight: '70%' },
-  sheetRow: { paddingVertical: 14, borderBottomWidth: 1, borderColor: '#F1F5F9' },
-  sheetRowText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
-  sheetRowSub: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
-  prodRow: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
-  imageOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
-  imageFull: { width: '100%', height: '80%' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' }, centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: 14, backgroundColor: '#FFF', borderBottomWidth: 1, borderColor: '#E2E8F0' },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }, backText: { fontSize: 20, color: '#0F172A', fontWeight: '800' },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' }, headerSub: { color: '#64748B', fontSize: 12, marginTop: 2 }, editBtn: { backgroundColor: '#ECFDF5', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 }, editText: { color: '#059669', fontWeight: '800' },
+  topCard: { backgroundColor: '#FFF', borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', padding: 18, marginBottom: 18 }, customerName: { fontSize: 22, fontWeight: '800', color: '#0F172A' }, meta: { fontSize: 12, color: '#64748B', marginTop: 4 }, metaGrid: { gap: 2, marginTop: 8 }, chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 }, infoChip: { backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 }, infoChipText: { color: '#334155', fontSize: 11, fontWeight: '700' }, summaryLine: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderColor: '#E2E8F0' }, summaryText: { color: '#475569', fontSize: 11, fontWeight: '700' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }, sectionTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' }, sectionHint: { fontSize: 11, color: '#94A3B8' }, addNote: { color: '#059669', fontWeight: '800' },
+  itemCard: { backgroundColor: '#FFF', borderRadius: 18, borderWidth: 1, borderColor: '#E2E8F0', padding: 14, marginBottom: 12 }, itemTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 }, itemTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' }, itemMeta: { fontSize: 12, color: '#64748B', marginTop: 3 }, statusPill: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6 }, statusPillText: { fontSize: 10, fontWeight: '800' }, latestLabel: { color: '#64748B', fontSize: 11, fontWeight: '700', marginTop: 12, marginBottom: 5 }, noPhoto: { color: '#94A3B8', fontSize: 11, marginTop: 14, marginBottom: 8 }, itemActions: { flexDirection: 'row', gap: 8, marginTop: 8 }, actionBtn: { paddingHorizontal: 11, paddingVertical: 8, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }, actionText: { color: '#334155', fontSize: 11, fontWeight: '800' }, emptyCard: { backgroundColor: '#FFF', borderRadius: 18, padding: 20, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 14 }, emptyTitle: { fontSize: 15, fontWeight: '800', color: '#0F172A' }, emptyText: { fontSize: 12, color: '#64748B', marginTop: 5 }, timelineCard: { backgroundColor: '#FFF', borderRadius: 18, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, marginTop: 8 },
+  overlay: { flex: 1, backgroundColor: 'rgba(15,23,42,.45)', justifyContent: 'flex-end' }, sheet: { backgroundColor: '#FFF', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 18, maxHeight: '80%' }, sheetTitle: { fontSize: 17, fontWeight: '800', color: '#0F172A', marginBottom: 6 }, sheetHint: { color: '#64748B', fontSize: 12, lineHeight: 18, marginBottom: 8 }, statusOption: { paddingVertical: 14, borderBottomWidth: 1, borderColor: '#F1F5F9' }, statusOptionText: { fontSize: 14, fontWeight: '700', color: '#0F172A' }, cancelBtn: { marginTop: 12, paddingVertical: 12, alignItems: 'center' }, cancelText: { color: '#64748B', fontWeight: '800' },
+  previewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.96)', justifyContent: 'center', alignItems: 'center' },
+  previewImage: { width: '100%', height: '78%' },
+  previewClose: { position: 'absolute', top: 50, right: 18, zIndex: 20, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
+  previewCloseText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  galleryArrow: { position: 'absolute', top: '50%', marginTop: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  galleryArrowLeft: { left: 12 }, galleryArrowRight: { right: 12 }, galleryArrowDisabled: { opacity: 0.25 },
+  galleryArrowText: { color: '#FFFFFF', fontSize: 38, lineHeight: 42, fontWeight: '300' },
+  previewCounter: { position: 'absolute', bottom: 48, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.16)' },
+  previewCounterText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }, typeChip: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 13, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' }, typeChipActive: { backgroundColor: '#0F172A', borderColor: '#0F172A' }, typeChipText: { fontSize: 12, color: '#334155', fontWeight: '700' }, typeChipTextActive: { color: '#FFF' }, input: { borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 13, paddingVertical: 11, fontSize: 13, color: '#0F172A', marginBottom: 10 }, multiline: { minHeight: 80, textAlignVertical: 'top' }, formLabel: { fontSize: 13, fontWeight: '800', color: '#334155', marginBottom: 8 }, primaryBtn: { backgroundColor: '#059669', borderRadius: 14, paddingVertical: 13, alignItems: 'center', marginTop: 8 }, primarySmall: { backgroundColor: '#059669', borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 }, primaryText: { color: '#FFF', fontWeight: '800' }, productRow: { backgroundColor: '#FFF', padding: 16, borderBottomWidth: 1, borderColor: '#E2E8F0' },
 });

@@ -28,6 +28,8 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
   onLogout,
 }) => {
   const getMenuItems = () => {
+    const role = (userRole || '').toUpperCase();
+    const serviceItem = !['HR', 'IT_ADMIN', 'IT'].includes(role) ? { id: 'SERVICE_INTAKE', label: 'Service Intake', icon: '🔧' } : null;
     if (canSkipAttendance(userRole)) {
       return [
         { id: 'HOME', label: 'Dashboard Home', icon: '🏠' },
@@ -40,7 +42,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
         { id: 'ADMIN_MACHINES', label: 'Machine Models', icon: '❄️' },
         { id: 'QUOTATIONS', label: 'All Quotations', icon: '📄' },
-        { id: 'SERVICE_INTAKE', label: 'Service Intake', icon: '🔧' },
+        ...(serviceItem ? [serviceItem] : []),
         { id: 'LOCATION_CALIBRATION', label: 'Location & Geofence Calibration', icon: '📍' },
       ];
     }
@@ -54,6 +56,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
         { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
         { id: 'QUOTATIONS', label: 'My Quotations', icon: '📄' },
         { id: 'NEW_QUOTE', label: 'Create Quotation', icon: '➕' },
+        ...(serviceItem ? [serviceItem] : []),
       ];
     }
     // Employee / Technician
@@ -62,6 +65,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({
       { id: 'CALENDAR', label: 'My Attendance History', icon: '📅' },
       { id: 'CATALOGUES', label: 'AC Catalogues', icon: '📚' },
       { id: 'REQUEST', label: 'Request Attendance', icon: '📝' },
+      ...(serviceItem ? [serviceItem] : []),
     ];
   };
 

@@ -2,7 +2,13 @@
 
 export type ServiceStatus = 'NOT_STARTED' | 'ONGOING' | 'SENT_FOR_REPAIR' | 'REPAIRED' | 'NOT_REPAIRED';
 export type TakingTo = 'SHOWROOM' | 'OFFICE' | 'SERVICE_CENTER';
-export type UnitType = 'INDOOR_UNIT' | 'OUTDOOR_UNIT';
+export type UnitType = 'INDOOR_UNIT' | 'OUTDOOR_UNIT' | 'MOTOR' | 'PCB_BOARD' | 'FAN' | 'COMPRESSOR' | 'CAPACITOR' | 'OTHER';
+
+export const ITEM_TYPE_LABELS: Record<UnitType, string> = {
+  INDOOR_UNIT: 'Indoor Unit', OUTDOOR_UNIT: 'Outdoor Unit', MOTOR: 'Motor',
+  PCB_BOARD: 'PCB Board', FAN: 'Fan', COMPRESSOR: 'Compressor', CAPACITOR: 'Capacitor', OTHER: 'Other / Custom',
+};
+export const ITEM_TYPE_OPTIONS: UnitType[] = ['INDOOR_UNIT','OUTDOOR_UNIT','MOTOR','PCB_BOARD','FAN','COMPRESSOR','CAPACITOR','OTHER'];
 
 export const STATUS_LABELS: Record<ServiceStatus, string> = {
   NOT_STARTED: 'Not Yet Processed',
@@ -26,7 +32,7 @@ export const TAKING_TO_LABELS: Record<TakingTo, string> = {
   SERVICE_CENTER: 'Service Center',
 };
 
-export const UNIT_TYPE_LABELS: Record<UnitType, string> = { INDOOR_UNIT: 'Indoor Unit', OUTDOOR_UNIT: 'Outdoor Unit' };
+export const UNIT_TYPE_LABELS = ITEM_TYPE_LABELS;
 
 export interface ServiceIntakeCustomer {
   id: string;
@@ -48,6 +54,10 @@ export interface ServiceIntakeItem {
   intakeId: string;
   itemType: UnitType;
   itemTypeLabel: string;
+  itemName: string | null;
+  problems: string[];
+  identifierType: string | null;
+  identifierValue: string | null;
   productId: string | null;
   productModel: string | null;
   serialNumber: string | null;
@@ -79,6 +89,7 @@ export interface ServiceIntake {
   problems: string[];
   takingTo: TakingTo | null;
   status: ServiceStatus;
+  lifecycleStatus?: 'OPEN' | 'CLOSED' | 'ARCHIVED';
   notes: string | null;
   receivedAt: string;
   closedAt: string | null;
@@ -99,7 +110,10 @@ export interface ServiceIntakeOptions {
 
 export interface NewUnitInput {
   itemType: UnitType;
+  itemName?: string;
   productId?: string | null;
+  identifierType?: string;
+  identifierValue?: string;
   serialNumber?: string;
   notes?: string;
   /** local-only until the intake is created */

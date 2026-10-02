@@ -26,12 +26,15 @@ export const TAKING_TO = [
 export const TAKING_TO_KEYS: string[] = TAKING_TO.map((t) => t.key);
 export const takingToLabel = (key?: string | null) => TAKING_TO.find((t) => t.key === key)?.label ?? null;
 
-/** New units are Indoor/Outdoor; the other types are kept so legacy rows still display. */
+/** Generic service-item types. Legacy rows remain supported. */
 export const ITEM_TYPE_LABELS: Record<string, string> = {
   INDOOR_UNIT: 'Indoor Unit',
   OUTDOOR_UNIT: 'Outdoor Unit',
   MOTOR: 'Motor',
   PCB_BOARD: 'PCB Board',
+  FAN: 'Fan',
+  COMPRESSOR: 'Compressor',
+  CAPACITOR: 'Capacitor',
   OTHER: 'Other',
 };
 
@@ -57,4 +60,4 @@ export const UNKNOWN_PROBLEM = 'Unknown Problem';
 export const PRIVILEGED_ROLES = ['ADMIN', 'SERVICE_MANAGER', 'IT_ADMIN', 'MANAGER'];
 
 export const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
-export const LIMITS = { label: 60, site: 80, serial: 80, notes: 2000, maxProblems: 10 };
+export const LIMITS = { label: 60, site: 80, serial: 80, identifier: 120, notes: 2000, maxProblems: 10, itemName: 80 };

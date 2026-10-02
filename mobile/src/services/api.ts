@@ -60,8 +60,7 @@ export interface ApiResponseWithMeta<T = any> {
 
 export async function requestWithMeta<T>(
   endpoint: string,
-  options: RequestInit = {},
-  timeoutMs = 20000
+  options: RequestInit = {}
 ): Promise<ApiResponseWithMeta<T>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -72,22 +71,12 @@ export async function requestWithMeta<T>(
 
   const url = `${getApiBaseUrl()}${endpoint}`;
   let response: Response;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
-    response = await fetch(url, { ...options, headers, signal: options.signal || controller.signal });
+    response = await fetch(url, { ...options, headers });
   } catch (netErr: any) {
-    const timedOut = netErr?.name === 'AbortError' && !options.signal;
-    const netError: any = new Error(
-      timedOut
-        ? `ECDIAL backend did not respond within ${Math.round(timeoutMs / 1000)} seconds.`
-        : 'Unable to connect to ECDIAL backend. Please verify your network connection.'
-    );
-    netError.errorType = timedOut ? 'TIMEOUT' : 'NETWORK_ERROR';
+    const netError: any = new Error('Unable to connect to Ecdial backend. Please verify your phone is on the same Wi-Fi network.');
+    netError.errorType = 'NETWORK_ERROR';
     throw netError;
-  } finally {
-    clearTimeout(timeout);
   }
 
   if (response.status === 304) {
@@ -139,9 +128,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
   if (endpoint.includes('/auth/employees')) {
     dataCache.invalidate('employees');
-  }
-  if (endpoint.includes('/service-intakes')) {
-    dataCache.invalidate('service-intakes');
   }
 
   return res.data;
@@ -559,8 +545,6 @@ export const mobileApi = {
     if (params?.archived) q.append('archived', 'true');
     if (params?.page) q.append('page', String(params.page));
     if (params?.limit) q.append('limit', String(params.limit));
-    if (!params?.page) q.append('page', '1');
-    if (!params?.limit) q.append('limit', '30');
     return request<any>(`/service-intakes?${q.toString()}`);
   },
 
@@ -573,7 +557,7 @@ export const mobileApi = {
     problems: string[];
     takingTo: 'SHOWROOM' | 'OFFICE' | 'SERVICE_CENTER';
     notes?: string;
-    items?: Array<{ itemType: 'INDOOR_UNIT' | 'OUTDOOR_UNIT'; productId?: string; serialNumber?: string; notes?: string }>;
+    items?: Array<{ itemType: string; itemName?: string; productId?: string; identifierType?: string; identifierValue?: string; serialNumber?: string; notes?: string }>;
   }) =>
     request<any>('/service-intakes', { method: 'POST', body: JSON.stringify(payload) }),
 
@@ -592,12 +576,12 @@ export const mobileApi = {
     request<any>(`/service-intakes/${id}/notes`, { method: 'POST', body: JSON.stringify({ note, itemId }) }),
 
   addServiceIntakeItem: (id: string, item: {
-    itemType: 'INDOOR_UNIT' | 'OUTDOOR_UNIT'; productId?: string; serialNumber?: string; notes?: string;
+    itemType: string; itemName?: string; productId?: string; identifierType?: string; identifierValue?: string; serialNumber?: string; notes?: string;
   }) =>
     request<any>(`/service-intakes/${id}/items`, { method: 'POST', body: JSON.stringify(item) }),
 
   updateServiceIntakeItem: (id: string, itemId: string, payload: Partial<{
-    productId: string | null; serialNumber: string; notes: string;
+    productId: string | null; itemName: string; problems: string[]; identifierType: string; identifierValue: string; serialNumber: string; notes: string;
   }>) =>
     request<any>(`/service-intakes/${id}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 

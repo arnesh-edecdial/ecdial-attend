@@ -352,7 +352,8 @@ model ServiceIntake {
   problems     String[]  // one or more canonical problem tags; ["Unknown Problem"] if none given
   takingTo     String?   // "SHOWROOM" | "OFFICE" | "SERVICE_CENTER"
 
-  status       String    @default("NOT_STARTED") // NOT_STARTED, ONGOING, SENT_FOR_REPAIR, REPAIRED, NOT_REPAIRED
+  status       String    @default("NOT_STARTED") // legacy/derived service stage; item statuses are authoritative
+  lifecycleStatus String  @default("OPEN") // OPEN, CLOSED, ARCHIVED
   notes        String?   @db.Text
 
   receivedAt   DateTime  @default(now())
@@ -387,11 +388,15 @@ model ServiceIntakeItem {
 
   itemType                String    // "INDOOR_UNIT" | "OUTDOOR_UNIT" (legacy rows may hold MOTOR/PCB_BOARD/OTHER)
   itemTypeLabel           String?
+  itemName                String?   // display name for custom/generic items, e.g. "Capacitor"
+  identifierType          String?   // e.g. Serial Number, Board Number, Rating, Asset ID
+  identifierValue         String?   // value corresponding to identifierType
 
+  problems               String[]  @default([])
   productId               String?
   product                 Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
   productModel            String?
-  serialNumber            String?
+  serialNumber            String? 
 
   status                  String    @default("NOT_STARTED") // same 5 values as ServiceIntake.status
 
