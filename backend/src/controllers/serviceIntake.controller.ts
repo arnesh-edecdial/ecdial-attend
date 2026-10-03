@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { r2Service } from '../services/r2.service';
 import {
   STATUSES,
   STATUS_LABELS,
@@ -846,3 +847,28 @@ export const serviceIntakeController = {
     }
   },
 };
+
+const R2_IMAGE_PREFIX = 'service-intakes';
+const MAX_R2_IMAGE_BYTES = 12 * 1024 * 1024;
+
+const ALLOWED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
+function getImageExtension(contentType: string) {
+  switch (contentType) {
+    case 'image/jpeg':
+      return '.jpg';
+
+    case 'image/png':
+      return '.png';
+
+    case 'image/webp':
+      return '.webp';
+
+    default:
+      return null;
+  }
+}
