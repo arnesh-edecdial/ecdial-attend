@@ -64,13 +64,48 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   userName = 'Employee',
   userRole = 'EMPLOYEE',
 }) => {
-  // Initialize from cache for instant 0ms rendering without blanking or spinners
-  const [statusData, setStatusData] = useState<TodayAttendanceStatus | null>(() => {
-    return dataCache.get<TodayAttendanceStatus>(`attendance:status:${getActiveEmployeeId()}`) || null;
-  });
-  const [dashboardData, setDashboardData] = useState<any | null>(() => {
-    return dataCache.get('attendance:dashboard:today') || null;
-  });
+
+  const getAttendanceDateKey = (): string => {
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = String(
+      now.getMonth() + 1
+    ).padStart(2, '0');
+    const day = String(
+      now.getDate()
+    ).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  };
+
+  const getAttendanceStatusCacheKey =
+    (): string => {
+      return `attendance:status:${getActiveEmployeeId()}:${getAttendanceDateKey()}`;
+    };
+
+  const getAttendanceDashboardCacheKey =
+    (): string => {
+      return `attendance:dashboard:${getAttendanceDateKey()}`;
+    };
+
+  const [statusData, setStatusData] =
+    useState<TodayAttendanceStatus | null>(() => {
+      return (
+        dataCache.get<TodayAttendanceStatus>(
+          getAttendanceStatusCacheKey()
+        ) || null
+      );
+    });
+
+  const [dashboardData, setDashboardData] =
+    useState<any | null>(() => {
+      return (
+        dataCache.get(
+          getAttendanceDashboardCacheKey()
+        ) || null
+      );
+    });
   const [officeQR, setOfficeQR] = useState<any | null>(null);
   const [officeConfig, setOfficeConfig] = useState<any | null>(() => {
     const cachedOffices = dataCache.get<any[]>('office:configs:all');
@@ -390,7 +425,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   useEffect(() => {
     const interval = setInterval(() => {
       fetchStatus(true);
-    }, 30_000);
+    }, 15_000);
     return () => clearInterval(interval);
   }, [userRole]);
 
@@ -398,7 +433,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
-        fetchStatus(true);
+        setInterval(() => {
+          fetchStatus(true);
+        }, 30_000);
       }
     });
 

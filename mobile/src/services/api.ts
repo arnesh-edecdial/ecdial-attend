@@ -52,6 +52,20 @@ export function getActiveEmployeeId() {
   return activeEmployeeId;
 }
 
+function getAttendanceDateKey(): string {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(
+    now.getMonth() + 1
+  ).padStart(2, '0');
+  const day = String(
+    now.getDate()
+  ).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
 export interface ApiResponseWithMeta<T = any> {
   data: T;
   etag?: string | null;
@@ -372,34 +386,136 @@ export const mobileApi = {
   // --------------------------------------------------------------------------
   // SWR Cache-First Helper Methods (Instant Load + Quiet Background Revalidate)
   // --------------------------------------------------------------------------
-  getCachedTodayStatus: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+  getCachedTodayStatus: (
+    options?: {
+      forceRefresh?: boolean;
+      onBackgroundUpdate?: (
+        d: any
+      ) => void;
+    }
+  ) => {
+    const dateKey =
+      getAttendanceDateKey();
+
+    const cacheKey =
+      `attendance:status:${activeEmployeeId}:${dateKey}`;
+
     return dataCache.fetchWithCache(
-      `attendance:status:${activeEmployeeId}`,
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>('/attendance/status/today', { headers });
+      cacheKey,
+
+      async () => {
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT send an ETag for Attendance.
+         *
+         * Attendance is time-dependent. The backend must be allowed
+         * to recalculate the current status on every refresh.
+         */
+        const response =
+          await requestWithMeta<any>(
+            '/attendance/status/today'
+          );
+
+        /*
+         * Backend response:
+         *
+         * {
+         *   success: true,
+         *   data: {
+         *      displayStatus: 'ABSENT',
+         *      ...
+         *   }
+         * }
+         *
+         * Cache ONLY the inner data object.
+         */
+        return {
+          data:
+            response?.data?.data ??
+            response?.data ??
+            null,
+          etag: null,
+          notModified: false,
+        };
       },
+
       {
-        ttlMs: CACHE_TTL.ATTENDANCE_STATUS,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
+        ttlMs:
+          CACHE_TTL.ATTENDANCE_STATUS,
+
+        forceRefresh:
+          options?.forceRefresh,
+
+        onBackgroundUpdate:
+          options?.onBackgroundUpdate,
       }
     );
   },
 
-  getCachedTodayDashboard: (options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }) => {
+  getCachedTodayDashboard: (
+    options?: {
+      forceRefresh?: boolean;
+      onBackgroundUpdate?: (
+        d: any
+      ) => void;
+    }
+  ) => {
+    const dateKey =
+      getAttendanceDateKey();
+
+    const cacheKey =
+      `attendance:dashboard:${dateKey}`;
+
     return dataCache.fetchWithCache(
-      'attendance:dashboard:today',
-      async (etag) => {
-        const headers: Record<string, string> = {};
-        if (etag) headers['If-None-Match'] = etag;
-        return requestWithMeta<any>('/attendance/dashboard/today', { headers });
+      cacheKey,
+
+      async () => {
+        /*
+         * Attendance dashboard is time-dependent.
+         * Do not send a cached ETag.
+         *
+         * The backend must recalculate:
+         * - present
+         * - absent
+         * - not marked
+         * - currently working
+         */
+        const response =
+          await requestWithMeta<any>(
+            '/attendance/dashboard/today'
+          );
+
+        /*
+         * Store ONLY response.data.
+         *
+         * The screen expects:
+         *
+         * dashboardData.summary.present
+         *
+         * not:
+         *
+         * dashboardData.data.summary.present
+         */
+        return {
+          data:
+            response?.data?.data ??
+            response?.data ??
+            null,
+          etag: null,
+          notModified: false,
+        };
       },
+
       {
-        ttlMs: CACHE_TTL.DASHBOARD,
-        forceRefresh: options?.forceRefresh,
-        onBackgroundUpdate: options?.onBackgroundUpdate,
+        ttlMs:
+          CACHE_TTL.DASHBOARD,
+
+        forceRefresh:
+          options?.forceRefresh,
+
+        onBackgroundUpdate:
+          options?.onBackgroundUpdate,
       }
     );
   },
