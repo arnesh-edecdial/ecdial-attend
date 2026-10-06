@@ -54,6 +54,7 @@ function MainApp() {
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
   const [editingQuotation, setEditingQuotation] = useState<any | null>(null);
   const [newQuoteType, setNewQuoteType] = useState<'DAIKIN' | 'ECDIAL'>('ECDIAL');
+  const [newQuoteAcType, setNewQuoteAcType] = useState<'SPLIT' | 'VRV' | 'DUCT'>('SPLIT');
   const [activeUserRole, setActiveUserRole] = useState<string>('ADMIN');
   const [activeUserName, setActiveUserName] = useState<string>('Arun Kumar');
   const [refreshKey, setRefreshKey] = useState<number>(0);
@@ -171,9 +172,6 @@ function MainApp() {
     } else if (screenId === 'CATALOGUES') {
       setCurrentTab('CATALOGUES');
     } else if (screenId === 'SERVICE_INTAKE') {
-      // Service Intake is a full tab screen, so make sure no modal overlay
-      // is left active and then switch the main content to the intake screen.
-      setActiveModal('NONE');
       setCurrentTab('SERVICE_INTAKE');
     } else if (screenId === 'CUSTOMERS') {
       setCurrentTab('CUSTOMERS');
@@ -228,10 +226,7 @@ function MainApp() {
             onOpenCatalogues={() => setCurrentTab('CATALOGUES')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
             onOpenCustomers={() => setCurrentTab('CUSTOMERS')}
-            onOpenServiceIntake={() => {
-              setActiveModal('NONE');
-              setCurrentTab('SERVICE_INTAKE');
-            }}
+            onOpenServiceIntake={() => setCurrentTab('SERVICE_INTAKE')}
             onOpenLocationCalibration={() => setActiveModal('LOCATION_CALIBRATION')}
             onNavigateNotification={handleDeepLink}
           />
@@ -282,9 +277,10 @@ function MainApp() {
         ) : (
           <QuotationListScreen
             userRole={activeUserRole}
-            onNewQuotation={(type) => {
+            onNewQuotation={(type, acType) => {
               setEditingQuotation(null);
               setNewQuoteType(type || 'ECDIAL');
+              setNewQuoteAcType(acType || 'SPLIT');
               setActiveModal('NEW_QUOTE');
             }}
             onSelectQuotation={(q) => {
@@ -434,6 +430,7 @@ function MainApp() {
         <View style={StyleSheet.absoluteFillObject}>
           <QuotationCreateScreen
             initialQuotationType={newQuoteType}
+            initialAcType={editingQuotation?.acType || newQuoteAcType}
             quotationToEdit={editingQuotation}
             onClose={() => {
               setEditingQuotation(null);

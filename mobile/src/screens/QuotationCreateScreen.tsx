@@ -18,6 +18,7 @@ interface QuotationCreateScreenProps {
   onClose: () => void;
   onSuccess: (quotation: any) => void;
   initialQuotationType?: 'DAIKIN' | 'ECDIAL';
+  initialAcType?: 'SPLIT' | 'VRV' | 'DUCT';
   quotationToEdit?: any | null;
 }
 
@@ -97,10 +98,13 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   onClose,
   onSuccess,
   initialQuotationType = 'ECDIAL',
+  initialAcType = 'SPLIT',
   quotationToEdit = null,
 }) => {
   const insets = useSafeAreaInsets();
   const [quotationType, setQuotationType] = useState<'DAIKIN' | 'ECDIAL'>(initialQuotationType);
+  const [acType, setAcType] = useState<'SPLIT' | 'VRV' | 'DUCT'>(initialAcType);
+  const [includeBankDetails, setIncludeBankDetails] = useState<boolean>(true);
   const [machinesList, setMachinesList] = useState<any[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [catalogueModalVisible, setCatalogueModalVisible] = useState<boolean>(false);
@@ -133,10 +137,24 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const [hasLowSide, setHasLowSide] = useState<boolean>(true);
   const [lowSideItems, setLowSideItems] = useState<QuotationItem[]>(DEFAULT_LOW_SIDE_ITEMS);
 
+  const addDaysToDate = (dateString: string, days: number) => {
+    const [y, m, d] = dateString.split('-').map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    dt.setDate(dt.getDate() + days);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+
+  const formatDisplayDate = (dateString: string) => {
+    const [y, m, d] = dateString.split('-');
+    return y && m && d ? `${d}-${m}-${y}` : dateString;
+  };
+
   // Sync state when quotationToEdit is passed (or reset for new quotation)
   useEffect(() => {
     if (quotationToEdit) {
       setQuotationType(quotationToEdit.quotationType || initialQuotationType);
+      setAcType((quotationToEdit.acType || initialAcType || 'SPLIT').toUpperCase());
+      setIncludeBankDetails(quotationToEdit.includeBankDetails !== false);
       setSelectedCustomerId(quotationToEdit.customerId || null);
       setCustomerName(quotationToEdit.customerName || '');
       setCustomerAddress(quotationToEdit.customerAddress || '');
@@ -152,6 +170,8 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       setLowSideItems(lItems.length > 0 ? lItems : (Boolean(quotationToEdit.hasLowSide) ? DEFAULT_LOW_SIDE_ITEMS : []));
     } else {
       setQuotationType(initialQuotationType);
+      setAcType(initialAcType);
+      setIncludeBankDetails(true);
       setSelectedCustomerId(null);
       setCustomerName('');
       setCustomerAddress('');
@@ -161,7 +181,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       setMainItems([]);
       setLowSideItems(DEFAULT_LOW_SIDE_ITEMS);
     }
-  }, [quotationToEdit]);
+  }, [quotationToEdit, initialAcType, initialQuotationType]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -380,6 +400,8 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       customerAddress: customerAddress.trim(),
       customerPhone: customerPhone.trim(),
       quotationType,
+      acType,
+      includeBankDetails,
       hasLowSide,
       items: allItems,
       cgstPercent: 9,
@@ -482,6 +504,30 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
         </View>
       </View>
 
+      {/* SELECTED AC TYPE */}
+      <View style={styles.acTypeBanner}>
+        <View>
+          <Text style={styles.acTypeLabel}>AC TYPE</Text>
+          <Text style={styles.acTypeValue}>{acType === 'VRV' ? 'VRV / VRF' : acType === 'DUCT' ? 'DUCT AC' : 'SPLIT AC'}</Text>
+        </View>
+        <View style={styles.acTypePill}>
+          <Text style={styles.acTypePillText}>{acType === 'SPLIT' ? 'ACTIVE FLOW' : 'NEW PAGE'}</Text>
+        </View>
+      </View>
+
+      {(acType === 'VRV' || acType === 'DUCT') ? (
+        <View style={styles.comingSoonCard}>
+          <Text style={styles.comingSoonIcon}>{acType === 'VRV' ? '❄️' : '🏢'}</Text>
+          <Text style={styles.comingSoonTitle}>{acType === 'VRV' ? 'VRV / VRF Quotation' : 'Duct AC Quotation'}</Text>
+          <Text style={styles.comingSoonText}>This quotation type has its own page flow and is ready for the next module implementation. The Split AC quotation flow remains unchanged.</Text>
+          <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+            <Text style={styles.cancelBtnText}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {acType === 'SPLIT' && (
+      <>
       {/* 1. CUSTOMER INFO (FLOW A WITH CUSTOMER / FLOW B WITHOUT CUSTOMER) */}
       <View style={styles.card}>
         <View style={styles.rowBetween}>
@@ -552,6 +598,21 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
           onChangeText={setPdfName}
           autoCapitalize="none"
         />
+      </View>
+
+      {/* 1A. QUOTATION VALIDITY + BANK DETAILS */}
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <View>
+            <Text style={styles.fieldLabel}>VALIDITY</Text>
+            <Text style={styles.validityValue}>{formatDisplayDate(quotationToEdit?.validTill || addDaysToDate(quotationToEdit?.date || new Date().toISOString().slice(0, 10), 10))}</Text>
+            <Text style={styles.validityHint}>Default: 10 days from quotation date</Text>
+          </View>
+          <View style={styles.bankToggleBox}>
+            <Text style={styles.bankToggleLabel}>Include Bank Details</Text>
+            <Switch value={includeBankDetails} onValueChange={setIncludeBankDetails} trackColor={{ true: quotationType === 'ECDIAL' ? '#F2791E' : '#0B79D0', false: '#CBD5E1' }} />
+          </View>
+        </View>
       </View>
 
       {/* 2. SECTION A: MAIN UNIT WITH MACHINE SELECTOR (Rules 16, 17, 18, 19) */}
@@ -791,6 +852,9 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
         <Text style={styles.cancelBtnText}>Cancel</Text>
       </TouchableOpacity>
+
+      </>
+      )}
 
       {/* MACHINE MODEL CATALOGUE PICKER MODAL (Rule 17, 18) */}
       <Modal
@@ -1181,6 +1245,29 @@ const styles = StyleSheet.create({
     color: '#0066CC',
     fontWeight: '900',
   },
+  acTypeBanner: {
+    marginBottom: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  acTypeLabel: { fontSize: 9, fontWeight: '800', color: '#64748B', letterSpacing: 0.8 },
+  acTypeValue: { fontSize: 15, fontWeight: '900', color: '#0F172A', marginTop: 2 },
+  acTypePill: { backgroundColor: '#EEF2FF', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 20 },
+  acTypePillText: { fontSize: 9, fontWeight: '900', color: '#4338CA' },
+  comingSoonCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0', padding: 28, alignItems: 'center', marginBottom: 16 },
+  comingSoonIcon: { fontSize: 42, marginBottom: 10 },
+  comingSoonTitle: { fontSize: 18, fontWeight: '900', color: '#0F172A', textAlign: 'center' },
+  comingSoonText: { fontSize: 12, lineHeight: 18, color: '#64748B', textAlign: 'center', marginTop: 8, marginBottom: 16 },
+  validityValue: { fontSize: 16, fontWeight: '900', color: '#0F172A', marginTop: 2 },
+  validityHint: { fontSize: 10, color: '#64748B', marginTop: 2 },
+  bankToggleBox: { alignItems: 'flex-end' },
+  bankToggleLabel: { fontSize: 10, fontWeight: '800', color: '#334155', marginBottom: 3 },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,

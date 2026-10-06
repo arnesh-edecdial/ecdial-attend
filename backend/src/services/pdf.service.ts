@@ -6,6 +6,9 @@ export interface PDFQuotationData {
   quotationNumber: string;
   revisionNumber?: number;
   date: string;
+  validTill?: string;
+  acType?: 'SPLIT' | 'VRV' | 'DUCT' | string;
+  includeBankDetails?: boolean;
   quotationType?: 'DAIKIN' | 'ECDIAL';
   customerName?: string | null;
   customerAddress?: string | null;
@@ -154,16 +157,21 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       // Asset Paths
       const headerFilename = isEcDial ? 'ecdial_quotation_header.png' : 'daikin_quotation_header.png';
       const footerFilename = isEcDial ? 'ecdial_quotation_footer.png' : 'daikin_quotation_footer.png';
-      const termsPaymentFilename = isEcDial ? 'ecdial_quotation_terms_payment.png' : 'daikin_quotation_terms_payment.png';
+      const termsFilename = isEcDial ? 'ecdial_quotation_terms.png' : 'daikin_quotation_terms.png';
+      const paymentFilename = isEcDial ? 'ecdial_quotation_payment.png' : 'daikin_quotation_payment.png';
+      const bankFilename = isEcDial ? 'ecdial_quotation_bank.png' : 'daikin_quotation_bank.png';
+      const fillerFilename = isEcDial ? 'ecdial_quotation_bank_filler.png' : 'daikin_quotation_bank_filler.png';
 
       const headerPath = getAssetPath(headerFilename) || getAssetPath(isEcDial ? 'quotation_header.png' : 'daikin_quotation_header.png');
       const footerPath = getAssetPath(footerFilename) || getAssetPath(isEcDial ? 'quotation_footer.png' : 'daikin_quotation_footer.png');
-      const termsPaymentPath = getAssetPath(termsPaymentFilename) || getAssetPath('quotation_terms_payment.png');
+      const termsPath = getAssetPath(termsFilename);
+      const paymentPath = getAssetPath(paymentFilename);
+      const bankPath = getAssetPath(data.includeBankDetails === false ? fillerFilename : bankFilename);
 
       const headerWidth = 595.28;
-      const headerHeight = headerWidth * (119 / 637); // ~111.2 pt
+      const headerHeight = isEcDial ? headerWidth * (299 / 1315) : headerWidth * (162 / 718);
       const footerWidth = 595.28;
-      const footerHeight = isEcDial ? (footerWidth * (120 / 1024)) : (footerWidth * (106 / 1024)); // ~70 pt
+      const footerHeight = isEcDial ? (footerWidth * (130 / 1024)) : (footerWidth * (106 / 1024));
       const footerY = 841.89 - footerHeight;
 
       // Extract brands for Authorized Dealer Strip
@@ -190,6 +198,22 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       const formattedDate = (() => {
         const raw = sanitizePdfText(data.date);
         if (!raw) return '18-05-2026';
+        if (raw.includes('-') && raw.split('-')[0].length === 4) {
+          const [yyyy, mm, dd] = raw.split('-');
+          return `${dd}-${mm}-${yyyy}`;
+        }
+        return raw;
+      })();
+
+      const formattedValidTill = (() => {
+        const raw = sanitizePdfText(data.validTill);
+        if (!raw) {
+          const rawDate = sanitizePdfText(data.date);
+          const [yyyy, mm, dd] = rawDate.split('-').map(Number);
+          const d = new Date(yyyy, (mm || 1) - 1, dd || 1);
+          d.setDate(d.getDate() + 10);
+          return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+        }
         if (raw.includes('-') && raw.split('-')[0].length === 4) {
           const [yyyy, mm, dd] = raw.split('-');
           return `${dd}-${mm}-${yyyy}`;
@@ -313,8 +337,20 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       // ==========================================
       drawHeaderBanner();
 
-      // Top Meta Box & Customer Area
-      const clientBoxY = headerHeight + 8;
+      // Date / Valid Till / Page strip
+      const metaY = headerHeight + 6;
+      const metaH = 23;
+      doc.roundedRect(leftMargin, metaY, contentWidth, metaH, 4)
+        .fillAndStroke(isEcDial ? '#F8F5FF' : '#EFF7FF', isEcDial ? '#D7D1F4' : '#B8D6F2');
+      doc.fillColor(themePrimary).fontSize(7.5).font('Helvetica-Bold')
+        .text(`Date: ${formattedDate}`, leftMargin + 12, metaY + 7);
+      doc.fillColor(themePrimary).fontSize(7.5).font('Helvetica-Bold')
+        .text(`Valid Till: ${formattedValidTill}`, leftMargin + 190, metaY + 7);
+      doc.fillColor(themePrimary).fontSize(7.5).font('Helvetica-Bold')
+        .text(`Page: 1 of ${totalPages}`, rightMargin - 100, metaY + 7, { width: 88, align: 'right' });
+
+      // Top Customer & Summary Area
+      const clientBoxY = metaY + metaH + 8;
       const clientBoxWidth = 265;
       const quoteCardWidth = 210;
       const quoteCardX = rightMargin - quoteCardWidth;
@@ -341,8 +377,8 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       const quoteCardY = clientBoxY;
       const cardRowH = 15;
       const summaryHeaderH = 18;
-      const cardTotalRows = 4; // Date/Page, Sub Total, CGST, SGST
-      const quoteCardHeight = summaryHeaderH + (cardTotalRows * cardRowH) + 20; // 18 + 60 + 20 = 98
+      const cardTotalRows = 3; // Sub Total, CGST, SGST
+      const quoteCardHeight = summaryHeaderH + (cardTotalRows * cardRowH) + 20;
 
       // Main Container with rounded border
       doc.roundedRect(quoteCardX, quoteCardY, quoteCardWidth, quoteCardHeight, 4)
@@ -358,16 +394,7 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
       // Rows
       let curRowY = quoteCardY + summaryHeaderH;
 
-      // Row 1: Date & Page indicator
-      doc.rect(quoteCardX, curRowY, quoteCardWidth, cardRowH).fill('#F8FAFC');
-      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
-        .text(`Date: ${formattedDate}`, quoteCardX + 8, curRowY + 3.5);
-      doc.fillColor(textMuted).fontSize(7.5).font('Helvetica')
-        .text(`Page 1 of ${totalPages}`, quoteCardX + 110, curRowY + 3.5, { width: quoteCardWidth - 118, align: 'right' });
-      doc.moveTo(quoteCardX, curRowY + cardRowH).lineTo(quoteCardX + quoteCardWidth, curRowY + cardRowH).lineWidth(0.5).strokeColor('#E2E8F0').stroke();
-      curRowY += cardRowH;
-
-      // Row 2: Sub Total
+      // Row 1: Sub Total
       doc.fillColor(textMuted).fontSize(8).font('Helvetica')
         .text(isTwoPages ? 'Sub Total (A)' : 'Sub Total', quoteCardX + 8, curRowY + 3.5);
       doc.fillColor(textDark).fontSize(8.5).font('Helvetica-Bold')
@@ -537,33 +564,38 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
           // Note: Total (B) has been removed as requested!
         }
 
-        // Space Budget for Bottom Elements
+        // Bottom commercial section: Terms left, Payment + Bank/Filler right.
         const dealerStripHeight = isEcDial ? 42 : 0;
         const dealerStartY = footerY - dealerStripHeight;
+        const availableBottomHeight = Math.max(150, dealerStartY - y - 10);
+        const gap = 8;
+        const leftW = Math.min(315, contentWidth * 0.60);
+        const rightW = contentWidth - leftW - gap;
+        const termsRatio = 820 / 1600;
+        const paymentRatio = 500 / 1200;
+        const bankRatio = 460 / 1200;
+        const rightGap = 6;
+        const maxRightH = (availableBottomHeight - rightGap) / 2;
+        const termsH = Math.min(availableBottomHeight, leftW * termsRatio);
+        const paymentH = Math.min(maxRightH, rightW * paymentRatio);
+        const bankH = Math.min(maxRightH, rightW * bankRatio);
+        const stackH = paymentH + rightGap + bankH;
+        const blockH = Math.max(termsH, stackH);
+        const blockY = y + 5 + Math.max(0, (availableBottomHeight - blockH) / 2);
+        const termsY = blockY + Math.max(0, (blockH - termsH) / 2);
+        const rightX = leftMargin + leftW + gap;
+        const stackY = blockY + Math.max(0, (blockH - stackH) / 2);
 
-        // Dynamic Space Calculation for Terms & Conditions (GUARANTEED NO OVERLAP!)
-        const availableHeightForTerms = dealerStartY - y - 10;
-        const naturalRatio = isEcDial ? (421 / 1024) : (176 / 572);
-        const naturalTermsHeight = contentWidth * naturalRatio;
-
-        // Fit within available height while preserving 100% natural aspect ratio
-        const fitTermsHeight = Math.min(naturalTermsHeight, Math.max(100, availableHeightForTerms - 6));
-        const fitTermsWidth = fitTermsHeight / naturalRatio;
-        const actualTermsWidth = Math.min(contentWidth, fitTermsWidth);
-        const actualTermsHeight = actualTermsWidth * naturalRatio;
-
-        const termsX = leftMargin + (contentWidth - actualTermsWidth) / 2;
-        const termsY = y + 6 + (availableHeightForTerms - actualTermsHeight) / 2;
-
-        if (termsPaymentPath) {
-          try {
-            doc.image(termsPaymentPath, termsX, termsY, { width: actualTermsWidth, height: actualTermsHeight });
-          } catch {
-            doc.roundedRect(termsX, termsY, actualTermsWidth, actualTermsHeight, 4).fillAndStroke('#F8FAFC', ruleGray);
-          }
+        if (termsPath) {
+          try { doc.image(termsPath, leftMargin, termsY, { width: leftW, height: termsH }); } catch {}
         }
-        
-        // Prominent Authorized Brand Logos Strip on Ec Dial Quotes (Directly before footer)
+        if (paymentPath) {
+          try { doc.image(paymentPath, rightX, stackY, { width: rightW, height: paymentH }); } catch {}
+        }
+        if (bankPath) {
+          try { doc.image(bankPath, rightX, stackY + paymentH + rightGap, { width: rightW, height: bankH }); } catch {}
+        }
+
         if (isEcDial) {
           drawAuthorizedBrandLogos(dealerStartY);
         }
@@ -602,22 +634,16 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
 
         y = p2SubY + 16;
 
-        // Bring Terms & Conditions to the bottom on Page 2
+        // Reserve the bottom commercial section on Page 2.
         const p2DealerHeight = isEcDial ? 42 : 0;
         const p2DealerStartY = footerY - p2DealerHeight;
-        const p2NaturalRatio = isEcDial ? (421 / 1024) : (176 / 572);
-        const p2TermsHeight = Math.min(180, contentWidth * p2NaturalRatio);
-        const p2TermsWidth = p2TermsHeight / p2NaturalRatio;
-        const actualP2TermsWidth = Math.min(contentWidth, p2TermsWidth);
-        const actualP2TermsHeight = actualP2TermsWidth * p2NaturalRatio;
-        const p2TermsY = p2DealerStartY - actualP2TermsHeight - 8;
-        const p2TermsX = leftMargin + (contentWidth - actualP2TermsWidth) / 2;
+        const p2BottomTop = Math.max(y + 10, p2DealerStartY - 205);
 
         // SECTION B: LOW SIDE TABLE (Dynamically expanded with generous padding to fill Page 2 gracefully)
         drawSectionPill('B', 'LOW SIDE (B) IF NEED EXTRA MATERIALS', lowSideItems.length);
         drawTableHeader('Price (Rs.)');
 
-        const availableSpaceP2 = p2TermsY - y - 10;
+        const availableSpaceP2 = p2BottomTop - y - 10;
         const countLowSide = Math.max(1, lowSideItems.length);
         const lowSideRowHeight2P = Math.max(30, Math.min(42, Math.floor(availableSpaceP2 / (countLowSide + 1.2))));
 
@@ -657,15 +683,23 @@ export function generateQuotationPDF(data: PDFQuotationData): Promise<Buffer> {
           y += lowSideRowHeight2P;
         });
 
-        // Terms & Conditions Block on Page 2 (Natural aspect ratio)
-        if (termsPaymentPath) {
-          try {
-            doc.image(termsPaymentPath, p2TermsX, p2TermsY, { width: actualP2TermsWidth, height: actualP2TermsHeight });
-          } catch {
-            doc.roundedRect(p2TermsX, p2TermsY, actualP2TermsWidth, actualP2TermsHeight, 6)
-              .lineWidth(1).strokeColor(ruleGray).fillAndStroke('#FFFFFF', ruleGray);
-          }
-        }
+        // Page 2 commercial section: terms + payment + bank/filler.
+        const p2AvailableBottomHeight = Math.max(150, p2DealerStartY - y - 10);
+        const p2Gap = 8;
+        const p2LeftW = Math.min(315, contentWidth * 0.60);
+        const p2RightW = contentWidth - p2LeftW - p2Gap;
+        const p2TermsH = Math.min(p2AvailableBottomHeight, p2LeftW * (820 / 1600));
+        const p2PaymentH = Math.min((p2AvailableBottomHeight - 6) / 2, p2RightW * (500 / 1200));
+        const p2BankH = Math.min((p2AvailableBottomHeight - 6) / 2, p2RightW * (460 / 1200));
+        const p2StackH = p2PaymentH + 6 + p2BankH;
+        const p2BlockH = Math.max(p2TermsH, p2StackH);
+        const p2BlockY = p2DealerStartY - p2BlockH - 5;
+        const p2TermsY2 = p2BlockY + Math.max(0, (p2BlockH - p2TermsH) / 2);
+        const p2RightX = leftMargin + p2LeftW + p2Gap;
+        const p2StackY = p2BlockY + Math.max(0, (p2BlockH - p2StackH) / 2);
+        if (termsPath) { try { doc.image(termsPath, leftMargin, p2TermsY2, { width: p2LeftW, height: p2TermsH }); } catch {} }
+        if (paymentPath) { try { doc.image(paymentPath, p2RightX, p2StackY, { width: p2RightW, height: p2PaymentH }); } catch {} }
+        if (bankPath) { try { doc.image(bankPath, p2RightX, p2StackY + p2PaymentH + 6, { width: p2RightW, height: p2BankH }); } catch {} }
 
         // Prominent Authorized Brand Logos Strip on Page 2 (Directly before footer)
         if (isEcDial) {

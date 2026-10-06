@@ -199,6 +199,9 @@ model Quotation {
   revisionNumber      Int             @default(1)
   originalQuotationId String?
   date                String          // YYYY-MM-DD
+  validTill           String?         // YYYY-MM-DD; defaults to date + 10 days
+  acType              String          @default("SPLIT") // "SPLIT", "VRV", or "DUCT"
+  includeBankDetails  Boolean         @default(true)
   customerId          String?
   customerName        String          @default("")
   customerAddress     String          @default("") @db.Text

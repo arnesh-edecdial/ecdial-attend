@@ -12,6 +12,21 @@ async function generateNextQuotationNumber(): Promise<string> {
   return `ECD-Q-${currentYear}-${seq}`;
 }
 
+function addDaysToDateString(dateString: string, days: number): string {
+  const [year, month, day] = dateString.split('-').map(Number);
+  const d = new Date(year, (month || 1) - 1, day || 1);
+  d.setDate(d.getDate() + days);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function validTillOrDefault(value: unknown, dateString: string): string {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  return addDaysToDateString(dateString, 10);
+}
+
 export const quotationController = {
   // 1. Get Quotation System Configuration (GST rates, terms, payment methods, units)
   getConfig: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -83,7 +98,9 @@ export const quotationController = {
       customerEmail,
       customerLocation,
       quotationType,
+      acType,
       hasLowSide,
+      includeBankDetails,
       items,
       cgstPercent,
       sgstPercent,
@@ -97,6 +114,7 @@ export const quotationController = {
     try {
       const todayStr = getTodayDateString();
       const quotationNumber = await generateNextQuotationNumber();
+      const validTillStr = validTillOrDefault(req.body.validTill, todayStr);
 
       const config = (await prisma.quotationConfig.findFirst()) || {
         defaultCgstPercent: 9.0,
@@ -156,6 +174,9 @@ export const quotationController = {
           quotationNumber,
           revisionNumber: 1,
           date: todayStr,
+          validTill: validTillStr,
+          acType: String(acType || 'SPLIT').toUpperCase(),
+          includeBankDetails: includeBankDetails !== undefined ? Boolean(includeBankDetails) : true,
           customerId: customerId || null,
           customerName: finalCustName,
           customerAddress: finalCustAddr,
@@ -240,6 +261,9 @@ export const quotationController = {
         quotationNumber: q.quotationNumber,
         revisionNumber: q.revisionNumber,
         date: q.date,
+        validTill: (q as any).validTill || addDaysToDateString(q.date, 10),
+        acType: (q as any).acType || 'SPLIT',
+        includeBankDetails: (q as any).includeBankDetails !== false,
         customerId: q.customerId,
         customer: q.customer,
         customerName: q.customerName || q.customer?.name || '',
@@ -324,7 +348,10 @@ export const quotationController = {
       customerEmail,
       customerLocation,
       quotationType,
+      acType,
       hasLowSide,
+      includeBankDetails,
+      validTill,
       items,
       cgstPercent,
       sgstPercent,
@@ -404,6 +431,9 @@ export const quotationController = {
           customerPhone: customerPhone !== undefined ? String(customerPhone).trim() : existing.customerPhone,
           customerEmail: customerEmail !== undefined ? String(customerEmail).trim() : existing.customerEmail,
           customerLocation: customerLocation !== undefined ? String(customerLocation).trim() : existing.customerLocation,
+          validTill: validTill !== undefined ? validTillOrDefault(validTill, existing.date) : ((existing as any).validTill || addDaysToDateString(existing.date, 10)),
+          acType: acType !== undefined ? String(acType || 'SPLIT').toUpperCase() : ((existing as any).acType || 'SPLIT'),
+          includeBankDetails: includeBankDetails !== undefined ? Boolean(includeBankDetails) : ((existing as any).includeBankDetails !== false),
           quotationType: quotationType !== undefined ? (quotationType || 'DAIKIN').toUpperCase() : (existing as any).quotationType,
           hasLowSide: hasLowSide !== undefined ? Boolean(hasLowSide) : existing.hasLowSide,
           mainUnitTotal: totals.mainUnitTotal,
@@ -458,6 +488,9 @@ export const quotationController = {
           revisionNumber: 1,
           originalQuotationId: source.id,
           date: todayStr,
+          validTill: addDaysToDateString(todayStr, 10),
+          acType: (source as any).acType || 'SPLIT',
+          includeBankDetails: (source as any).includeBankDetails !== false,
           customerId: source.customerId,
           customerName: source.customerName,
           customerAddress: source.customerAddress,
@@ -535,6 +568,9 @@ export const quotationController = {
         quotationNumber: quotation.quotationNumber,
         revisionNumber: quotation.revisionNumber,
         date: quotation.date,
+        validTill: (quotation as any).validTill || addDaysToDateString(quotation.date, 10),
+        acType: (quotation as any).acType || 'SPLIT',
+        includeBankDetails: (quotation as any).includeBankDetails !== false,
         quotationType: ((quotation as any).quotationType || 'DAIKIN') as any,
         customerName: quotation.customerName,
         customerAddress: quotation.customerAddress,

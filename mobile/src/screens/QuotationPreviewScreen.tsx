@@ -95,6 +95,20 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   const isEcDial = (currentQuote.quotationType || 'DAIKIN').toUpperCase() === 'ECDIAL';
 
+  const addDaysToDate = (dateString: string, days: number) => {
+    const [y, m, d] = dateString.split('-').map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    dt.setDate(dt.getDate() + days);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+
+  const displayDate = (dateString: string) => {
+    const [y, m, d] = dateString.split('-');
+    return y && m && d ? `${d}-${m}-${y}` : dateString;
+  };
+
+  const validTillDate = (currentQuote as any).validTill || addDaysToDate(currentQuote.date, 10);
+
   const getDefaultFilename = () => {
     const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');
     const cleanCust = currentQuote.customerName ? currentQuote.customerName.trim().replace(/[^a-zA-Z0-9_-]/g, '_') : '';
@@ -298,15 +312,33 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             <Image
               source={
                 isEcDial
-                  ? require('../../assets/ecdial_quotation_header.png')
-                  : require('../../assets/daikin_quotation_header.png')
+                  ? require('../../assets/quotation/ecdial_quotation_header.png')
+                  : require('../../assets/quotation/daikin_quotation_header.png')
               }
               style={styles.fixedHeaderImg}
               resizeMode="contain"
             />
           </View>
 
-          {/* 2. DYNAMIC CUSTOMER & QUOTATION SUMMARY ROW */}
+          {/* 2. DATE / VALID TILL / PAGE STRIP */}
+          <View style={[styles.metaStrip, { backgroundColor: isEcDial ? '#F8F5FF' : '#EFF7FF', borderColor: isEcDial ? '#D7D1F4' : '#B8D6F2' }]}>
+            <View style={styles.metaCell}>
+              <Text style={[styles.metaLabel, { color: isEcDial ? '#24215F' : '#0B2B63' }]}>DATE</Text>
+              <Text style={styles.metaValue}>{displayDate(currentQuote.date)}</Text>
+            </View>
+            <View style={styles.metaDivider} />
+            <View style={styles.metaCell}>
+              <Text style={[styles.metaLabel, { color: isEcDial ? '#24215F' : '#0B2B63' }]}>VALID TILL</Text>
+              <Text style={styles.metaValue}>{displayDate(validTillDate)}</Text>
+            </View>
+            <View style={styles.metaDivider} />
+            <View style={[styles.metaCell, { alignItems: 'flex-end' }]}>
+              <Text style={[styles.metaLabel, { color: isEcDial ? '#24215F' : '#0B2B63' }]}>PAGE</Text>
+              <Text style={styles.metaValue}>1 of {((mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 10)) ? 2 : 1)}</Text>
+            </View>
+          </View>
+
+          {/* 3. DYNAMIC CUSTOMER & QUOTATION SUMMARY ROW */}
           <View style={styles.customerSummaryRow}>
             {/* Customer Box (Omitted if no customer name) */}
             {currentQuote.customerName && currentQuote.customerName.trim().length > 0 ? (
@@ -332,11 +364,6 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
               <View style={styles.quoteCardHeader}>
                 <Text style={styles.quoteCardHeaderText}>QUOTATION</Text>
               </View>
-              <View style={styles.quoteCardMeta}>
-                <Text style={styles.quoteCardDate}>Date: {currentQuote.date}</Text>
-                <Text style={styles.quoteCardDate}>Page 1 of {((mainItems.length >= 4 || (mainItems.length + lowSideItems.length > 10)) ? 2 : 1)}</Text>
-              </View>
-
               <View style={styles.quoteCardBody}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.quoteCardLabel}>Sub Total (A)</Text>
@@ -468,17 +495,31 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             </View>
           )}
 
-          {/* 6. FIXED TERMS & CONDITIONS + PAYMENT METHOD IMAGE ASSET */}
-          <View style={[styles.fixedTermsContainer, { aspectRatio: isEcDial ? (1024 / 421) : (572 / 176) }]}>
-            <Image
-              source={
-                isEcDial
-                  ? require('../../assets/ecdial_quotation_terms_payment.png')
-                  : require('../../assets/daikin_quotation_terms_payment.png')
-              }
-              style={styles.fixedTermsPaymentImg}
-              resizeMode="contain"
-            />
+          {/* 6. SEPARATE TERMS / PAYMENT / BANK SECTION */}
+          <View style={styles.commercialBottomRow}>
+            <View style={styles.termsPanel}>
+              <Image
+                source={isEcDial ? require('../../assets/quotation/ecdial_quotation_terms.png') : require('../../assets/quotation/daikin_quotation_terms.png')}
+                style={styles.termsPanelImage}
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.paymentBankColumn}>
+              <Image
+                source={isEcDial ? require('../../assets/quotation/ecdial_quotation_payment.png') : require('../../assets/quotation/daikin_quotation_payment.png')}
+                style={styles.paymentPanelImage}
+                resizeMode="contain"
+              />
+              <Image
+                source={
+                  (currentQuote as any).includeBankDetails === false
+                    ? (isEcDial ? require('../../assets/quotation/ecdial_quotation_bank_filler.png') : require('../../assets/quotation/daikin_quotation_bank_filler.png'))
+                    : (isEcDial ? require('../../assets/quotation/ecdial_quotation_bank.png') : require('../../assets/quotation/daikin_quotation_bank.png'))
+                }
+                style={styles.bankPanelImage}
+                resizeMode="contain"
+              />
+            </View>
           </View>
 
           {/* 7. PROMINENT AUTHORIZED SALES & SERVICE DEALER STRIP FOR EC DIAL (Image 3 Style) */}
@@ -513,8 +554,8 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
             <Image
               source={
                 isEcDial
-                  ? require('../../assets/ecdial_quotation_footer.png')
-                  : require('../../assets/daikin_quotation_footer.png')
+                  ? require('../../assets/quotation/ecdial_quotation_footer.png')
+                  : require('../../assets/quotation/daikin_quotation_footer.png')
               }
               style={styles.fixedFooterImg}
               resizeMode="contain"
@@ -806,7 +847,7 @@ const styles = StyleSheet.create({
   },
   fixedHeaderContainer: {
     width: '100%',
-    aspectRatio: 637 / 119,
+    aspectRatio: 718 / 162,
     marginBottom: 12,
     borderRadius: 4,
     overflow: 'hidden',
@@ -815,17 +856,32 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  fixedTermsContainer: {
+  metaStrip: {
     width: '100%',
-    aspectRatio: 572 / 176,
-    marginTop: 14,
-    borderRadius: 4,
-    overflow: 'hidden',
+    minHeight: 34,
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  fixedTermsPaymentImg: {
-    width: '100%',
-    height: '100%',
+  metaCell: { flex: 1, justifyContent: 'center' },
+  metaLabel: { fontSize: 7.5, fontWeight: '900', letterSpacing: 0.5 },
+  metaValue: { fontSize: 9.5, fontWeight: '800', color: '#334155', marginTop: 1 },
+  metaDivider: { width: 1, height: 22, backgroundColor: '#CBD5E1', marginHorizontal: 8 },
+  commercialBottomRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    alignItems: 'stretch',
   },
+  termsPanel: { flex: 1.6, overflow: 'hidden', borderRadius: 6 },
+  termsPanelImage: { width: '100%', aspectRatio: 1600 / 820 },
+  paymentBankColumn: { flex: 1, gap: 6, justifyContent: 'center' },
+  paymentPanelImage: { width: '100%', aspectRatio: 1200 / 500 },
+  bankPanelImage: { width: '100%', aspectRatio: 1200 / 460 },
   fixedFooterContainer: {
     width: '100%',
     aspectRatio: 1024 / 106,

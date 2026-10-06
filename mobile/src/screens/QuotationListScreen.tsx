@@ -15,7 +15,7 @@ import { Quotation } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface QuotationListScreenProps {
-  onNewQuotation: (type: 'DAIKIN' | 'ECDIAL') => void;
+  onNewQuotation: (type: 'DAIKIN' | 'ECDIAL', acType: 'SPLIT' | 'VRV' | 'DUCT') => void;
   onSelectQuotation: (q: Quotation) => void;
   userRole?: string;
 }
@@ -31,6 +31,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [creatorFilter, setCreatorFilter] = useState<string>('ALL');
   const [typeModalVisible, setTypeModalVisible] = useState<boolean>(false);
+  const [acTypeModalVisible, setAcTypeModalVisible] = useState<boolean>(false);
 
   const fetchQuotations = async () => {
     try {
@@ -91,7 +92,16 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
 
   const handleSelectType = (type: 'DAIKIN' | 'ECDIAL') => {
     setTypeModalVisible(false);
-    onNewQuotation(type);
+    onNewQuotation(type, 'SPLIT');
+  };
+
+  const handleSelectAcType = (acType: 'SPLIT' | 'VRV' | 'DUCT') => {
+    setAcTypeModalVisible(false);
+    if (acType === 'SPLIT') {
+      setTypeModalVisible(true);
+    } else {
+      onNewQuotation('ECDIAL', acType);
+    }
   };
 
   return (
@@ -107,7 +117,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
         </View>
 
         {userRole !== 'EMPLOYEE' && (
-          <TouchableOpacity style={styles.newBtn} onPress={() => setTypeModalVisible(true)}>
+          <TouchableOpacity style={styles.newBtn} onPress={() => setAcTypeModalVisible(true)}>
             <Text style={styles.newBtnText}>+ NEW</Text>
           </TouchableOpacity>
         )}
@@ -205,7 +215,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
                 )}
 
                 <View style={[styles.rowBetween, { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#F1F5F9' }]}>
-                  <Text style={styles.dateText}>Date: {q.date}</Text>
+                  <Text style={styles.dateText}>Date: {q.date} • {(q as any).acType || 'SPLIT'}</Text>
                   <Text style={styles.totalText}>
                     ₹{Number(q.grandTotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </Text>
@@ -215,6 +225,44 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
           })
         )}
       </ScrollView>
+
+      {/* SELECT AC TYPE MODAL */}
+      <Modal visible={acTypeModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.typeModalCard}>
+            <Text style={styles.typeModalTitle}>Create New Quotation</Text>
+            <Text style={styles.typeModalSub}>First select the AC quotation type</Text>
+
+            <TouchableOpacity style={[styles.typeOptionCard, { borderColor: '#BFDBFE', backgroundColor: '#F8FBFF' }]} onPress={() => handleSelectAcType('SPLIT')} activeOpacity={0.8}>
+              <View style={[styles.typeIconBox, { backgroundColor: '#EFF6FF' }]}><Text style={{ fontSize: 24 }}>❄️</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.typeOptionHeading}>Split AC</Text>
+                <Text style={styles.typeOptionDesc}>Use the existing machine + low-side quotation flow.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.typeOptionCard, { borderColor: '#DDD6FE', backgroundColor: '#FAF9FF' }]} onPress={() => handleSelectAcType('VRV')} activeOpacity={0.8}>
+              <View style={[styles.typeIconBox, { backgroundColor: '#F5F3FF' }]}><Text style={{ fontSize: 24 }}>🏢</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.typeOptionHeading}>VRV / VRF</Text>
+                <Text style={styles.typeOptionDesc}>Open the dedicated VRV / VRF quotation page.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.typeOptionCard, { borderColor: '#FED7AA', backgroundColor: '#FFFDF8' }]} onPress={() => handleSelectAcType('DUCT')} activeOpacity={0.8}>
+              <View style={[styles.typeIconBox, { backgroundColor: '#FFF7ED' }]}><Text style={{ fontSize: 24 }}>🌀</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.typeOptionHeading}>Duct AC</Text>
+                <Text style={styles.typeOptionDesc}>Open the dedicated Duct AC quotation page.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelTypeBtn} onPress={() => setAcTypeModalVisible(false)}>
+              <Text style={styles.cancelTypeBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* SELECT QUOTATION TYPE MODAL */}
       <Modal visible={typeModalVisible} transparent animationType="fade">
