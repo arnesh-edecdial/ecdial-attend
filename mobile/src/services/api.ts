@@ -682,6 +682,12 @@ export const mobileApi = {
   }>) =>
     request<any>(`/service-intakes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 
+  deleteServiceIntake: (id: string) =>
+    request<any>(`/service-intakes/${id}`, { method: 'DELETE' }),
+
+  changeServiceIntakeLifecycle: (id: string, lifecycleStatus: 'OPEN' | 'CLOSED') =>
+    request<any>(`/service-intakes/${id}/lifecycle`, { method: 'POST', body: JSON.stringify({ lifecycleStatus }) }),
+
   changeServiceIntakeStatus: (id: string, status: string, note?: string) =>
     request<any>(`/service-intakes/${id}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
 
@@ -700,6 +706,9 @@ export const mobileApi = {
     productId: string | null; itemName: string; problems: string[]; identifierType: string; identifierValue: string; serialNumber: string; notes: string;
   }>) =>
     request<any>(`/service-intakes/${id}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  deleteServiceIntakeItem: (id: string, itemId: string) =>
+    request<any>(`/service-intakes/${id}/items/${itemId}`, { method: 'DELETE' }),
 
   changeServiceItemStatus: (id: string, itemId: string, status: string, note?: string) =>
     request<any>(`/service-intakes/${id}/items/${itemId}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
