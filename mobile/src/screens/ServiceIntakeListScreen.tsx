@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, Modal, FlatList, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getAuthToken, mobileApi } from '../services/api';
+import { getActiveEmployeeId, getAuthToken, mobileApi } from '../services/api';
 import { ServiceIntake, ServiceStatus, STATUS_LABELS, STATUS_COLORS, STATUS_ORDER, TAKING_TO_LABELS } from '../types/serviceIntake';
 import { ServiceIntakeCreateModal } from './ServiceIntakeCreateModal';
 import { ServiceIntakeDetailScreen } from './ServiceIntakeDetailScreen';
@@ -43,7 +43,23 @@ export const ServiceIntakeListScreen: React.FC<Props> = ({ userRole = 'ADMIN', o
       renderItem={({ item }) => {
         const anyItem: any = item as any; const currentImage = anyItem.currentImage; const cust = item.customer?.name || item.customerName || 'Unnamed Customer';
         return <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={() => setSelectedId(item.id)}>
-          {currentImage ? <Image source={{ uri: mobileApi.getServiceIntakeImageUrl(currentImage.storageFileName), headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : undefined }} style={styles.heroImage} resizeMode="cover" /> : <View style={styles.noImage}><Text style={styles.noImageText}>No current photo</Text></View>}
+          {currentImage ? (
+            <Image
+              source={{
+                uri: currentImage.signedUrl || mobileApi.getServiceIntakeImageUrl(currentImage.storageFileName),
+                ...(currentImage.signedUrl
+                  ? {}
+                  : {
+                      headers: {
+                        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+                        'x-employee-id': getActiveEmployeeId(),
+                      },
+                    }),
+              }}
+              style={styles.heroImage}
+              resizeMode="cover"
+            />
+          ) : <View style={styles.noImage}><Text style={styles.noImageText}>No current photo</Text></View>}
           <View style={styles.cardBody}>
             <View style={styles.cardTop}><Text style={styles.number}>{item.intakeNumber}</Text><Text style={styles.lifecycle}>{anyItem.lifecycleStatus || 'OPEN'}</Text></View>
             <Text style={styles.customer} numberOfLines={1}>{cust}</Text>

@@ -1,11 +1,14 @@
 import { Response } from 'express';
-import fs from 'fs';
-import path from 'path';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { r2Service } from '../services/r2.service';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
+import { B2_BUCKET_NAME, B2_IMAGE_PREFIX, storageClient, createB2ImageDownloadUrl, clearB2ImageDownloadUrlCache } from '../config/storage';
 import {
   STATUSES,
   STATUS_LABELS,
@@ -27,8 +30,6 @@ import {
  * NOTE: nothing in this file touches Product.availableStock.
  * Service items only *reference* a Product for its model name.
  */
-
-const SERVICE_INTAKE_DIR = path.resolve(__dirname, '../../assets/service-intake');
 
 type Tx = Prisma.TransactionClient;
 type Who = { id: string; name: string; role: string };
@@ -169,9 +170,6 @@ async function recomputeIntakeStatus(tx: Tx, intakeId: string, w: Who) {
   if (nextLifecycle !== intake.lifecycleStatus) data.lifecycleStatus = nextLifecycle;
   if (!Object.keys(data).length) return;
   await tx.serviceIntake.update({ where: { id: intakeId }, data });
-  if (next !== intake.status) {
-    await logEvent(tx, w, { intakeId, eventType: 'STATUS_CHANGED', title: `Overall summary: ${label(intake.status)} → ${label(next)}`, oldValue: intake.status, newValue: next });
-  }
   if (nextLifecycle !== intake.lifecycleStatus) {
     await logEvent(tx, w, { intakeId, eventType: 'LIFECYCLE_CHANGED', title: `Intake: ${intake.lifecycleStatus} → ${nextLifecycle}`, oldValue: intake.lifecycleStatus, newValue: nextLifecycle });
   }
@@ -377,9 +375,25 @@ export const serviceIntakeController = {
         }),
       ]);
 
+      const data = await Promise.all(rows.map(async (r) => {
+        const currentImage = r.items
+          .flatMap((i) => i.images || [])
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null;
+
+        return {
+          ...r,
+          problems: decodeProblems(r.problems),
+          ageDays: ageDays(r.receivedAt, r.closedAt),
+          items: r.items.map((item) => ({ ...item, problems: decodeProblems(item.problems) })),
+          currentImage: currentImage
+            ? { ...currentImage, signedUrl: await createB2ImageDownloadUrl(currentImage.storageFileName) }
+            : null,
+        };
+      }));
+
       res.json({
         success: true,
-        data: rows.map((r) => ({ ...r, problems: decodeProblems(r.problems), ageDays: ageDays(r.receivedAt, r.closedAt), items: r.items.map((item) => ({ ...item, problems: decodeProblems(item.problems) })), currentImage: r.items.flatMap((i) => i.images || []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null })),
+        data,
         pagination: { total, page, limit: take, totalPages: Math.ceil(total / take) },
       });
     } catch (err) {
@@ -400,6 +414,7 @@ export const serviceIntakeController = {
             include: {
               product: { select: { id: true, name: true, model: true } },
               responsibleEmployee: { select: { id: true, name: true, employeeCode: true } },
+              images: { orderBy: { createdAt: 'asc' } },
             },
           },
           images: { orderBy: { createdAt: 'asc' } }, // intake-level (itemId null) + unit images; client groups by itemId
@@ -407,7 +422,36 @@ export const serviceIntakeController = {
         },
       });
       if (!intake) return void res.status(404).json({ success: false, message: 'Service intake not found.' });
-      res.json({ success: true, data: withItemStatus({ ...intake, problems: decodeProblems(intake.problems), items: intake.items.map((item) => ({ ...item, problems: decodeProblems(item.problems) })), ageDays: ageDays(intake.receivedAt, intake.closedAt) }) });
+
+      // Sign image URLs once on the backend. The phone then downloads directly
+      // from the private B2 bucket instead of proxying image bytes through Railway.
+      const signedImages = await Promise.all(
+        intake.images.map(async (image) => ({
+          ...image,
+          signedUrl: await createB2ImageDownloadUrl(image.storageFileName),
+        })),
+      );
+
+      const signedImageById = new Map(signedImages.map((image) => [image.id, image]));
+      const signedItems = intake.items.map((item) => ({
+        ...item,
+        problems: decodeProblems(item.problems),
+        images: item.images ?? [],
+      }));
+
+      res.json({
+        success: true,
+        data: withItemStatus({
+          ...intake,
+          problems: decodeProblems(intake.problems),
+          images: signedImages,
+          items: signedItems.map((item) => ({
+            ...item,
+            images: (item.images || []).map((image) => signedImageById.get(image.id) || image),
+          })),
+          ageDays: ageDays(intake.receivedAt, intake.closedAt),
+        }),
+      });
     } catch (err) {
       fail(res, err, 'Failed to retrieve service intake.', 'SI get');
     }
@@ -580,6 +624,62 @@ export const serviceIntakeController = {
     }
   },
 
+  /** DELETE /:id/items/:itemId — permanent item deletion (privileged). History is preserved. */
+  deleteItem: async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const w = who(req);
+      if (!w) return void res.status(401).json({ success: false, message: 'Authentication required.' });
+      if (!isPrivileged(w)) throw new HttpError(403, 'You are not allowed to delete service items.');
+
+      const { id, itemId } = req.params;
+      const existing = await prisma.serviceIntakeItem.findFirst({
+        where: { id: itemId, intakeId: id },
+        select: {
+          id: true,
+          itemName: true,
+          itemTypeLabel: true,
+          images: { select: { id: true, storageFileName: true } },
+        },
+      });
+      if (!existing) throw new HttpError(404, 'Service item not found in this intake.');
+
+      const itemLabel = existing.itemName || existing.itemTypeLabel || 'Service Item';
+
+      await prisma.$transaction(async (tx) => {
+        // Preserve the timeline before removing the item because the Prisma
+        // relation cascades item events when an item itself is deleted.
+        await tx.serviceIntakeEvent.updateMany({
+          where: { intakeId: id, itemId },
+          data: { itemId: null },
+        });
+        await logEvent(tx, w, {
+          intakeId: id,
+          eventType: 'ITEM_DELETED',
+          title: `${itemLabel}: Item Deleted`,
+          description: 'The service item was permanently deleted. Previous history was retained.',
+        });
+        await tx.serviceIntakeItem.delete({ where: { id: itemId } });
+        await recomputeIntakeStatus(tx, id, w);
+      });
+
+      await Promise.all(existing.images.map(async (image) => {
+        clearB2ImageDownloadUrlCache(image.storageFileName);
+        try {
+          await storageClient.send(new DeleteObjectCommand({
+            Bucket: B2_BUCKET_NAME,
+            Key: `${B2_IMAGE_PREFIX}/${image.storageFileName}`,
+          }));
+        } catch (cleanupErr) {
+          console.error(`[SI deleteItem] Failed to remove B2 object ${image.storageFileName}:`, cleanupErr);
+        }
+      }));
+
+      res.json({ success: true, message: `${itemLabel} deleted.` });
+    } catch (err) {
+      fail(res, err, 'Failed to delete service item.', 'SI deleteItem');
+    }
+  },
+
   /** PATCH /:id/items/:itemId — generic item details. */
   updateItem: async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -645,9 +745,7 @@ export const serviceIntakeController = {
       if (item.status === status) return void res.json({ success: true, message: `Status is already ${label(status)}.` });
 
       await prisma.$transaction(async (tx) => {
-        if (!TERMINAL_STATUSES.includes(status)) {
-          await requireFreshStagePhoto(tx, id, itemId);
-        }
+        await requireFreshStagePhoto(tx, id, itemId);
         await tx.serviceIntakeItem.update({ where: { id: itemId }, data: { status, ...terminalFields(status, w) } });
         await logEvent(tx, w, { intakeId: id, itemId, eventType: 'STATUS_CHANGED', title: `${item.itemName || item.itemTypeLabel || 'Item'}: ${label(item.status)} → ${label(status)}`, description: str(note, LIMITS.notes), oldValue: item.status, newValue: status });
         await recomputeIntakeStatus(tx, id, w);
@@ -739,9 +837,20 @@ export const serviceIntakeController = {
         unitLabel = item.itemName || item.itemTypeLabel || 'item';
       }
 
-      fs.mkdirSync(SERVICE_INTAKE_DIR, { recursive: true });
       const storageFileName = `si_${id}_${randomUUID()}${ext}`;
-      await fs.promises.writeFile(path.join(SERVICE_INTAKE_DIR, storageFileName), buf);
+      const storageKey = `${B2_IMAGE_PREFIX}/${storageFileName}`;
+      const contentType = getImageContentType(ext);
+
+      // Upload the image to the private Backblaze B2 bucket first.
+      await storageClient.send(
+        new PutObjectCommand({
+          Bucket: B2_BUCKET_NAME,
+          Key: storageKey,
+          Body: buf,
+          ContentType: contentType,
+          ContentLength: buf.length,
+        }),
+      );
 
       try {
         const image = await prisma.$transaction(async (tx) => {
@@ -749,7 +858,10 @@ export const serviceIntakeController = {
             data: {
               intakeId: id,
               itemId: itemId ?? null,
+              // Keep the existing API contract so the mobile app does not need
+              // to know anything about Backblaze B2.
               imageUrl: `/api/service-intakes/images/${storageFileName}`,
+              // Store the unique filename; the B2 prefix is added for storage operations.
               storageFileName,
               fileSize: buf.length,
               uploadedById: w.id,
@@ -760,7 +872,16 @@ export const serviceIntakeController = {
         });
         res.status(201).json({ success: true, data: image });
       } catch (dbErr) {
-        await fs.promises.unlink(path.join(SERVICE_INTAKE_DIR, storageFileName)).catch(() => undefined);
+        await storageClient
+          .send(
+            new DeleteObjectCommand({
+              Bucket: B2_BUCKET_NAME,
+              Key: storageKey,
+            }),
+          )
+          .catch((cleanupErr) => {
+            console.error('[SI upload] Failed to clean up B2 object after DB error:', cleanupErr);
+          });
         throw dbErr;
       }
     } catch (err) {
@@ -778,14 +899,88 @@ export const serviceIntakeController = {
       if (!img) throw new HttpError(404, 'Image not found.');
       if (img.uploadedById !== w.id && !isPrivileged(w)) throw new HttpError(403, 'You can only remove photos you added.');
 
+      const storageKey = `${B2_IMAGE_PREFIX}/${img.storageFileName}`;
+      clearB2ImageDownloadUrlCache(img.storageFileName);
+
+      // Remove the database record first. If B2 deletion later fails, restore
+      // this exact row so the image reference is not silently lost.
       await prisma.$transaction(async (tx) => {
         await tx.serviceIntakeImage.delete({ where: { id: imageId } });
-        await logEvent(tx, w, { intakeId: id, itemId: img.itemId, eventType: 'IMAGE_REMOVED', title: 'Photo Removed' });
+        await logEvent(tx, w, {
+          intakeId: id,
+          itemId: img.itemId,
+          eventType: 'IMAGE_REMOVED',
+          title: 'Photo Removed',
+        });
       });
-      await fs.promises.unlink(path.join(SERVICE_INTAKE_DIR, path.basename(img.storageFileName))).catch(() => undefined);
+
+      try {
+        await storageClient.send(
+          new DeleteObjectCommand({
+            Bucket: B2_BUCKET_NAME,
+            Key: storageKey,
+          }),
+        );
+      } catch (b2Err) {
+        // Restore the DB row because the cloud object could not be deleted.
+        await prisma.serviceIntakeImage.create({
+          data: {
+            id: img.id,
+            intakeId: img.intakeId,
+            itemId: img.itemId,
+            imageUrl: img.imageUrl,
+            storageFileName: img.storageFileName,
+            fileSize: img.fileSize,
+            uploadedById: img.uploadedById,
+            createdAt: img.createdAt,
+          },
+        }).catch((restoreErr) => {
+          console.error('[SI deleteImage] Failed to restore DB image record after B2 deletion failure:', restoreErr);
+        });
+        throw b2Err;
+      }
+
       res.json({ success: true, message: 'Photo removed.' });
     } catch (err) {
       fail(res, err, 'Failed to remove image.', 'SI deleteImage');
+    }
+  },
+
+  /** DELETE /:id — permanent Service Intake deletion (privileged). */
+  deleteIntake: async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const w = who(req);
+      if (!w) return void res.status(401).json({ success: false, message: 'Authentication required.' });
+      if (!isPrivileged(w)) throw new HttpError(403, 'You are not allowed to delete service intakes.');
+
+      const { id } = req.params;
+      const existing = await prisma.serviceIntake.findUnique({
+        where: { id },
+        select: { id: true, intakeNumber: true, images: { select: { storageFileName: true } } },
+      });
+      if (!existing) throw new HttpError(404, 'Service intake not found.');
+
+      // Delete the database graph first. All Service Intake children use cascade
+      // relations, so this does not touch customers/products/employees.
+      await prisma.serviceIntake.delete({ where: { id } });
+
+      // Clean up private B2 objects after the DB delete. A failed cloud cleanup
+      // is logged but does not recreate a deleted production record.
+      await Promise.all(existing.images.map(async (image) => {
+        clearB2ImageDownloadUrlCache(image.storageFileName);
+        try {
+          await storageClient.send(new DeleteObjectCommand({
+            Bucket: B2_BUCKET_NAME,
+            Key: `${B2_IMAGE_PREFIX}/${image.storageFileName}`,
+          }));
+        } catch (cleanupErr) {
+          console.error(`[SI delete] Failed to remove B2 object ${image.storageFileName}:`, cleanupErr);
+        }
+      }));
+
+      res.json({ success: true, message: `Service Intake ${existing.intakeNumber} deleted.` });
+    } catch (err) {
+      fail(res, err, 'Failed to delete service intake.', 'SI delete');
     }
   },
 
@@ -832,43 +1027,78 @@ export const serviceIntakeController = {
     }
   },
 
-  /** GET /images/:filename — unchanged behaviour from the previous module. */
-  serveImage: async (req: any, res: Response) => {
+  /** GET /images/:filename — streams the image from the private B2 bucket. */
+  serveImage: async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const safe = path.basename(req.params.filename);
-      const filePath = path.join(SERVICE_INTAKE_DIR, safe);
-      if (!fs.existsSync(filePath)) return void res.status(404).json({ success: false, message: 'Image file not found.' });
-      const ext = path.extname(safe).toLowerCase();
-      res.setHeader('Content-Type', ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      fs.createReadStream(filePath).pipe(res);
-    } catch (err) {
+      const filename = String(req.params.filename || '').trim();
+      if (!filename || filename.includes('/') || filename.includes('\\')) {
+        return void res.status(400).json({ success: false, message: 'Invalid image filename.' });
+      }
+
+      // Find the DB record first. The B2 bucket itself remains private.
+      const image = await prisma.serviceIntakeImage.findFirst({
+        where: { storageFileName: filename },
+        select: { storageFileName: true, fileSize: true },
+      });
+
+      if (!image) {
+        return void res.status(404).json({ success: false, message: 'Image not found.' });
+      }
+
+      const storageKey = `${B2_IMAGE_PREFIX}/${image.storageFileName}`;
+      const result = await storageClient.send(
+        new GetObjectCommand({
+          Bucket: B2_BUCKET_NAME,
+          Key: storageKey,
+        }),
+      );
+
+      if (!result.Body) {
+        return void res.status(404).json({ success: false, message: 'Image file not found.' });
+      }
+
+      const ext = getImageExtensionFromFilename(image.storageFileName);
+      res.setHeader('Content-Type', getImageContentType(ext));
+      if (result.ContentLength != null) {
+        res.setHeader('Content-Length', String(result.ContentLength));
+      } else if (image.fileSize != null) {
+        res.setHeader('Content-Length', String(image.fileSize));
+      }
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+
+      const body = result.Body as NodeJS.ReadableStream;
+      body.on('error', (streamErr) => {
+        console.error('[SI serve] B2 stream error:', streamErr);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, message: 'Failed to stream image.' });
+        } else {
+          res.destroy(streamErr as Error);
+        }
+      });
+      body.pipe(res);
+    } catch (err: any) {
+      if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+        return void res.status(404).json({ success: false, message: 'Image file not found.' });
+      }
       fail(res, err, 'Failed to serve image.', 'SI serve');
     }
   },
 };
 
-const R2_IMAGE_PREFIX = 'service-intakes';
-const MAX_R2_IMAGE_BYTES = 12 * 1024 * 1024;
+function getImageExtensionFromFilename(filename: string): '.jpg' | '.png' | '.webp' {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.png')) return '.png';
+  if (lower.endsWith('.webp')) return '.webp';
+  return '.jpg';
+}
 
-const ALLOWED_IMAGE_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-]);
-
-function getImageExtension(contentType: string) {
-  switch (contentType) {
-    case 'image/jpeg':
-      return '.jpg';
-
-    case 'image/png':
-      return '.png';
-
-    case 'image/webp':
-      return '.webp';
-
+function getImageContentType(ext: '.jpg' | '.png' | '.webp'): string {
+  switch (ext) {
+    case '.png':
+      return 'image/png';
+    case '.webp':
+      return 'image/webp';
     default:
-      return null;
+      return 'image/jpeg';
   }
 }

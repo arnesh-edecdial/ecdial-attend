@@ -53,15 +53,21 @@ export const ServiceIntakeTimeline: React.FC<Props> = ({ events }) => {
     return <Text style={styles.empty}>No history yet.</Text>;
   }
 
+  const visibleEvents = events.filter((e) => !(
+    e.eventType === 'STATUS_CHANGED' && e.title.startsWith('Overall summary:')
+  ));
+
+  if (visibleEvents.length === 0) return <Text style={styles.empty}>No history yet.</Text>;
+
   return (
     <View>
-      {events.map((e, idx) => (
+      {visibleEvents.map((e, idx) => (
         <View key={e.id} style={styles.row}>
           <View style={styles.railCol}>
             <View style={styles.dot}>
               <Text style={styles.dotIcon}>{ICONS[e.eventType] || DEFAULT_ICON}</Text>
             </View>
-            {idx < events.length - 1 && <View style={styles.rail} />}
+            {idx < visibleEvents.length - 1 && <View style={styles.rail} />}
           </View>
           <View style={styles.content}>
             <Text style={styles.title}>{e.title}</Text>
