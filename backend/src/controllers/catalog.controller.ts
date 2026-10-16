@@ -6,24 +6,49 @@ export const catalogController = {
   // 1. List Products (Sales sees only active products; Admin sees all)
   listProducts: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const category = req.query.category as string; // 'MAIN_UNIT' | 'LOW_SIDE'
+    const acType = req.query.acType as string | undefined;
     const search = (req.query.search as string)?.toLowerCase().trim();
     const activeOnly = req.query.activeOnly === 'true' || req.user?.role === 'SALES';
 
     try {
+      const formattedAcType = acType ? acType.toUpperCase() : undefined;
+
+      const whereClause: any = {
+        ...(activeOnly ? { isActive: true } : {}),
+        ...(category ? { category } : {}),
+      };
+
+      if (formattedAcType) {
+        if (category === 'LOW_SIDE') {
+          // Strictly associate with the appropriate AC category
+          whereClause.acType = formattedAcType;
+        } else if (category === 'MAIN_UNIT') {
+          whereClause.OR = [
+            { acType: formattedAcType },
+            { acType: 'ALL' },
+          ];
+        } else {
+          whereClause.acType = formattedAcType;
+        }
+      }
+
+      if (search) {
+        const searchCondition = [
+          { name: { contains: search, mode: 'insensitive' as any } },
+          { description: { contains: search, mode: 'insensitive' as any } },
+          { model: { contains: search, mode: 'insensitive' as any } },
+        ];
+
+        if (whereClause.OR) {
+          whereClause.AND = [{ OR: whereClause.OR }, { OR: searchCondition }];
+          delete whereClause.OR;
+        } else {
+          whereClause.OR = searchCondition;
+        }
+      }
+
       const products = await prisma.product.findMany({
-        where: {
-          ...(activeOnly ? { isActive: true } : {}),
-          ...(category ? { category } : {}),
-          ...(search
-            ? {
-                OR: [
-                  { name: { contains: search, mode: 'insensitive' as any } },
-                  { description: { contains: search, mode: 'insensitive' as any } },
-                  { model: { contains: search, mode: 'insensitive' as any } },
-                ],
-              }
-            : {}),
-        },
+        where: whereClause,
         orderBy: { createdAt: 'desc' },
       });
 
@@ -37,21 +62,28 @@ export const catalogController = {
     }
   },
 
-  // 2. Add Machine Model / Product (Admin Only)
+  // 2. Add Machine Model / Product
   createProduct: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const {
       name,
       model,
       category = 'MAIN_UNIT',
+      acType = 'SPLIT',
       description,
       defaultUnit = 'Nos',
       defaultPrice,
+      defaultSupplyRate,
+      defaultInstallRate,
       availableStock = 10,
       imageUrl,
     } = req.body;
 
-    if (!name || defaultPrice === undefined) {
-      res.status(400).json({ success: false, message: 'Product name and price are required.' });
+    const supRate = defaultSupplyRate !== undefined ? Number(defaultSupplyRate) : undefined;
+    const instRate = defaultInstallRate !== undefined ? Number(defaultInstallRate) : undefined;
+    const calcPrice = defaultPrice !== undefined ? Number(defaultPrice) : ((supRate || 0) + (instRate || 0));
+
+    if (!name || (defaultPrice === undefined && supRate === undefined && instRate === undefined)) {
+      res.status(400).json({ success: false, message: 'Product name and rates/price are required.' });
       return;
     }
 
@@ -61,9 +93,12 @@ export const catalogController = {
           name: name.trim(),
           model: model ? model.trim() : null,
           category,
+          acType: String(acType || 'SPLIT').toUpperCase(),
           description: description ? description.trim() : `${name} (${category})`,
           defaultUnit: defaultUnit || 'Nos',
-          defaultPrice: Number(defaultPrice) || 0,
+          defaultPrice: calcPrice,
+          defaultSupplyRate: supRate !== undefined ? supRate : (category === 'LOW_SIDE' ? 0 : calcPrice),
+          defaultInstallRate: instRate !== undefined ? instRate : 0,
           availableStock: availableStock !== undefined ? Number(availableStock) : 0,
           imageUrl: imageUrl || null,
           isActive: true,
@@ -81,16 +116,19 @@ export const catalogController = {
     }
   },
 
-  // 3. Update Machine Model / Product (Admin Only)
+  // 3. Update Machine Model / Product
   updateProduct: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const {
       name,
       model,
       category,
+      acType,
       description,
       defaultUnit,
       defaultPrice,
+      defaultSupplyRate,
+      defaultInstallRate,
       availableStock,
       imageUrl,
       isActive,
@@ -109,9 +147,12 @@ export const catalogController = {
           ...(name !== undefined ? { name: name.trim() } : {}),
           ...(model !== undefined ? { model: model ? model.trim() : null } : {}),
           ...(category !== undefined ? { category } : {}),
+          ...(acType !== undefined ? { acType: String(acType).toUpperCase() } : {}),
           ...(description !== undefined ? { description: description.trim() } : {}),
           ...(defaultUnit !== undefined ? { defaultUnit } : {}),
           ...(defaultPrice !== undefined ? { defaultPrice: Number(defaultPrice) } : {}),
+          ...(defaultSupplyRate !== undefined ? { defaultSupplyRate: Number(defaultSupplyRate) } : {}),
+          ...(defaultInstallRate !== undefined ? { defaultInstallRate: Number(defaultInstallRate) } : {}),
           ...(availableStock !== undefined ? { availableStock: Number(availableStock) } : {}),
           ...(imageUrl !== undefined ? { imageUrl } : {}),
           ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),

@@ -52,6 +52,10 @@ export async function initDatabase() {
       });
       console.log('ℹ️ [DB] Initialized default Quotation Configuration.');
     }
+
+    // Seed low-side catalog items & presets
+    const { seedCatalogAndPresets } = await import('../services/seedCatalog.service');
+    await seedCatalogAndPresets();
   } catch (err: any) {
     isPrismaConnected = false;
     console.error('❌ [DB] Error connecting to PostgreSQL Database:', err);

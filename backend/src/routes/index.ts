@@ -392,6 +392,34 @@ router.put(
   quotationController.updateConfig
 );
 
+// Presets (Terms, Payment, Scope, Requirements)
+router.get(
+  '/quotations/presets',
+  authMiddleware,
+  quotationController.listPresets
+);
+
+router.post(
+  '/quotations/presets',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  quotationController.createPreset
+);
+
+router.put(
+  '/quotations/presets/:id',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  quotationController.updatePreset
+);
+
+router.delete(
+  '/quotations/presets/:id',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  quotationController.deletePreset
+);
+
 router.post(
   '/quotations',
   authMiddleware,

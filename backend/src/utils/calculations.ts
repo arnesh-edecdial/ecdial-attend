@@ -1,5 +1,7 @@
 export interface FinancialTotals {
   mainUnitTotal: number;
+  lowSideSupplyTotal: number;
+  lowSideInstallTotal: number;
   lowSideTotal: number;
   subtotal: number;
   cgstPercent: number;
@@ -7,6 +9,7 @@ export interface FinancialTotals {
   sgstPercent: number;
   sgstAmount: number;
   grandTotal: number;
+  totalProjectCost: number;
 }
 
 /**
@@ -20,29 +23,70 @@ export function roundCurrency(amount: number): number {
  * Calculate quotation financial totals authoritatively on backend
  */
 export function calculateQuotationTotals(
-  items: Array<{ section: string; quantity: number; unitPrice: number }>,
+  items: Array<{
+    section: string;
+    quantity: number;
+    unitPrice?: number;
+    amount?: number;
+    supplyRate?: number | null;
+    supplyAmount?: number | null;
+    installRate?: number | null;
+    installAmount?: number | null;
+  }>,
   hasLowSide: boolean,
   cgstPercent: number = 9.0,
-  sgstPercent: number = 9.0
+  sgstPercent: number = 9.0,
+  acType: string = 'SPLIT'
 ): FinancialTotals {
   let mainUnitTotal = 0;
+  let lowSideSupplyTotal = 0;
+  let lowSideInstallTotal = 0;
   let lowSideTotal = 0;
 
   for (const item of items) {
     const qty = Number(item.quantity) || 0;
-    const price = Number(item.unitPrice) || 0;
-    const itemAmount = roundCurrency(qty * price);
 
     if (item.section === 'MAIN_UNIT') {
+      const price = item.unitPrice !== undefined ? Number(item.unitPrice) : (Number(item.supplyRate) || 0);
+      const itemAmount = item.amount !== undefined && item.amount !== 0 ? Number(item.amount) : roundCurrency(qty * price);
       mainUnitTotal += itemAmount;
     } else if (item.section === 'LOW_SIDE' && hasLowSide) {
-      lowSideTotal += itemAmount;
+      const hasSeparateRates = (item.supplyRate !== undefined && item.supplyRate !== null) ||
+        (item.installRate !== undefined && item.installRate !== null) ||
+        (item.supplyAmount !== undefined && item.supplyAmount !== null && item.supplyAmount > 0) ||
+        (item.installAmount !== undefined && item.installAmount !== null && item.installAmount > 0);
+
+      if (hasSeparateRates) {
+        const supRate = Number(item.supplyRate) || 0;
+        const instRate = Number(item.installRate) || 0;
+        const supAmt = (item.supplyAmount !== undefined && item.supplyAmount !== null && item.supplyAmount !== 0)
+          ? Number(item.supplyAmount)
+          : roundCurrency(qty * supRate);
+        const instAmt = (item.installAmount !== undefined && item.installAmount !== null && item.installAmount !== 0)
+          ? Number(item.installAmount)
+          : roundCurrency(qty * instRate);
+
+        lowSideSupplyTotal += supAmt;
+        lowSideInstallTotal += instAmt;
+        lowSideTotal += roundCurrency(supAmt + instAmt);
+      } else {
+        const price = Number(item.unitPrice) || 0;
+        const itemAmount = (item.amount !== undefined && item.amount !== 0) ? Number(item.amount) : roundCurrency(qty * price);
+        lowSideTotal += itemAmount;
+      }
     }
   }
 
   mainUnitTotal = roundCurrency(mainUnitTotal);
-  lowSideTotal = roundCurrency(lowSideTotal);
-  const subtotal = roundCurrency(mainUnitTotal + lowSideTotal);
+  lowSideSupplyTotal = roundCurrency(lowSideSupplyTotal);
+  lowSideInstallTotal = roundCurrency(lowSideInstallTotal);
+  lowSideTotal = roundCurrency(lowSideTotal > 0 ? lowSideTotal : (lowSideSupplyTotal + lowSideInstallTotal));
+
+  const totalProjectCost = roundCurrency(mainUnitTotal + lowSideTotal);
+
+  // In Split AC template, Sub Total (A) equals high-side Total (A)
+  const isSplit = String(acType || 'SPLIT').toUpperCase() === 'SPLIT';
+  const subtotal = isSplit ? mainUnitTotal : totalProjectCost;
 
   const cgstAmount = roundCurrency((subtotal * cgstPercent) / 100);
   const sgstAmount = roundCurrency((subtotal * sgstPercent) / 100);
@@ -50,6 +94,8 @@ export function calculateQuotationTotals(
 
   return {
     mainUnitTotal,
+    lowSideSupplyTotal,
+    lowSideInstallTotal,
     lowSideTotal,
     subtotal,
     cgstPercent,
@@ -57,6 +103,7 @@ export function calculateQuotationTotals(
     sgstPercent,
     sgstAmount,
     grandTotal,
+    totalProjectCost,
   };
 }
 

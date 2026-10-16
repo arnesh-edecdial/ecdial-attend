@@ -97,6 +97,11 @@ export const quotationController = {
       customerPhone,
       customerEmail,
       customerLocation,
+      systemDesignation,
+      totalCapacity,
+      offerType,
+      scopeExclusions,
+      commissioningReqs,
       quotationType,
       acType,
       hasLowSide,
@@ -115,6 +120,7 @@ export const quotationController = {
       const todayStr = getTodayDateString();
       const quotationNumber = await generateNextQuotationNumber();
       const validTillStr = validTillOrDefault(req.body.validTill, todayStr);
+      const currentAcType = String(acType || 'SPLIT').toUpperCase();
 
       const config = (await prisma.quotationConfig.findFirst()) || {
         defaultCgstPercent: 9.0,
@@ -137,7 +143,20 @@ export const quotationController = {
         const item = rawItems[idx];
         const qty = Number(item.quantity) || 1;
         const price = Number(item.unitPrice) || 0;
-        const itemAmount = roundCurrency(qty * price);
+        const supRate = item.supplyRate !== undefined && item.supplyRate !== null ? Number(item.supplyRate) : (item.section === 'MAIN_UNIT' ? price : 0);
+        const instRate = item.installRate !== undefined && item.installRate !== null ? Number(item.installRate) : 0;
+        const supAmt = item.supplyAmount !== undefined && item.supplyAmount !== null && item.supplyAmount !== 0
+          ? Number(item.supplyAmount)
+          : roundCurrency(qty * supRate);
+        const instAmt = item.installAmount !== undefined && item.installAmount !== null && item.installAmount !== 0
+          ? Number(item.installAmount)
+          : roundCurrency(qty * instRate);
+
+        const itemAmount = (item.amount !== undefined && item.amount !== null && item.amount !== 0)
+          ? Number(item.amount)
+          : (item.section === 'LOW_SIDE' && (supRate > 0 || instRate > 0)
+              ? roundCurrency(supAmt + instAmt)
+              : roundCurrency(qty * price));
 
         // Optional: Check Machine Catalogue stock if productId provided
         if (item.productId) {
@@ -157,13 +176,17 @@ export const quotationController = {
           description: item.description || 'Item Description',
           quantity: qty,
           unit: item.unit || 'Nos',
-          unitPrice: price,
+          unitPrice: price > 0 ? price : supRate,
           amount: itemAmount,
+          supplyRate: supRate,
+          supplyAmount: supAmt,
+          installRate: instRate,
+          installAmount: instAmt,
           notes: item.notes || '',
         });
       }
 
-      const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst);
+      const totals = calculateQuotationTotals(processedItems, Boolean(hasLowSide), cgst, sgst, currentAcType);
       const finalCustName = customerName ? String(customerName).trim() : '';
       const finalCustAddr = customerAddress ? String(customerAddress).trim() : '';
       const cleanPdfName = pdfName ? String(pdfName).trim() : null;
@@ -175,7 +198,7 @@ export const quotationController = {
           revisionNumber: 1,
           date: todayStr,
           validTill: validTillStr,
-          acType: String(acType || 'SPLIT').toUpperCase(),
+          acType: currentAcType,
           includeBankDetails: includeBankDetails !== undefined ? Boolean(includeBankDetails) : true,
           customerId: customerId || null,
           customerName: finalCustName,
@@ -183,10 +206,17 @@ export const quotationController = {
           customerPhone: customerPhone ? String(customerPhone).trim() : null,
           customerEmail: customerEmail ? String(customerEmail).trim() : null,
           customerLocation: customerLocation ? String(customerLocation).trim() : finalCustAddr,
+          systemDesignation: systemDesignation || (currentAcType === 'CASSETTE' ? 'Daikin Cassette' : null),
+          totalCapacity: totalCapacity || null,
+          offerType: offerType || 'Supply and Installation',
+          scopeExclusions: scopeExclusions || null,
+          commissioningReqs: commissioningReqs || null,
           createdById: req.user.id,
           quotationType: (quotationType || 'DAIKIN').toUpperCase(),
           hasLowSide: Boolean(hasLowSide),
           mainUnitTotal: totals.mainUnitTotal,
+          lowSideSupplyTotal: totals.lowSideSupplyTotal,
+          lowSideInstallTotal: totals.lowSideInstallTotal,
           lowSideTotal: totals.lowSideTotal,
           subtotal: totals.subtotal,
           cgstPercent: cgst,
@@ -347,6 +377,11 @@ export const quotationController = {
       customerPhone,
       customerEmail,
       customerLocation,
+      systemDesignation,
+      totalCapacity,
+      offerType,
+      scopeExclusions,
+      commissioningReqs,
       quotationType,
       acType,
       hasLowSide,
@@ -375,39 +410,64 @@ export const quotationController = {
 
       const cgst = cgstPercent !== undefined ? Number(cgstPercent) : existing.cgstPercent;
       const sgst = sgstPercent !== undefined ? Number(sgstPercent) : existing.sgstPercent;
+      const currentAcType = acType !== undefined ? String(acType || 'SPLIT').toUpperCase() : ((existing as any).acType || 'SPLIT');
 
       let processedItems = existing.items;
       if (Array.isArray(items)) {
-        processedItems = items.map((item, idx) => ({
-          id: item.id || undefined,
-          quotationId: id,
-          section: item.section || 'MAIN_UNIT',
-          productId: item.productId || null,
-          brand: item.brand || null,
-          itemOrder: idx + 1,
-          description: item.description || 'Item',
-          quantity: Number(item.quantity) || 1,
-          unit: item.unit || 'Nos',
-          unitPrice: Number(item.unitPrice) || 0,
-          amount: roundCurrency((Number(item.quantity) || 1) * (Number(item.unitPrice) || 0)),
-          notes: item.notes || null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })) as any;
+        processedItems = items.map((item, idx) => {
+          const qty = Number(item.quantity) || 1;
+          const price = Number(item.unitPrice) || 0;
+          const supRate = item.supplyRate !== undefined && item.supplyRate !== null ? Number(item.supplyRate) : (item.section === 'MAIN_UNIT' ? price : 0);
+          const instRate = item.installRate !== undefined && item.installRate !== null ? Number(item.installRate) : 0;
+          const supAmt = item.supplyAmount !== undefined && item.supplyAmount !== null && item.supplyAmount !== 0
+            ? Number(item.supplyAmount)
+            : roundCurrency(qty * supRate);
+          const instAmt = item.installAmount !== undefined && item.installAmount !== null && item.installAmount !== 0
+            ? Number(item.installAmount)
+            : roundCurrency(qty * instRate);
+
+          const itemAmount = (item.amount !== undefined && item.amount !== null && item.amount !== 0)
+            ? Number(item.amount)
+            : (item.section === 'LOW_SIDE' && (supRate > 0 || instRate > 0)
+                ? roundCurrency(supAmt + instAmt)
+                : roundCurrency(qty * price));
+
+          return {
+            id: item.id || undefined,
+            quotationId: id,
+            section: item.section || 'MAIN_UNIT',
+            productId: item.productId || null,
+            brand: item.brand || null,
+            itemOrder: idx + 1,
+            description: item.description || 'Item',
+            quantity: qty,
+            unit: item.unit || 'Nos',
+            unitPrice: price > 0 ? price : supRate,
+            amount: itemAmount,
+            supplyRate: supRate,
+            supplyAmount: supAmt,
+            installRate: instRate,
+            installAmount: instAmt,
+            notes: item.notes || null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+        }) as any;
       }
 
       const totals = calculateQuotationTotals(
         processedItems,
         hasLowSide !== undefined ? Boolean(hasLowSide) : existing.hasLowSide,
         cgst,
-        sgst
+        sgst,
+        currentAcType
       );
 
       // Re-create items if provided
       if (Array.isArray(items)) {
         await prisma.quotationItem.deleteMany({ where: { quotationId: id } });
         await prisma.quotationItem.createMany({
-          data: processedItems.map((pi) => ({
+          data: processedItems.map((pi: any) => ({
             quotationId: id,
             section: pi.section,
             productId: pi.productId,
@@ -418,6 +478,10 @@ export const quotationController = {
             unit: pi.unit,
             unitPrice: pi.unitPrice,
             amount: pi.amount,
+            supplyRate: pi.supplyRate,
+            supplyAmount: pi.supplyAmount,
+            installRate: pi.installRate,
+            installAmount: pi.installAmount,
             notes: pi.notes,
           })),
         });
@@ -431,12 +495,19 @@ export const quotationController = {
           customerPhone: customerPhone !== undefined ? String(customerPhone).trim() : existing.customerPhone,
           customerEmail: customerEmail !== undefined ? String(customerEmail).trim() : existing.customerEmail,
           customerLocation: customerLocation !== undefined ? String(customerLocation).trim() : existing.customerLocation,
+          systemDesignation: systemDesignation !== undefined ? systemDesignation : (existing as any).systemDesignation,
+          totalCapacity: totalCapacity !== undefined ? totalCapacity : (existing as any).totalCapacity,
+          offerType: offerType !== undefined ? offerType : (existing as any).offerType,
+          scopeExclusions: scopeExclusions !== undefined ? scopeExclusions : (existing as any).scopeExclusions,
+          commissioningReqs: commissioningReqs !== undefined ? commissioningReqs : (existing as any).commissioningReqs,
           validTill: validTill !== undefined ? validTillOrDefault(validTill, existing.date) : ((existing as any).validTill || addDaysToDateString(existing.date, 10)),
-          acType: acType !== undefined ? String(acType || 'SPLIT').toUpperCase() : ((existing as any).acType || 'SPLIT'),
+          acType: currentAcType,
           includeBankDetails: includeBankDetails !== undefined ? Boolean(includeBankDetails) : ((existing as any).includeBankDetails !== false),
           quotationType: quotationType !== undefined ? (quotationType || 'DAIKIN').toUpperCase() : (existing as any).quotationType,
           hasLowSide: hasLowSide !== undefined ? Boolean(hasLowSide) : existing.hasLowSide,
           mainUnitTotal: totals.mainUnitTotal,
+          lowSideSupplyTotal: totals.lowSideSupplyTotal,
+          lowSideInstallTotal: totals.lowSideInstallTotal,
           lowSideTotal: totals.lowSideTotal,
           subtotal: totals.subtotal,
           cgstPercent: cgst,
@@ -576,10 +647,18 @@ export const quotationController = {
         customerAddress: quotation.customerAddress,
         customerPhone: quotation.customerPhone,
         customerEmail: quotation.customerEmail,
+        customerLocation: (quotation as any).customerLocation || quotation.customerAddress,
+        systemDesignation: (quotation as any).systemDesignation,
+        totalCapacity: (quotation as any).totalCapacity,
+        offerType: (quotation as any).offerType,
+        scopeExclusions: (quotation as any).scopeExclusions,
+        commissioningReqs: (quotation as any).commissioningReqs,
         createdByName: quotation.createdBy?.name || 'ECDIAL Sales Rep',
         createdByEmail: quotation.createdBy?.email || 'sales@ecdial.com',
         hasLowSide: quotation.hasLowSide,
         mainUnitTotal: quotation.mainUnitTotal,
+        lowSideSupplyTotal: (quotation as any).lowSideSupplyTotal || 0,
+        lowSideInstallTotal: (quotation as any).lowSideInstallTotal || 0,
         lowSideTotal: quotation.lowSideTotal,
         subtotal: quotation.subtotal,
         cgstPercent: quotation.cgstPercent,
@@ -596,6 +675,10 @@ export const quotationController = {
           unit: m.unit,
           unitPrice: m.unitPrice,
           amount: m.amount,
+          supplyRate: (m as any).supplyRate ?? m.unitPrice,
+          supplyAmount: (m as any).supplyAmount ?? m.amount,
+          installRate: (m as any).installRate ?? 0,
+          installAmount: (m as any).installAmount ?? 0,
         })),
         lowSideItems: lowSideItems.map((l) => ({
           description: l.description,
@@ -604,6 +687,10 @@ export const quotationController = {
           unit: l.unit,
           unitPrice: l.unitPrice,
           amount: l.amount,
+          supplyRate: (l as any).supplyRate ?? l.unitPrice,
+          supplyAmount: (l as any).supplyAmount ?? l.amount,
+          installRate: (l as any).installRate ?? 0,
+          installAmount: (l as any).installAmount ?? 0,
         })),
       });
 
@@ -650,7 +737,7 @@ export const quotationController = {
     }
   },
 
-  // 10. Delete Quotation (Rule 19)
+  // 10. Delete Quotation
   deleteQuotation: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     try {
@@ -660,7 +747,6 @@ export const quotationController = {
         return;
       }
 
-      // Permissions: ADMIN, MANAGER, IT_ADMIN, SALES or the salesman who created it
       const allowedRoles = ['ADMIN', 'MANAGER', 'IT_ADMIN', 'SALES'];
       if (!allowedRoles.includes(req.user?.role || '') && existing.createdById !== req.user?.id) {
         res.status(403).json({ success: false, message: 'You do not have permission to delete this quotation.' });
@@ -679,6 +765,118 @@ export const quotationController = {
     } catch (err: any) {
       console.error('[Delete Quotation Error]', err);
       res.status(500).json({ success: false, message: 'Failed to delete quotation.' });
+    }
+  },
+
+  // 11. List Reusable Terms / Payment / Scope Presets
+  listPresets: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { presetType, acType, quotationType } = req.query;
+      const where: any = { isActive: true };
+
+      if (presetType) {
+        where.presetType = String(presetType).toUpperCase();
+      }
+
+      if (acType) {
+        where.acType = {
+          in: [String(acType).toUpperCase(), 'ALL'],
+        };
+      }
+
+      if (quotationType) {
+        where.quotationType = {
+          in: [String(quotationType).toUpperCase(), 'ALL'],
+        };
+      }
+
+      const presets = await prisma.quotationPreset.findMany({
+        where,
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+      });
+
+      res.json({ success: true, data: presets });
+    } catch (err: any) {
+      console.error('[List Presets Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to list presets.' });
+    }
+  },
+
+  // 12. Create Preset
+  createPreset: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { title, presetType, acType = 'ALL', quotationType = 'ALL', content, metadata, isDefault = false } = req.body;
+
+      if (!title || !presetType || !content) {
+        res.status(400).json({ success: false, message: 'Title, presetType, and content are required.' });
+        return;
+      }
+
+      const preset = await prisma.quotationPreset.create({
+        data: {
+          title: String(title).trim(),
+          presetType: String(presetType).toUpperCase(),
+          acType: String(acType || 'ALL').toUpperCase(),
+          quotationType: String(quotationType || 'ALL').toUpperCase(),
+          content: String(content).trim(),
+          metadata: metadata ? String(metadata) : null,
+          isDefault: Boolean(isDefault),
+          isActive: true,
+        },
+      });
+
+      res.status(201).json({ success: true, message: 'Preset created.', data: preset });
+    } catch (err: any) {
+      console.error('[Create Preset Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to create preset.' });
+    }
+  },
+
+  // 13. Update Preset
+  updatePreset: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { title, presetType, acType, quotationType, content, metadata, isDefault, isActive } = req.body;
+
+      const existing = await prisma.quotationPreset.findUnique({ where: { id } });
+      if (!existing) {
+        res.status(404).json({ success: false, message: 'Preset not found.' });
+        return;
+      }
+
+      const updated = await prisma.quotationPreset.update({
+        where: { id },
+        data: {
+          ...(title !== undefined ? { title: String(title).trim() } : {}),
+          ...(presetType !== undefined ? { presetType: String(presetType).toUpperCase() } : {}),
+          ...(acType !== undefined ? { acType: String(acType).toUpperCase() } : {}),
+          ...(quotationType !== undefined ? { quotationType: String(quotationType).toUpperCase() } : {}),
+          ...(content !== undefined ? { content: String(content).trim() } : {}),
+          ...(metadata !== undefined ? { metadata: metadata ? String(metadata) : null } : {}),
+          ...(isDefault !== undefined ? { isDefault: Boolean(isDefault) } : {}),
+          ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+        },
+      });
+
+      res.json({ success: true, message: 'Preset updated.', data: updated });
+    } catch (err: any) {
+      console.error('[Update Preset Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to update preset.' });
+    }
+  },
+
+  // 14. Delete / Deactivate Preset
+  deletePreset: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      await prisma.quotationPreset.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      res.json({ success: true, message: 'Preset deactivated.' });
+    } catch (err: any) {
+      console.error('[Delete Preset Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to delete preset.' });
     }
   },
 };

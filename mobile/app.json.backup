@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "ECDIAL",
+    "slug": "ecdial-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0A0F1D"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "ECDIAL needs camera access to scan daily attendance QR codes.",
+        "NSLocationWhenInUseUsageDescription": "ECDIAL needs location access to verify physical office attendance."
+      }
+    },
+    "android": {
+      "package": "com.ecdial.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0F1D"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ECDIAL to scan attendance QR codes"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow ECDIAL to verify office attendance location"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0066CC",
+          "sounds": []
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5063e54b-2c5c-4f3a-aebf-6402851b16ce"
+      }
+    }
+  }
+}

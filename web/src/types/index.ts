@@ -107,9 +107,12 @@ export interface ProductItem {
   name: string;
   model?: string | null;
   category: 'MAIN_UNIT' | 'LOW_SIDE';
+  acType?: string;
   description: string;
   defaultUnit: string;
   defaultPrice: number;
+  defaultSupplyRate?: number;
+  defaultInstallRate?: number;
   availableStock: number;
   isActive: boolean;
 }
@@ -124,7 +127,34 @@ export interface QuotationItem {
   unit: string;
   unitPrice: number;
   amount: number;
+  supplyRate?: number;
+  supplyAmount?: number;
+  installRate?: number;
+  installAmount?: number;
+  brand?: string | null;
   notes?: string;
+}
+
+export interface QuotationPreset {
+  id: string;
+  title: string;
+  presetType: 'TERMS' | 'PAYMENT' | 'SCOPE' | 'REQUIREMENTS' | string;
+  acType: string;
+  quotationType: string;
+  content: string;
+  metadata?: string | null;
+  isDefault: boolean;
+  isActive: boolean;
+}
+
+export interface CustomerItem {
+  id: string;
+  name?: string | null;
+  address?: string | null;
+  mobile?: string | null;
+  email?: string | null;
+  notes?: string | null;
+  createdAt?: string;
 }
 
 export interface Quotation {
@@ -132,15 +162,25 @@ export interface Quotation {
   quotationNumber: string;
   revisionNumber: number;
   date: string;
+  validTill?: string;
+  acType?: 'SPLIT' | 'CASSETTE' | 'DUCT' | 'VRV' | string;
+  quotationType?: 'DAIKIN' | 'ECDIAL' | string;
   customerName: string;
   customerAddress: string;
   customerPhone?: string | null;
   customerEmail?: string | null;
   customerLocation?: string | null;
+  systemDesignation?: string | null;
+  totalCapacity?: string | null;
+  offerType?: string | null;
+  scopeExclusions?: string | null;
+  commissioningReqs?: string | null;
   createdById: string;
   createdByName?: string;
   hasLowSide: boolean;
   mainUnitTotal: number;
+  lowSideSupplyTotal?: number;
+  lowSideInstallTotal?: number;
   lowSideTotal: number;
   subtotal: number;
   cgstPercent: number;

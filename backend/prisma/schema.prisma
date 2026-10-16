@@ -158,18 +158,21 @@ model AttendanceAuditLog {
 }
 
 model Product {
-  id             String   @id @default(uuid())
-  name           String
-  model          String?
-  category       String   @default("MAIN_UNIT") // MAIN_UNIT, LOW_SIDE
-  description    String   @db.Text
-  defaultUnit    String   @default("Nos")
-  defaultPrice   Float
-  availableStock Int      @default(10)
-  imageUrl       String?
-  isActive          Boolean            @default(true)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id                 String   @id @default(uuid())
+  name               String
+  model              String?
+  category           String   @default("MAIN_UNIT") // MAIN_UNIT, LOW_SIDE
+  acType             String   @default("SPLIT") // SPLIT, CASSETTE, DUCT, VRV; used to keep low-side catalogues separate
+  description        String   @db.Text
+  defaultUnit        String   @default("Nos")
+  defaultPrice       Float
+  defaultSupplyRate  Float?   @default(0.0)
+  defaultInstallRate Float?  @default(0.0)
+  availableStock     Int      @default(10)
+  imageUrl           String?
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   stockRequirements  StockRequirement[]
   serviceIntakeItems ServiceIntakeItem[]
@@ -200,7 +203,7 @@ model Quotation {
   originalQuotationId String?
   date                String          // YYYY-MM-DD
   validTill           String?         // YYYY-MM-DD; defaults to date + 10 days
-  acType              String          @default("SPLIT") // "SPLIT", "VRV", or "DUCT"
+  acType              String          @default("SPLIT") // "SPLIT", "CASSETTE", "VRV", or "DUCT"
   includeBankDetails  Boolean         @default(true)
   customerId          String?
   customerName        String          @default("")
@@ -208,10 +211,17 @@ model Quotation {
   customerPhone       String?
   customerEmail       String?
   customerLocation    String?
+  systemDesignation   String?
+  totalCapacity       String?
+  offerType           String?         @default("Supply and Installation")
+  scopeExclusions     String?         @db.Text
+  commissioningReqs   String?         @db.Text
   createdById         String
   quotationType       String          @default("DAIKIN") // "DAIKIN" or "ECDIAL"
   hasLowSide          Boolean         @default(false)
   mainUnitTotal       Float           @default(0.0)
+  lowSideSupplyTotal  Float?          @default(0.0)
+  lowSideInstallTotal Float?          @default(0.0)
   lowSideTotal        Float           @default(0.0)
   subtotal            Float           @default(0.0)
   cgstPercent         Float           @default(9.0)
@@ -233,22 +243,44 @@ model Quotation {
 }
 
 model QuotationItem {
-  id          String    @id @default(uuid())
-  quotationId String
-  section     String    // "MAIN_UNIT" or "LOW_SIDE"
-  productId   String?
-  brand       String?   // "Daikin", "Mitsubishi", "LG", "General", "Godrej", "Onida"
-  itemOrder   Int       @default(0)
-  description String    @db.Text
-  quantity    Float     @default(1.0)
-  unit        String    @default("Nos")
-  unitPrice   Float     @default(0.0)
-  amount      Float     @default(0.0)
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  quotationId   String
+  section       String    // "MAIN_UNIT" or "LOW_SIDE"
+  productId     String?
+  brand         String?   // "Daikin", "Mitsubishi", "LG", "General", "Godrej", "Onida"
+  itemOrder     Int       @default(0)
+  description   String    @db.Text
+  quantity      Float     @default(1.0)
+  unit          String    @default("Nos")
+  unitPrice     Float     @default(0.0)
+  amount        Float     @default(0.0)
+  supplyRate    Float?    @default(0.0)
+  supplyAmount  Float?    @default(0.0)
+  installRate   Float?    @default(0.0)
+  installAmount Float?    @default(0.0)
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotation     Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model QuotationPreset {
+  id            String   @id @default(uuid())
+  title         String
+  presetType    String   // "TERMS", "PAYMENT", "SCOPE", "REQUIREMENTS"
+  acType        String   @default("ALL") // "SPLIT", "CASSETTE", "DUCT", "VRV", "ALL"
+  quotationType String   @default("ALL") // "DAIKIN", "ECDIAL", "ALL"
+  content       String   @db.Text
+  metadata      String?  @db.Text
+  isDefault     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([presetType])
+  @@index([acType])
+  @@index([quotationType])
 }
 
 model QuotationConfig {

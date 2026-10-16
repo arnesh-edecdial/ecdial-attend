@@ -1,4 +1,18 @@
 const API_BASE = '/api';
+const TOKEN_KEY = 'ecdial_access_token';
+
+export function getAuthToken(): string | null {
+  try { return window.localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+export function setAuthToken(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(TOKEN_KEY, token);
+    else window.localStorage.removeItem(TOKEN_KEY);
+  } catch (error) {
+    console.error('[ECDIAL Auth] Unable to update saved session.', error);
+  }
+}
 
 export class ApiError extends Error {
   errorType?: string;
@@ -8,7 +22,7 @@ export class ApiError extends Error {
   }
 }
 
-let activeEmployeeId = 'usr-admin-1'; // Default active user for dev/demo
+let activeEmployeeId: string | null = null;
 
 export function setActiveEmployeeId(id: string) {
   activeEmployeeId = id;
@@ -19,9 +33,11 @@ export function getActiveEmployeeId() {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-employee-id': activeEmployeeId,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(activeEmployeeId ? { 'x-employee-id': activeEmployeeId } : {}),
     ...(options.headers as Record<string, string> || {}),
   };
 
@@ -42,6 +58,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Auth & Employees
+  login: (payload: { email?: string; employeeCode?: string; password: string }) =>
+    request<any>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   getCurrentUser: () => request<any>('/auth/me'),
   listEmployees: () => request<any>('/auth/employees'),
 
@@ -108,12 +126,39 @@ export const api = {
   },
 
   // Catalog
-  listProducts: (category?: string, search?: string) => {
+  listProducts: (category?: string, search?: string, acType?: string) => {
     const params = new URLSearchParams();
     if (category) params.append('category', category);
     if (search) params.append('search', search);
+    if (acType) params.append('acType', acType);
     return request<any>(`/catalog/products?${params.toString()}`);
   },
+  createProduct: (payload: any) =>
+    request<any>('/catalog/products', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Customers
+  listCustomers: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    return request<any>(`/customers?${params.toString()}`);
+  },
+  createCustomer: (payload: any) =>
+    request<any>('/customers', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Presets
+  listPresets: (presetType?: string, acType?: string, quotationType?: string) => {
+    const params = new URLSearchParams();
+    if (presetType) params.append('presetType', presetType);
+    if (acType) params.append('acType', acType);
+    if (quotationType) params.append('quotationType', quotationType);
+    return request<any>(`/quotations/presets?${params.toString()}`);
+  },
+  createPreset: (payload: any) =>
+    request<any>('/quotations/presets', { method: 'POST', body: JSON.stringify(payload) }),
+  updatePreset: (id: string, payload: any) =>
+    request<any>(`/quotations/presets/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deletePreset: (id: string) =>
+    request<any>(`/quotations/presets/${id}`, { method: 'DELETE' }),
 
   // Quotations
   getQuotationConfig: () => request<any>('/quotations/config'),
@@ -133,4 +178,30 @@ export const api = {
   updateQuotationStatus: (id: string, status: string) =>
     request<any>(`/quotations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getPdfDownloadUrl: (id: string) => `/api/quotations/${id}/pdf`,
+  // Download protected PDF with the same Bearer token used by normal API calls.
+  downloadQuotationPdf: async (id: string): Promise<void> => {
+    const token = getAuthToken();
+    const response = await fetch(`/api/quotations/${encodeURIComponent(id)}/pdf`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(activeEmployeeId ? { 'x-employee-id': activeEmployeeId } : {}),
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new ApiError(error?.message || `PDF download failed (${response.status})`, error?.errorType);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = `quotation-${id}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  },
 };
