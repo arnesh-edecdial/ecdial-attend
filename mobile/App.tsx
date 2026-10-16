@@ -21,6 +21,7 @@ import { StockScreen } from './src/screens/StockScreen';
 import { CustomerScreen } from './src/screens/CustomerScreen';
 import { StockRequirementsScreen } from './src/screens/StockRequirementsScreen';
 import { CataloguesScreen } from './src/screens/CataloguesScreen';
+import { ProductCatalogueScreen } from './src/screens/ProductCatalogueScreen';
 import { QuotationListScreen } from './src/screens/QuotationListScreen';
 import { QuotationCreateScreen } from './src/screens/QuotationCreateScreen';
 import { QuotationPreviewScreen } from './src/screens/QuotationPreviewScreen';
@@ -42,7 +43,7 @@ function MainApp() {
   }, []);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentTab, setCurrentTab] = useState<
-    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES' | 'SERVICE_INTAKE'
+    'HOME' | 'CALENDAR' | 'APPROVALS' | 'EMPLOYEES' | 'MACHINES' | 'STOCK' | 'QUOTATIONS' | 'CUSTOMERS' | 'STOCK_REQUIREMENTS' | 'CATALOGUES' | 'PRODUCT_CATALOGUE' | 'SERVICE_INTAKE'
   >('HOME');
   const [activeModal, setActiveModal] = useState<
     'NONE' | 'SCANNER' | 'REQUEST' | 'NEW_QUOTE' | 'PREVIEW_QUOTE' | 'LOCATION_CALIBRATION' | 'CUSTOMERS_MODAL'
@@ -76,14 +77,12 @@ function MainApp() {
       setActiveModal('REQUEST');
     } else if (screen === 'QUOTATION_PREVIEW' || screen === 'QUOTATIONS') {
       setCurrentTab('QUOTATIONS');
-    } else if (screen === 'STOCK') {
-      setCurrentTab('STOCK');
+    } else if (screen === 'STOCK' || screen === 'CATALOGUES' || screen === 'CATALOGUE' || screen === 'PRODUCT_CATALOGUE') {
+      setCurrentTab('PRODUCT_CATALOGUE');
     } else if (screen === 'CUSTOMERS') {
       setCurrentTab('CUSTOMERS');
     } else if (screen === 'STOCK_REQUIREMENTS' || screen === 'STOCK_REQUIREMENT') {
       setCurrentTab('STOCK_REQUIREMENTS');
-    } else if (screen === 'CATALOGUES' || screen === 'CATALOGUE') {
-      setCurrentTab('CATALOGUES');
     } else if (screen === 'SERVICE_INTAKE' || screen === 'SERVICE_INTAKES') {
       setCurrentTab('SERVICE_INTAKE');
     } else if (screen === 'CALENDAR') {
@@ -165,12 +164,10 @@ function MainApp() {
       setCurrentTab('EMPLOYEES');
     } else if (screenId === 'MACHINES' || screenId === 'ADMIN_MACHINES') {
       setCurrentTab('MACHINES');
-    } else if (screenId === 'STOCK') {
-      setCurrentTab('STOCK');
+    } else if (screenId === 'STOCK' || screenId === 'CATALOGUES' || screenId === 'PRODUCT_CATALOGUE') {
+      setCurrentTab('PRODUCT_CATALOGUE');
     } else if (screenId === 'STOCK_REQUIREMENTS') {
       setCurrentTab('STOCK_REQUIREMENTS');
-    } else if (screenId === 'CATALOGUES') {
-      setCurrentTab('CATALOGUES');
     } else if (screenId === 'SERVICE_INTAKE') {
       setCurrentTab('SERVICE_INTAKE');
     } else if (screenId === 'CUSTOMERS') {
@@ -221,9 +218,9 @@ function MainApp() {
             onOpenApprovals={() => setCurrentTab('APPROVALS')}
             onOpenMachines={() => setCurrentTab('MACHINES')}
             onOpenAdminCalendar={() => setCurrentTab('CALENDAR')}
-            onOpenStock={() => setCurrentTab('STOCK')}
+            onOpenStock={() => setCurrentTab('PRODUCT_CATALOGUE')}
             onOpenStockRequirements={() => setCurrentTab('STOCK_REQUIREMENTS')}
-            onOpenCatalogues={() => setCurrentTab('CATALOGUES')}
+            onOpenCatalogues={() => setCurrentTab('PRODUCT_CATALOGUE')}
             onOpenEmployees={() => setCurrentTab('EMPLOYEES')}
             onOpenCustomers={() => setCurrentTab('CUSTOMERS')}
             onOpenServiceIntake={() => setCurrentTab('SERVICE_INTAKE')}
@@ -248,20 +245,16 @@ function MainApp() {
           <AdminEmployeesScreen />
         ) : currentTab === 'MACHINES' ? (
           <AdminMachinesScreen />
-        ) : currentTab === 'STOCK' ? (
-          <StockScreen
+        ) : currentTab === 'PRODUCT_CATALOGUE' || currentTab === 'STOCK' || currentTab === 'CATALOGUES' ? (
+          <ProductCatalogueScreen
             userRole={activeUserRole}
+            onClose={() => setCurrentTab('HOME')}
             onOpenStockRequirements={() => setCurrentTab('STOCK_REQUIREMENTS')}
           />
         ) : currentTab === 'STOCK_REQUIREMENTS' ? (
           <StockRequirementsScreen
             userRole={activeUserRole}
             userName={activeUserName}
-            onClose={() => setCurrentTab('HOME')}
-          />
-        ) : currentTab === 'CATALOGUES' ? (
-          <CataloguesScreen
-            userRole={activeUserRole}
             onClose={() => setCurrentTab('HOME')}
           />
         ) : currentTab === 'CUSTOMERS' ? (
@@ -349,15 +342,21 @@ function MainApp() {
               </TouchableOpacity>
             </View>
 
-            {/* 4. Stock & Inventory */}
+            {/* 4. AC Product Catalogue */}
             <TouchableOpacity
               style={styles.navItem}
-              onPress={() => setCurrentTab('STOCK')}
+              onPress={() => setCurrentTab('PRODUCT_CATALOGUE')}
               activeOpacity={0.7}
             >
-              <Text style={{ fontSize: 20 }}>📦</Text>
-              <Text style={[styles.navLabel, currentTab === 'STOCK' && styles.navLabelActive]}>
-                Stock
+              <Text style={{ fontSize: 20 }}>❄️</Text>
+              <Text
+                style={[
+                  styles.navLabel,
+                  (currentTab === 'PRODUCT_CATALOGUE' || currentTab === 'STOCK' || currentTab === 'CATALOGUES') &&
+                    styles.navLabelActive,
+                ]}
+              >
+                Catalogue
               </Text>
             </TouchableOpacity>
 

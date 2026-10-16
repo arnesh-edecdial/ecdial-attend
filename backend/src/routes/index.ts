@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 
 import { authController } from '../controllers/auth.controller';
 import { attendanceController } from '../controllers/attendance.controller';
@@ -344,10 +344,34 @@ router.post(
 // ==========================================
 
 // A. Product Catalog & Machine Models
+const rawProductImage = express.raw({ type: 'image/*', limit: '12mb' });
+
 router.get(
   '/catalog/products',
   authMiddleware,
   catalogController.listProducts
+);
+
+router.get(
+  '/catalog/products/images/:filename',
+  catalogController.serveProductImage
+);
+
+router.get(
+  '/products/images/:filename',
+  catalogController.serveProductImage
+);
+
+router.get(
+  '/catalog/products/:id',
+  authMiddleware,
+  catalogController.getProductById
+);
+
+router.get(
+  '/catalog/products/:id/catalogue-pdf',
+  authMiddleware,
+  catalogController.exportCataloguePdf
 );
 
 router.post(
@@ -362,6 +386,28 @@ router.put(
   authMiddleware,
   requireRole(BUSINESS_ROLES),
   catalogController.updateProduct
+);
+
+router.patch(
+  '/catalog/products/:id',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  catalogController.updateProduct
+);
+
+router.post(
+  '/catalog/products/:id/images',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  rawProductImage,
+  catalogController.uploadProductImage
+);
+
+router.delete(
+  '/catalog/products/:id/images/:storageFileName',
+  authMiddleware,
+  requireRole(BUSINESS_ROLES),
+  catalogController.deleteProductImage
 );
 
 router.patch(

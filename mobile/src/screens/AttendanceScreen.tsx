@@ -806,16 +806,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               <Text style={styles.actionCardTitle}>Calendar</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionCard} onPress={onOpenStock}>
-              <View style={[styles.actionIconCircle, { backgroundColor: '#F1F5F9' }]}>
-                <Text style={{ fontSize: 20 }}>📦</Text>
+            <TouchableOpacity style={styles.actionCard} onPress={onOpenCatalogues || onOpenStock}>
+              <View style={[styles.actionIconCircle, { backgroundColor: '#E0E7FF' }]}>
+                <Text style={{ fontSize: 20 }}>❄️</Text>
               </View>
-              <Text style={styles.actionCardTitle}>Stock</Text>
+              <Text style={styles.actionCardTitle}>Catalogues</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionCard} onPress={onOpenMachines}>
               <View style={[styles.actionIconCircle, { backgroundColor: '#ECFDF5' }]}>
-                <Text style={{ fontSize: 20 }}>❄️</Text>
+                <Text style={{ fontSize: 20 }}>⚙️</Text>
               </View>
               <Text style={styles.actionCardTitle}>Machines</Text>
             </TouchableOpacity>
@@ -839,13 +839,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 <Text style={{ fontSize: 20 }}>📋</Text>
               </View>
               <Text style={styles.actionCardTitle}>Stock Req</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionCard} onPress={onOpenCatalogues}>
-              <View style={[styles.actionIconCircle, { backgroundColor: '#E0E7FF' }]}>
-                <Text style={{ fontSize: 20 }}>📚</Text>
-              </View>
-              <Text style={styles.actionCardTitle}>Catalogues</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.actionCard} onPress={onOpenServiceIntake}>
@@ -1123,11 +1116,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.salesActionCard, { backgroundColor: '#0A1E3F' }]}
-                  onPress={onOpenStock}
+                  style={[styles.salesActionCard, { backgroundColor: '#0066CC' }]}
+                  onPress={onOpenCatalogues || onOpenStock}
                 >
-                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📦</Text>
-                  <Text style={styles.salesActionCardText}>View Stock</Text>
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>❄️</Text>
+                  <Text style={styles.salesActionCardText}>AC Catalogue</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1141,11 +1134,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.salesActionCard, { backgroundColor: '#4338CA' }]}
-                  onPress={onOpenCatalogues}
+                  style={[styles.salesActionCard, { backgroundColor: '#0A1E3F' }]}
+                  onPress={onOpenCatalogues || onOpenStock}
                 >
-                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📚</Text>
-                  <Text style={styles.salesActionCardText}>AC Catalogues</Text>
+                  <Text style={{ fontSize: 18, color: '#FFFFFF' }}>📦</Text>
+                  <Text style={styles.salesActionCardText}>Stock & Specs</Text>
                 </TouchableOpacity>
               </View>
             </View>

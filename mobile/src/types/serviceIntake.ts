@@ -19,7 +19,7 @@ export const STATUS_COLORS: Record<ServiceStatus, { bg: string; text: string; bo
   NOT_REPAIRED: { bg: '#FEF3F2', text: '#B42318', border: '#FECACA' },
 };
 export const TAKING_TO_LABELS: Record<TakingTo, string> = {
-  SHOWROOM: 'ECDIAL Showroom', OFFICE: 'ECDIAL Office', SERVICE_CENTER: 'Service Center',
+  SHOWROOM: 'ECDIAL office', OFFICE: 'Daikin office', SERVICE_CENTER: 'Service center',
 };
 export const UNIT_TYPE_LABELS: Record<ItemType, string> = {
   INDOOR_UNIT: 'Indoor Unit', OUTDOOR_UNIT: 'Outdoor Unit', MOTOR: 'Motor', PCB_BOARD: 'PCB Board', OTHER: 'Other',

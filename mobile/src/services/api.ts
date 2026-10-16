@@ -212,14 +212,23 @@ export const mobileApi = {
     request<any>('/attendance/holidays', { method: 'POST', body: JSON.stringify(payload) }),
   deleteHoliday: (id: string) => request<any>(`/attendance/holidays/${id}`, { method: 'DELETE' }),
 
-  // Catalog & Machines
-  listProducts: (category?: string, search?: string, activeOnly?: boolean) => {
+  // Catalog & Machines & AC Product Catalogues
+  listProducts: (category?: string, search?: string, activeOnly?: boolean, brand?: string) => {
     const params = new URLSearchParams();
     if (category) params.append('category', category);
     if (search) params.append('search', search);
     if (activeOnly) params.append('activeOnly', 'true');
+    if (brand && brand !== 'ALL') params.append('brand', brand);
     return request<any>(`/catalog/products?${params.toString()}`);
   },
+  getProduct: (id: string) =>
+    request<any>(`/catalog/products/${id}`),
+  createProduct: (payload: any) =>
+    request<any>('/catalog/products', { method: 'POST', body: JSON.stringify(payload) }),
+  updateProduct: (id: string, payload: any) =>
+    request<any>(`/catalog/products/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteProduct: (id: string) =>
+    request<any>(`/catalog/products/${id}`, { method: 'DELETE' }),
   createMachine: (payload: any) =>
     request<any>('/catalog/products', { method: 'POST', body: JSON.stringify(payload) }),
   updateMachine: (id: string, payload: any) =>
@@ -228,6 +237,28 @@ export const mobileApi = {
     request<any>(`/catalog/products/${id}/toggle`, { method: 'PATCH' }),
   deleteMachine: (id: string) =>
     request<any>(`/catalog/products/${id}`, { method: 'DELETE' }),
+
+  /**
+   * Upload raw product image bytes directly to Backblaze B2 bucket
+   */
+  uploadProductImage: async (id: string, localUri: string, mimeType: string = 'image/jpeg') => {
+    const fileRes = await fetch(localUri);
+    const blob = await fileRes.blob();
+    return request<any>(`/catalog/products/${id}/images`, {
+      method: 'POST',
+      body: blob,
+      headers: { 'Content-Type': mimeType || blob.type || 'image/jpeg' },
+    });
+  },
+
+  deleteProductImage: (id: string, storageFileName: string) =>
+    request<any>(`/catalog/products/${id}/images/${storageFileName}`, { method: 'DELETE' }),
+
+  getProductImageUrl: (storageFileName: string) =>
+    `${getApiBaseUrl()}/catalog/products/images/${storageFileName}`,
+
+  getProductCataloguePdfUrl: (id: string, filename?: string) =>
+    `${getApiBaseUrl()}/catalog/products/${id}/catalogue-pdf${filename ? `?filename=${encodeURIComponent(filename)}` : ''}`,
 
   // Office Configuration & Geofencing Calibration (3 Office Locations)
   listOfficeConfigs: () => request<any>('/attendance/office-configs'),
@@ -539,14 +570,16 @@ export const mobileApi = {
   getCachedProducts: (
     category?: string,
     search?: string,
-    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void }
+    options?: { forceRefresh?: boolean; onBackgroundUpdate?: (d: any) => void; brand?: string }
   ) => {
-    const cacheKey = `products:${category || 'ALL'}:${search || ''}`;
+    const brand = options?.brand;
+    const cacheKey = `products:${category || 'ALL'}:${brand || 'ALL'}:${search || ''}`;
     return dataCache.fetchWithCache(
       cacheKey,
       async (etag) => {
         const q = new URLSearchParams();
         if (category && category !== 'ALL') q.append('category', category);
+        if (brand && brand !== 'ALL') q.append('brand', brand);
         if (search) q.append('search', search);
         const headers: Record<string, string> = {};
         if (etag) headers['If-None-Match'] = etag;

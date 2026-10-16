@@ -19,8 +19,8 @@ export const STATUS_LABELS: Record<ServiceStatus, string> = {
 export const TERMINAL_STATUSES: ServiceStatus[] = ['REPAIRED', 'NOT_REPAIRED'];
 
 export const TAKING_TO = [
-  { key: 'SHOWROOM', label: 'ECDIAL Showroom' },
-  { key: 'OFFICE', label: 'ECDIAL Office' },
+  { key: 'SHOWROOM', label: 'ECDIAL Office' },
+  { key: 'OFFICE', label: 'DAIKIN Ofiice' },
   { key: 'SERVICE_CENTER', label: 'Service Center' },
 ] as const;
 export const TAKING_TO_KEYS: string[] = TAKING_TO.map((t) => t.key);

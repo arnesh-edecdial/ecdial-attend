@@ -170,6 +170,9 @@ model Product {
   defaultInstallRate Float?  @default(0.0)
   availableStock     Int      @default(10)
   imageUrl           String?
+  brand              String?
+  images             String?  @db.Text
+  specifications     String?  @db.Text
   isActive           Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

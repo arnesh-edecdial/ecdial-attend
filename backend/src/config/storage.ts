@@ -52,7 +52,34 @@ export async function createB2ImageDownloadUrl(
   return url;
 }
 
+export const B2_PRODUCT_IMAGE_PREFIX = 'products';
+
+export async function createB2ProductImageDownloadUrl(
+  storageFileName: string,
+  expiresIn = B2_SIGNED_URL_TTL_SECONDS,
+): Promise<string> {
+  const now = Date.now();
+  const cached = signedUrlCache.get(`prod_${storageFileName}`);
+  if (cached && cached.expiresAt > now) return cached.url;
+
+  const command = new GetObjectCommand({
+    Bucket: B2_BUCKET_NAME,
+    Key: `${B2_PRODUCT_IMAGE_PREFIX}/${storageFileName}`,
+  });
+
+  const url = await getSignedUrl(storageClient, command, { expiresIn });
+  signedUrlCache.set(`prod_${storageFileName}`, {
+    url,
+    expiresAt: now + Math.min(SIGNED_URL_CACHE_MS, (expiresIn - 60) * 1000),
+  });
+  return url;
+}
+
 export function clearB2ImageDownloadUrlCache(storageFileName?: string) {
-  if (storageFileName) signedUrlCache.delete(storageFileName);
-  else signedUrlCache.clear();
+  if (storageFileName) {
+    signedUrlCache.delete(storageFileName);
+    signedUrlCache.delete(`prod_${storageFileName}`);
+  } else {
+    signedUrlCache.clear();
+  }
 }
