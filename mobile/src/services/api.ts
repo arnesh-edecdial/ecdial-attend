@@ -3,11 +3,11 @@ import Constants from 'expo-constants';
 import { dataCache, CACHE_TTL } from './dataCache';
 
 // --------------------------------------------------------------------------
-// PRODUCTION CLOUD API URL (Paste your Railway / Render / Live URL here)
-// Example: export const PRODUCTION_API_URL = 'https://ecdial-backend.up.railway.app/api';
+// PRODUCTION CLOUD API URL (Paste your Vercel / Live URL here)
+// Example: export const PRODUCTION_API_URL = 'https://ecdial-attend-backend.vercel.app/api';
 // Leave as empty string '' to auto-detect local computer Wi-Fi IP for testing.
 // --------------------------------------------------------------------------
-export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend-production.up.railway.app/api';
+export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend-backend.vercel.app/api';
 
 function getApiBaseUrl(): string {
   if (PRODUCTION_API_URL && PRODUCTION_API_URL.trim().length > 0) {

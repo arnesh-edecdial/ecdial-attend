@@ -3,7 +3,6 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import apiRouter from './routes';
 import { initDatabase } from './db/store';
-import { catalogueSyncService } from './services/catalogueSync.service';
 
 dotenv.config();
 
@@ -54,7 +53,6 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // Initialize database and start listening on all network interfaces (0.0.0.0)
 async function startServer() {
   await initDatabase();
-  await catalogueSyncService.syncCataloguesFromDisk();
   app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`====================================================`);
     console.log(`  ECDIAL Backend API Server running on port ${PORT}`);
