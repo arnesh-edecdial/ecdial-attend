@@ -7,7 +7,7 @@ import { dataCache, CACHE_TTL } from './dataCache';
 // Example: export const PRODUCTION_API_URL = 'https://ecdial-attend-backend.vercel.app/api';
 // Leave as empty string '' to auto-detect local computer Wi-Fi IP for testing.
 // --------------------------------------------------------------------------
-export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend-backend.vercel.app/api';
+export const PRODUCTION_API_URL: string = __DEV__ ? '' : 'https://ecdial-attend.vercel.app/api';
 
 function getApiBaseUrl(): string {
   if (PRODUCTION_API_URL && PRODUCTION_API_URL.trim().length > 0) {
