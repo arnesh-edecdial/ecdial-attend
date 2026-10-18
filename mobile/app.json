@@ -47,7 +47,8 @@
           "color": "#0066CC",
           "sounds": []
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "extra": {
       "eas": {

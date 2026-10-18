@@ -107,7 +107,8 @@ export const ProductCatalogueScreen: React.FC<ProductCatalogueScreenProps> = ({ 
 
   // Search text + brand are computed once per data change, not per keystroke.
   const items = useMemo<Item[]>(() => {
-    return products.map((p) => {
+    // Low-side materials have their own library screen, so keep them out of the AC catalogue
+    return products.filter((p) => p.category !== 'LOW_SIDE').map((p) => {
       const b = extractBrand(p);
       const specs: any[] = Array.isArray(p.specifications) ? p.specifications : [];
       const hay = [p.name, p.model, b, p.description, ...specs.map((c) => `${c?.iduModel || ''} ${c?.oduModel || ''}`)]

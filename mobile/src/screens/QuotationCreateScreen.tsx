@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
 import { mobileApi } from '../services/api';
 import { QuotationItem } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LowSideLibraryScreen } from './LowSideLibraryScreen';
+import { LowSideItem, fetchLowSide, sameLine, toQuoteItem } from './lowSideLibrary';
 
 interface QuotationCreateScreenProps {
   onClose: () => void;
@@ -137,6 +139,13 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   const [hasLowSide, setHasLowSide] = useState<boolean>(true);
   const [lowSideItems, setLowSideItems] = useState<QuotationItem[]>(DEFAULT_LOW_SIDE_ITEMS);
 
+  // Saved low-side library (managed on its own screen, reused by every quotation)
+  const [library, setLibrary] = useState<LowSideItem[] | null>(null);
+  const [pickerVisible, setPickerVisible] = useState<boolean>(false);
+  const [pickerSearch, setPickerSearch] = useState<string>('');
+  const [manageVisible, setManageVisible] = useState<boolean>(false);
+  const lowTouched = useRef<boolean>(false);
+
   const addDaysToDate = (dateString: string, days: number) => {
     const [y, m, d] = dateString.split('-').map(Number);
     const dt = new Date(y, (m || 1) - 1, d || 1);
@@ -184,6 +193,40 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   }, [quotationToEdit, initialAcType, initialQuotationType]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const loadLibrary = async () => {
+    try {
+      setLibrary(await fetchLowSide());
+    } catch (err) {
+      console.warn('[Low side library]', err);
+      setLibrary([]); // offline / error: keep the built-in six lines
+    }
+  };
+  useEffect(() => {
+    loadLibrary();
+  }, []);
+
+  useEffect(() => {
+    lowTouched.current = false;
+  }, [quotationToEdit]);
+
+  // New quotation: start from the saved "default" items, unless the user already edited the list.
+  useEffect(() => {
+    if (quotationToEdit || lowTouched.current || !library || library.length === 0) return;
+    setLowSideItems(library.filter((i) => i.isDefault).map((i, idx) => toQuoteItem(i, idx + 1)) as QuotationItem[]);
+  }, [library, quotationToEdit]);
+
+  const pickerList = useMemo(() => {
+    const q = pickerSearch.trim().toLowerCase();
+    return (library || []).filter((i) => !q || i.name.toLowerCase().includes(q));
+  }, [library, pickerSearch]);
+
+  const toggleLibraryItem = (it: LowSideItem) => {
+    lowTouched.current = true;
+    const i = lowSideItems.findIndex((x) => sameLine(x.description, it.name));
+    if (i >= 0) setLowSideItems(lowSideItems.filter((_, k) => k !== i));
+    else setLowSideItems([...lowSideItems, toQuoteItem(it, lowSideItems.length + 1) as QuotationItem]);
+  };
 
   useEffect(() => {
     (async () => {
@@ -255,6 +298,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   };
 
   const addLowSideItem = () => {
+    lowTouched.current = true;
     setLowSideItems([
       ...lowSideItems,
       {
@@ -275,6 +319,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
     field: keyof QuotationItem,
     val: any
   ) => {
+    if (section === 'LOW_SIDE') lowTouched.current = true;
     const list = section === 'MAIN_UNIT' ? [...mainItems] : [...lowSideItems];
     const item = { ...list[idx] };
 
@@ -324,6 +369,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   };
 
   const removeItem = (section: 'MAIN_UNIT' | 'LOW_SIDE', idx: number) => {
+    if (section === 'LOW_SIDE') lowTouched.current = true;
     if (section === 'MAIN_UNIT') {
       setMainItems(mainItems.filter((_, i) => i !== idx));
     } else {
@@ -752,7 +798,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
             {lowSideItems.length === 0 ? (
               <View style={{ paddingVertical: 14, alignItems: 'center' }}>
                 <Text style={{ fontSize: 13, color: '#94A3B8' }}>
-                  No extra materials added. Tap "+ ADD MATERIAL" below to add items.
+                  No extra materials added. Tap "+ FROM SAVED ITEMS" below to pick from your list.
                 </Text>
               </View>
             ) : (
@@ -810,9 +856,19 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
               </View>
             )))}
 
-            <TouchableOpacity style={{ alignSelf: 'flex-end', marginTop: 8 }} onPress={addLowSideItem}>
-              <Text style={styles.addText}>+ ADD MATERIAL</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 18, marginTop: 8 }}>
+              <TouchableOpacity onPress={addLowSideItem}>
+                <Text style={[styles.addText, { color: '#64748B' }]}>+ CUSTOM LINE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setPickerSearch('');
+                  setPickerVisible(true);
+                }}
+              >
+                <Text style={styles.addText}>+ FROM SAVED ITEMS</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -854,6 +910,69 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       </TouchableOpacity>
 
       </>
+      )}
+
+      {/* LOW SIDE: pick from the saved library */}
+      <Modal visible={pickerVisible} transparent animationType="slide" onRequestClose={() => setPickerVisible(false)}>
+        <View style={lsStyles.overlay}>
+          <View style={[lsStyles.sheet, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+            <View style={lsStyles.head}>
+              <Text style={lsStyles.headTitle}>Low side items</Text>
+              <TouchableOpacity onPress={() => setPickerVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={lsStyles.done}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={lsStyles.search}
+              placeholder="Search"
+              placeholderTextColor="#8E8E93"
+              value={pickerSearch}
+              onChangeText={setPickerSearch}
+              autoCorrect={false}
+            />
+            <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled">
+              {library === null ? (
+                <ActivityIndicator style={{ marginVertical: 30 }} />
+              ) : pickerList.length === 0 ? (
+                <Text style={lsStyles.empty}>
+                  {library.length === 0 ? 'No saved items yet. Tap "Manage saved items" to add some.' : 'No matches.'}
+                </Text>
+              ) : (
+                pickerList.map((it) => {
+                  const on = lowSideItems.some((x) => sameLine(x.description, it.name));
+                  return (
+                    <TouchableOpacity key={it.id} style={lsStyles.row} onPress={() => toggleLibraryItem(it)} activeOpacity={0.6}>
+                      <View style={[lsStyles.check, on && lsStyles.checkOn]}>{on && <Text style={lsStyles.tick}>✓</Text>}</View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={lsStyles.name}>{it.name}</Text>
+                        <Text style={lsStyles.sub}>
+                          ₹{it.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })} / {it.unit}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={lsStyles.manage}
+              onPress={() => {
+                setPickerVisible(false);
+                setTimeout(() => setManageVisible(true), 350);
+              }}
+            >
+              <Text style={lsStyles.manageText}>Manage saved items</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      {manageVisible && (
+        <LowSideLibraryScreen
+          onClose={() => {
+            setManageVisible(false);
+            loadLibrary();
+          }}
+        />
       )}
 
       {/* MACHINE MODEL CATALOGUE PICKER MODAL (Rule 17, 18) */}
@@ -1618,4 +1737,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0066CC',
   },
+});
+
+const lsStyles = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 14 },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 10 },
+  headTitle: { fontSize: 20, fontWeight: '700', color: '#1C1C1E' },
+  done: { fontSize: 17, color: '#007AFF', fontWeight: '600' },
+  search: { marginHorizontal: 16, marginBottom: 6, height: 38, borderRadius: 10, paddingHorizontal: 12, backgroundColor: '#7676801F', fontSize: 16, color: '#1C1C1E' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#D1D1D6' },
+  check: { width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: '#C7C7CC', alignItems: 'center', justifyContent: 'center' },
+  checkOn: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  tick: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  name: { fontSize: 15, fontWeight: '600', color: '#1C1C1E' },
+  sub: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
+  empty: { textAlign: 'center', color: '#8E8E93', paddingVertical: 30, paddingHorizontal: 24, fontSize: 14 },
+  manage: { marginHorizontal: 16, marginTop: 12, height: 46, borderRadius: 12, backgroundColor: '#E5F0FF', alignItems: 'center', justifyContent: 'center' },
+  manageText: { color: '#007AFF', fontSize: 16, fontWeight: '600' },
 });
