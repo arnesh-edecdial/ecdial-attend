@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Quotation } from '../types';
 import { mobileApi } from '../services/api';
 import { makeQuotationPdf, previewHtml, savePdfToDevice, sharePdf } from './quotationPdf';
+import { resolveQuotationType } from './quotationType';
 
 interface QuotationPreviewScreenProps {
   quotation: Quotation | null;
@@ -67,7 +68,7 @@ export const QuotationPreviewScreen: React.FC<QuotationPreviewScreenProps> = ({
 
   if (!currentQuote) return null;
 
-  const isEcDial = (currentQuote.quotationType || 'DAIKIN').toUpperCase() === 'ECDIAL';
+  const isEcDial = resolveQuotationType(currentQuote) === 'ECDIAL';
 
   const getDefaultFilename = () => {
     const safeQuoteNum = (currentQuote.quotationNumber || 'quote').replace(/[^a-zA-Z0-9_-]/g, '_');

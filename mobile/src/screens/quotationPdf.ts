@@ -2,16 +2,25 @@ import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
-import { buildQuotationHtml, QuoteLike } from './quotationHtml';
-import { loadQuoteAssets, templateOf } from './quotationAssets';
+import { buildQuotationHtml, detectBrands, DEALER_STRIP_TEMPLATES, QuoteLike } from './quotationHtml';
+import { loadBrandLogos, loadQuoteAssets, templateOf } from './quotationAssets';
+
+/** Static images + the logos of the brands actually quoted. */
+const assetsFor = async (q: QuoteLike) => {
+  const t = templateOf(q);
+  const base = await loadQuoteAssets(t);
+  const keys = DEALER_STRIP_TEMPLATES.includes(t) ? detectBrands(q.items) : [];
+  return { ...base, logos: keys.length ? await loadBrandLogos(keys) : {} };
+};
+const withType = (q: QuoteLike): QuoteLike => ({ ...q, quotationType: templateOf(q) });
 
 /** HTML for the in-app preview (stacked pages on grey). */
 export const previewHtml = async (q: QuoteLike) =>
-  buildQuotationHtml(q, await loadQuoteAssets(templateOf(q)), { mode: 'screen' });
+  buildQuotationHtml(withType(q), await assetsFor(q), { mode: 'screen' });
 
 /** Renders the quotation to an A4 PDF in the cache folder and returns its file:// uri. */
 export async function makeQuotationPdf(q: QuoteLike, fileName: string): Promise<string> {
-  const html = buildQuotationHtml(q, await loadQuoteAssets(templateOf(q)), { mode: 'print' });
+  const html = buildQuotationHtml(withType(q), await assetsFor(q), { mode: 'print' });
   const { uri } = await Print.printToFileAsync({ html, width: 595, height: 842 });
   const dest = `${FileSystem.cacheDirectory}${fileName}.pdf`;
   await FileSystem.deleteAsync(dest, { idempotent: true });

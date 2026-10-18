@@ -71,16 +71,6 @@ export const createLowSide = (v: LowSideInput) => mobileApi.createProduct(body(v
 export const updateLowSide = (item: LowSideItem, v: LowSideInput) => mobileApi.updateProduct(item.id, body(v, item.raw));
 export const deleteLowSide = (id: string) => mobileApi.deleteProduct(id);
 
-/** The six lines every quotation has carried so far. Offered once as a one-tap import. */
-export const STANDARD_ITEMS: LowSideInput[] = [
-  { name: 'Installation and testing commissioning Charges of Split ac', unit: 'Nos', price: 1500, isDefault: true, order: 1 },
-  { name: 'Supply and installation of Copper Pipe', unit: 'Mtr', price: 1280, isDefault: true, order: 2 },
-  { name: 'Supply and installation of Communication Cable', unit: 'Mtr', price: 290, isDefault: true, order: 3 },
-  { name: 'Supply and installation of Supply Cable', unit: 'Mtr', price: 190, isDefault: true, order: 4 },
-  { name: 'Supply and installation of Outdoor Stand', unit: 'Nos', price: 1450, isDefault: true, order: 5 },
-  { name: 'Supply And Installation Of White Packing Tape', unit: 'Nos', price: 300, isDefault: true, order: 6 },
-];
-
 /** Library item -> quotation line (qty 1; price and qty stay editable per quotation). */
 export const toQuoteItem = (it: LowSideItem, order: number) => ({
   section: 'LOW_SIDE' as const,

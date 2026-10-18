@@ -13,6 +13,7 @@ import {
 import { mobileApi } from '../services/api';
 import { Quotation } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolveQuotationType } from './quotationType';
 
 interface QuotationListScreenProps {
   onNewQuotation: (type: 'DAIKIN' | 'ECDIAL', acType: 'SPLIT' | 'VRV' | 'DUCT') => void;
@@ -177,7 +178,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
           </View>
         ) : (
           quotations.map((q) => {
-            const isEcDial = q.quotationType === 'ECDIAL';
+            const isEcDial = resolveQuotationType(q) === 'ECDIAL';
             return (
               <TouchableOpacity key={q.id} style={styles.quoteCard} onPress={() => onSelectQuotation(q)}>
                 <View style={styles.rowBetween}>

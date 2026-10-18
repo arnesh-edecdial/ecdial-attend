@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C } from './catalogueShared';
 import {
   LowSideItem,
-  STANDARD_ITEMS,
   createLowSide,
   deleteLowSide,
   fetchLowSide,
@@ -163,7 +162,7 @@ export const LowSideLibraryScreen: React.FC<{ onClose: () => void }> = ({ onClos
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<{ item: LowSideItem | null } | null>(null);
-  const [seeding, setSeeding] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -184,19 +183,36 @@ export const LowSideLibraryScreen: React.FC<{ onClose: () => void }> = ({ onClos
     return (used.length ? Math.max(...used) : 0) + 1;
   }, [items]);
 
-  const seed = async () => {
-    setSeeding(true);
-    try {
-      for (const v of STANDARD_ITEMS) {
-        const res = await createLowSide(v); // one at a time so they save in order
-        if (!res?.success) throw new Error(res?.message || 'Could not add the standard items.');
-      }
-    } catch (e: any) {
-      Alert.alert('Import stopped', e?.message || 'Please try again.');
-    } finally {
-      setSeeding(false);
-      load();
-    }
+  const deleteAll = () => {
+    const list = items || [];
+    if (!list.length) return;
+    Alert.alert(
+      `Delete all ${list.length} items?`,
+      'Every low side item in this list is permanently deleted, including any stock count stored on it. Existing quotations are not affected.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete all',
+          style: 'destructive',
+          onPress: async () => {
+            setProgress({ done: 0, total: list.length });
+            let failed = 0;
+            for (let i = 0; i < list.length; i++) {
+              try {
+                const res = await deleteLowSide(list[i].id); // one at a time, so the server is never flooded
+                if (!res?.success) failed++;
+              } catch {
+                failed++;
+              }
+              setProgress({ done: i + 1, total: list.length });
+            }
+            setProgress(null);
+            if (failed) Alert.alert('Some items could not be deleted', `${failed} of ${list.length} failed. Pull down to refresh and try again.`);
+            load();
+          },
+        },
+      ]
+    );
   };
 
   const open = useCallback((i: LowSideItem) => setEditing({ item: i }), []);
@@ -224,13 +240,19 @@ export const LowSideLibraryScreen: React.FC<{ onClose: () => void }> = ({ onClos
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
             contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
             ListHeaderComponent={error ? <Text style={s.error}>{error}</Text> : null}
+            ListFooterComponent={
+              items.length > 0 ? (
+                <Pressable style={({ pressed }) => [s.deleteAll, pressed && { opacity: 0.6 }]} onPress={deleteAll} disabled={!!progress}>
+                  <Text style={s.deleteAllText}>
+                    {progress ? `Deleting ${progress.done} of ${progress.total}…` : `Delete all ${items.length} items`}
+                  </Text>
+                </Pressable>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={s.empty}>
                 <Text style={s.emptyTitle}>No saved items yet</Text>
-                <Text style={s.emptySub}>Add the six items your quotations use today, or create your own with ＋.</Text>
-                <Pressable style={s.seedBtn} onPress={seed} disabled={seeding}>
-                  {seeding ? <ActivityIndicator color="#fff" /> : <Text style={s.seedText}>Add the 6 standard items</Text>}
-                </Pressable>
+                <Text style={s.emptySub}>Tap ＋ to add a material. It is saved once and can be picked in any quotation.</Text>
               </View>
             }
           />
@@ -268,8 +290,8 @@ const s = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 70, paddingHorizontal: 32 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: C.label },
   emptySub: { fontSize: 15, color: C.sub, marginTop: 6, textAlign: 'center' },
-  seedBtn: { marginTop: 22, backgroundColor: C.blue, height: 46, paddingHorizontal: 22, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  seedText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  deleteAll: { marginTop: 28, marginHorizontal: 20, height: 48, borderRadius: 12, backgroundColor: '#FFEBEA', alignItems: 'center', justifyContent: 'center' },
+  deleteAllText: { color: C.red, fontSize: 16, fontWeight: '600' },
   error: { color: C.red, fontSize: 13, paddingHorizontal: 20, paddingBottom: 8 },
 
   nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, height: 56, backgroundColor: C.bg },
