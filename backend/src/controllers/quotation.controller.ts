@@ -6,10 +6,14 @@ import { generateQuotationPDF } from '../services/pdf.service';
 import { notificationService } from '../services/notification.service';
 
 async function generateNextQuotationNumber(): Promise<string> {
-  const currentYear = new Date().getFullYear();
-  const count = await prisma.quotation.count();
-  const seq = String(count + 1 + 100).padStart(5, '0');
-  return `ECD-Q-${currentYear}-${seq}`;
+  const prefix = `ECD-Q-${new Date().getFullYear()}-`;
+  const last = await prisma.quotation.findFirst({
+    where: { quotationNumber: { startsWith: prefix } },
+    orderBy: { quotationNumber: 'desc' },
+    select: { quotationNumber: true },
+  });
+  const lastSeq = last ? parseInt(last.quotationNumber.slice(prefix.length), 10) : 100;
+  return `${prefix}${String(lastSeq + 1).padStart(5, '0')}`;
 }
 
 function addDaysToDateString(dateString: string, days: number): string {
@@ -155,8 +159,8 @@ export const quotationController = {
         const itemAmount = (item.amount !== undefined && item.amount !== null && item.amount !== 0)
           ? Number(item.amount)
           : (item.section === 'LOW_SIDE' && (supRate > 0 || instRate > 0)
-              ? roundCurrency(supAmt + instAmt)
-              : roundCurrency(qty * price));
+            ? roundCurrency(supAmt + instAmt)
+            : roundCurrency(qty * price));
 
         // Optional: Check Machine Catalogue stock if productId provided
         if (item.productId) {
@@ -429,8 +433,8 @@ export const quotationController = {
           const itemAmount = (item.amount !== undefined && item.amount !== null && item.amount !== 0)
             ? Number(item.amount)
             : (item.section === 'LOW_SIDE' && (supRate > 0 || instRate > 0)
-                ? roundCurrency(supAmt + instAmt)
-                : roundCurrency(qty * price));
+              ? roundCurrency(supAmt + instAmt)
+              : roundCurrency(qty * price));
 
           return {
             id: item.id || undefined,

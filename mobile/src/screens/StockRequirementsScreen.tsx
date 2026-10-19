@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mobileApi } from '../services/api';
 import { dataCache } from '../services/dataCache';
 import { calculateRequirementUrgency } from '../utils/urgency';
+import { CustomerPickerSheet } from './QuotationPickers';
 
 interface StockRequirementsScreenProps {
   userRole?: string;
@@ -721,55 +722,17 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* CUSTOMER PICKER SUB-MODAL */}
-      <Modal
+      <CustomerPickerSheet
         visible={customerPickerVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setCustomerPickerVisible(false)}
-      >
-        <View style={styles.subModalOverlay}>
-          <View style={styles.subModalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Customer</Text>
-              <TouchableOpacity onPress={() => setCustomerPickerVisible(false)}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.subModalSearch}
-              placeholder="Search customer name or phone..."
-              placeholderTextColor="#94A3B8"
-              value={customerSearch}
-              onChangeText={setCustomerSearch}
-            />
-
-            <ScrollView style={{ maxHeight: 380 }}>
-              {customers
-                .filter((c) =>
-                  customerSearch.trim().length === 0
-                    ? true
-                    : (c.name || '').toLowerCase().includes(customerSearch.toLowerCase()) ||
-                    (c.mobile || '').includes(customerSearch)
-                )
-                .map((c) => (
-                  <TouchableOpacity
-                    key={c.id}
-                    style={styles.pickerItem}
-                    onPress={() => {
-                      setSelectedCustomer(c);
-                      setCustomerPickerVisible(false);
-                    }}
-                  >
-                    <Text style={styles.pickerItemTitle}>{c.name || 'Unnamed Customer'}</Text>
-                    {c.mobile && <Text style={styles.pickerItemSub}>📱 {c.mobile}</Text>}
-                  </TouchableOpacity>
-                ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setCustomerPickerVisible(false)}
+        onSelect={(c) => {
+          if (c) {
+            setSelectedCustomer(c);
+            setCustomers((prev) => (prev.some((x) => x.id === c.id) ? prev : [c, ...prev]));
+          }
+          setCustomerPickerVisible(false);
+        }}
+      />
 
       {/* PRODUCT PICKER SUB-MODAL */}
       <Modal
