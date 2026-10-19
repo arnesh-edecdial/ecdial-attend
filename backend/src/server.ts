@@ -3,11 +3,14 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import apiRouter from './routes';
 import { initDatabase } from './db/store';
-
+import serverTiming = require('./middleware/serverTiming');
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Register first so timing headers include all downstream middleware and routes.
+app.use(serverTiming);
 
 // Enable CORS for Web (port 5173 / localhost) and Mobile (Expo)
 app.use(

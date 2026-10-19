@@ -1,11 +1,21 @@
 import { Response } from 'express';
 import fs from 'fs';
-import path from 'path';
+import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { catalogueSyncService } from '../services/catalogueSync.service';
+import { storageClient, B2_BUCKET_NAME } from '../config/storage';
 
 const ADMIN_MANAGEMENT_ROLES = ['ADMIN', 'IT_ADMIN', 'MANAGER'] as const;
+
+/**
+ * Catalogue / brochure PDFs live in the same Backblaze B2 bucket as the product photos.
+ * (The server runs serverless: its disk is read-only, so files can never be written to ./assets.)
+ * Objects are stored under  <prefix>/<fileName>.  Override the folder with B2_CATALOGUE_PREFIX if needed.
+ */
+const CATALOGUE_PREFIX = (process.env.B2_CATALOGUE_PREFIX || 'catalogues').replace(/^\/+|\/+$/g, '');
+const catalogueKey = (storedFileName: string) => `${CATALOGUE_PREFIX}/${storedFileName}`;
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 export const catalogueController = {
   /**
@@ -126,7 +136,7 @@ export const catalogueController = {
         return;
       }
 
-      const { displayName, category = 'Catalogue', description, model, fileBase64, fileName } = req.body;
+      const { displayName, category = 'Catalogue', description, model, fileBase64 } = req.body;
 
       if (!displayName || typeof displayName !== 'string' || displayName.trim().length === 0) {
         res.status(400).json({ success: false, message: 'Document name is required.' });
@@ -148,29 +158,50 @@ export const catalogueController = {
         return;
       }
 
-      const sanitizedName = displayName.trim().replace(/[^a-zA-Z0-9_\-\s]/g, '_');
-      const safeExtension = fileName && fileName.toLowerCase().endsWith('.pdf') ? '.pdf' : '.pdf';
-      const storageFileName = `${sanitizedName}_${Date.now()}${safeExtension}`;
-
-      const cataloguesDir = path.resolve(__dirname, '../../assets/catalogues');
-      if (!fs.existsSync(cataloguesDir)) {
-        fs.mkdirSync(cataloguesDir, { recursive: true });
+      if (fileBuffer.length > MAX_PDF_BYTES) {
+        res.status(413).json({ success: false, message: 'PDF exceeds the maximum allowed size of 25MB.' });
+        return;
+      }
+      if (fileBuffer.subarray(0, 4).toString('latin1') !== '%PDF') {
+        res.status(400).json({ success: false, message: 'The uploaded file is not a valid PDF.' });
+        return;
       }
 
-      const destinationPath = path.join(cataloguesDir, storageFileName);
-      fs.writeFileSync(destinationPath, fileBuffer);
+      const sanitizedName =
+        displayName.trim().replace(/[^a-zA-Z0-9_\-]+/g, '_').replace(/^_+|_+$/g, '') || 'catalogue';
+      const storageFileName = `${sanitizedName}_${Date.now()}.pdf`;
 
-      const created = await prisma.catalogue.create({
-        data: {
-          displayName: displayName.trim(),
-          fileName: storageFileName,
-          category: category ? String(category).trim() : 'Catalogue',
-          description: description ? String(description).trim() : null,
-          model: model ? String(model).trim() : 'AC Unit / Brochure',
-          uploadedById: req.user?.id || null,
-          fileSize: fileBuffer.length,
-        },
-      });
+      // Store in B2 (same bucket and client as product images)
+      await storageClient.send(
+        new PutObjectCommand({
+          Bucket: B2_BUCKET_NAME,
+          Key: catalogueKey(storageFileName),
+          Body: fileBuffer,
+          ContentType: 'application/pdf',
+          ContentLength: fileBuffer.length,
+        }),
+      );
+
+      let created;
+      try {
+        created = await prisma.catalogue.create({
+          data: {
+            displayName: displayName.trim(),
+            fileName: storageFileName,
+            category: category ? String(category).trim() : 'Catalogue',
+            description: description ? String(description).trim() : null,
+            model: model ? String(model).trim() : 'AC Unit / Brochure',
+            uploadedById: req.user?.id || null,
+            fileSize: fileBuffer.length,
+          },
+        });
+      } catch (dbErr) {
+        // do not leave an orphaned file in the bucket
+        await storageClient
+          .send(new DeleteObjectCommand({ Bucket: B2_BUCKET_NAME, Key: catalogueKey(storageFileName) }))
+          .catch(() => undefined);
+        throw dbErr;
+      }
 
       res.status(201).json({
         success: true,
@@ -202,7 +233,16 @@ export const catalogueController = {
         return;
       }
 
-      // Remove physical file from disk if present
+      // New uploads live in B2
+      try {
+        await storageClient.send(
+          new DeleteObjectCommand({ Bucket: B2_BUCKET_NAME, Key: catalogueKey(existing.fileName) }),
+        );
+      } catch (b2Err) {
+        console.warn('[Delete Catalogue B2 Warning]', b2Err);
+      }
+
+      // Older files shipped with the deployment may still be on disk (read-only on serverless, so this can fail harmlessly)
       const filePath = catalogueSyncService.getCatalogueFilePath(existing.fileName);
       if (filePath && fs.existsSync(filePath)) {
         try {
@@ -238,26 +278,51 @@ export const catalogueController = {
         return;
       }
 
-      const filePath = catalogueSyncService.getCatalogueFilePath(catalogue.fileName);
-      if (!filePath || !fs.existsSync(filePath)) {
-        res.status(404).json({ success: false, message: 'Catalogue PDF file is missing on the server.' });
+      const sanitizedName = catalogue.displayName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim();
+      const outputFilename = sanitizedName.toLowerCase().endsWith('.pdf') ? sanitizedName : `${sanitizedName}.pdf`;
+      const pdfHeaders = () => {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${outputFilename}"`);
+      };
+
+      // 1) Older catalogue files that ship with the deployment (read from disk)
+      const legacyPath = catalogueSyncService.getCatalogueFilePath(catalogue.fileName);
+      if (legacyPath && fs.existsSync(legacyPath)) {
+        pdfHeaders();
+        const fileStream = fs.createReadStream(legacyPath);
+        fileStream.on('error', (streamErr) => {
+          console.error('[Catalogue Stream Error]', streamErr);
+          if (!res.headersSent) res.status(500).json({ success: false, message: 'Failed to stream catalogue file.' });
+        });
+        fileStream.pipe(res);
         return;
       }
 
-      const sanitizedName = catalogue.displayName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim();
-      const outputFilename = sanitizedName.toLowerCase().endsWith('.pdf') ? sanitizedName : `${sanitizedName}.pdf`;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${outputFilename}"`);
-
-      const fileStream = fs.createReadStream(filePath);
-      fileStream.on('error', (streamErr) => {
-        console.error('[Catalogue Stream Error]', streamErr);
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Failed to stream catalogue file.' });
+      // 2) Everything uploaded from the app: stream from B2
+      try {
+        const result = await storageClient.send(
+          new GetObjectCommand({ Bucket: B2_BUCKET_NAME, Key: catalogueKey(catalogue.fileName) }),
+        );
+        if (!result.Body) {
+          res.status(404).json({ success: false, message: 'Catalogue PDF file is missing on the server.' });
+          return;
         }
-      });
-      fileStream.pipe(res);
+        pdfHeaders();
+        if (result.ContentLength != null) res.setHeader('Content-Length', String(result.ContentLength));
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        const body = result.Body as NodeJS.ReadableStream;
+        body.on('error', (streamErr) => {
+          console.error('[Catalogue B2 Stream Error]', streamErr);
+          if (!res.headersSent) res.status(500).end();
+        });
+        body.pipe(res);
+      } catch (b2Err: any) {
+        if (b2Err?.name === 'NoSuchKey' || b2Err?.$metadata?.httpStatusCode === 404) {
+          res.status(404).json({ success: false, message: 'Catalogue PDF file is missing on the server.' });
+        } else {
+          throw b2Err;
+        }
+      }
     } catch (err: any) {
       console.error('[Download Catalogue Error]', err);
       res.status(500).json({ success: false, message: 'Failed to download catalogue.' });
