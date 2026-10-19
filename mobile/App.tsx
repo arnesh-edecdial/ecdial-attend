@@ -34,6 +34,11 @@ import { notificationService, DeepLinkPayload } from './src/services/notificatio
 import { canSkipAttendance } from './src/utils/roles';
 import { setAuthToken, setActiveEmployeeId } from './src/services/api';
 import { dataCache } from './src/services/dataCache';
+import { installPerf } from './src/components/perf';
+import { PerfPanel } from './src/components/PerfPanel';
+
+// Install performance instrumentation once when the app module loads.
+installPerf();
 
 function MainApp() {
   const insets = useSafeAreaInsets();
@@ -476,6 +481,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <MainApp />
+      <PerfPanel />
     </SafeAreaProvider>
   );
 }

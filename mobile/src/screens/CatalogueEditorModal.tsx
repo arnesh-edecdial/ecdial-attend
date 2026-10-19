@@ -203,6 +203,10 @@ interface Props {
   onSaved: (id?: string) => void;
 }
 
+// Serverless hosts cap a request body at roughly 4.5 MB, and a PDF grows by a third when sent as text.
+// Raise this only if the backend is changed to accept larger uploads.
+const MAX_PDF_MB = 3;
+
 const fmtSize = (b?: number) => (!b ? '' : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 
 export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSaved }) => {
@@ -310,8 +314,11 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
       const r = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
       if (r.canceled || !r.assets?.length) return;
       const a = r.assets[0];
-      if (a.size && a.size > 20 * 1024 * 1024) {
-        Alert.alert('File too large', 'Please choose a PDF smaller than 20 MB.');
+      if (a.size && a.size > MAX_PDF_MB * 1024 * 1024) {
+        Alert.alert(
+          'File too large',
+          `The server accepts PDFs up to ${MAX_PDF_MB} MB for now (it is sent inside a single request). Please compress this one, e.g. with a PDF compressor, and try again.`
+        );
         return;
       }
       setNewPdf({ uri: a.uri, name: a.name || 'catalogue.pdf', size: a.size });
@@ -322,7 +329,7 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
   };
 
   /* ---------- save ---------- */
-  const save = async () => {
+  const save = async (skipPdf = false) => {
     if (saving) return;
     if (!name.trim()) {
       Alert.alert('Name required', 'Please enter a catalogue name.');
@@ -334,19 +341,29 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
       const finalBrand = brand.trim() || 'Other';
       let docId: string | null = product?.catalogueDocId || null;
 
-      if (newPdf) {
-        const b64 = await FileSystem.readAsStringAsync(newPdf.uri, { encoding: FileSystem.EncodingType.Base64 });
-        const up = await mobileApi.uploadCatalogue({
-          displayName: `${finalBrand} ${name.trim()}`.trim(),
-          category: 'CATALOGUE',
-          model: model.trim() || undefined,
-          description: desc.trim() || undefined,
-          fileName: newPdf.name,
-          fileBase64: b64,
-        });
-        if (!up?.success || !up.data?.id) throw new Error(up?.message || 'The PDF could not be uploaded.');
-        uploadedDocId = String(up.data.id);
-        docId = uploadedDocId;
+      if (newPdf && !skipPdf) {
+        try {
+          const b64 = await FileSystem.readAsStringAsync(newPdf.uri, { encoding: FileSystem.EncodingType.Base64 });
+          const up = await mobileApi.uploadCatalogue({
+            displayName: `${finalBrand} ${name.trim()}`.trim(),
+            category: 'CATALOGUE',
+            model: model.trim() || undefined,
+            description: desc.trim() || undefined,
+            fileName: newPdf.name,
+            fileBase64: b64,
+          });
+          if (!up?.success || !up.data?.id) throw new Error(up?.message || 'The server did not accept the PDF.');
+          uploadedDocId = String(up.data.id);
+          docId = uploadedDocId;
+        } catch (pdfErr: any) {
+          console.warn('[Catalogue PDF upload]', pdfErr);
+          // do not lose the rest of the form because of the PDF
+          Alert.alert('PDF upload failed', `${pdfErr?.message || 'Unknown error'}\n\nSave the catalogue without the PDF? You can add it again later.`, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Save without PDF', onPress: () => save(true) },
+          ]);
+          return;
+        }
       } else if (removePdf) {
         docId = null;
       }
@@ -409,7 +426,7 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
             <Text style={s.navBlue}>Cancel</Text>
           </Pressable>
           <Text style={s.navTitle}>{editing ? 'Edit Catalogue' : 'New Catalogue'}</Text>
-          <Pressable onPress={save} disabled={saving} hitSlop={10} style={[s.navSide, { alignItems: 'flex-end' }]}>
+          <Pressable onPress={() => save()} disabled={saving} hitSlop={10} style={[s.navSide, { alignItems: 'flex-end' }]}>
             {saving ? <ActivityIndicator color={C.blue} /> : <Text style={[s.navBlue, { fontWeight: '700' }]}>Save</Text>}
           </Pressable>
         </View>

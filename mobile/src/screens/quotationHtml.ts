@@ -50,6 +50,12 @@ export function detectBrands(items: any[] | undefined): string[] {
 export interface BuildOptions {
   /** 'screen' = stacked pages on grey (preview); 'print' = bare pages (PDF) */
   mode?: 'screen' | 'print';
+  /**
+   * Print-only. iOS lays a CSS px out as 1 pt, so the 595 px page fills an A4 sheet (scale 1).
+   * Android's print engine uses 96 dpi (1 px = 0.75 pt), so the same page only fills 75% of the sheet
+   * unless it is enlarged by 96/72. Pass 96/72 on Android.
+   */
+  scale?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -73,7 +79,7 @@ const SEC_GAP = 3; // gap bar -> table
 const THEAD_H = 18;
 const SEC_SPACE = 6; // space between blocks
 const TOT_H = 20; // "TOTAL (A)" row under the main unit table
-const DEALER_H = 34; // dealer logo strip
+const DEALER_H = 35; // dealer logo strip
 const DEALER_GAP = 4;
 const ROW_BASE = 9; // 4+4 padding + 1 border
 const LINE_H = 11;
@@ -253,8 +259,9 @@ const ICON = {
   doc: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3h8l4 4v14h-12z"/><path d="M14.5 3v4h4"/></svg>',
 };
 
-const css = (T: (typeof THEMES)[QuoteTemplate], mode: 'screen' | 'print', template: QuoteTemplate) => `
-@page{size:${PAGE_W}px 842px;margin:0}
+const css = (T: (typeof THEMES)[QuoteTemplate], mode: 'screen' | 'print', template: QuoteTemplate, scale = 1) => `
+@page{size:${scale === 1 ? `${PAGE_W}px 842px` : '595pt 842pt'};margin:0}
+${mode === 'print' && scale !== 1 ? `html{zoom:${scale}}` : ''}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:${PAGE_W}px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{font-family:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:${T.ink};font-size:${FONT_PX}px;line-height:${LINE_H}px;${mode === 'screen' ? 'background:#E6E9F0;padding:8px 0' : 'background:#fff'}}
@@ -302,13 +309,13 @@ ${mode === 'print' ? '.page:last-child{page-break-after:auto;break-after:auto}' 
 .dealer{margin:${DEALER_GAP}px ${MX}px 0;height:${DEALER_H}px;display:flex;flex-direction:column;justify-content:center}
 .dealer .dh{display:flex;align-items:center;gap:8px;font-size:7.5px;line-height:9px;font-weight:700;letter-spacing:.7px;color:${T.ink};white-space:nowrap}
 .dealer .dh i{flex:1;height:1px;background:${T.border}}
-.dealer .dl{display:flex;align-items:center;justify-content:center;gap:11px;height:20px;margin-top:3px}
-.dealer .dl img{display:block;height:20px;width:auto;object-fit:contain}
+.dealer .dl{display:flex;align-items:center;justify-content:center;gap:11px;height:21px;margin-top:3px}
+.dealer .dl img{display:block;height:21px;width:auto;object-fit:contain}
 .dealer .dl b{display:block;width:1px;height:14px;background:${T.border}}
-.bt{display:flex;gap:10px;margin-top:${SEC_SPACE + 1}px;padding:0 ${MX}px}
-.bt img{display:block;height:auto}
-.bt .t{width:55%}
-.bt .b{width:45%}
+.bt{display:flex;align-items:flex-start;gap:10px;margin-top:${SEC_SPACE + 1}px;padding:0 ${MX}px}
+.bt img{display:block;height:auto;min-width:0}
+.bt .t{flex:511 1 0}
+.bt .b{flex:431 1 0}
 .bt .full{width:100%}
 .cont{height:${CONT_BAR_H}px;margin:0;padding:0 ${MX}px;display:flex;align-items:center;justify-content:space-between;background:${T.head};color:#fff;font-weight:700;font-size:10px;letter-spacing:.2px}
 `;
@@ -398,5 +405,5 @@ export function buildQuotationHtml(q: QuoteLike, assets: QuoteAssets, opts: Buil
     })
     .join('');
 
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="${mode === 'screen' ? `width=${PAGE_W}, maximum-scale=4, user-scalable=yes` : `width=${PAGE_W}, initial-scale=1, maximum-scale=1`}"><title>Quotation ${esc(q.quotationNumber || '')}</title><style>${css(T, mode, template)}</style></head><body>${pageHtml}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="${mode === 'screen' ? `width=${PAGE_W}, maximum-scale=4, user-scalable=yes` : `width=${PAGE_W}, initial-scale=1, maximum-scale=1`}"><title>Quotation ${esc(q.quotationNumber || '')}</title><style>${css(T, mode, template, opts.scale || 1)}</style></head><body>${pageHtml}</body></html>`;
 }

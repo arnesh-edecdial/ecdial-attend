@@ -20,7 +20,8 @@ export const previewHtml = async (q: QuoteLike) =>
 
 /** Renders the quotation to an A4 PDF in the cache folder and returns its file:// uri. */
 export async function makeQuotationPdf(q: QuoteLike, fileName: string): Promise<string> {
-  const html = buildQuotationHtml(withType(q), await assetsFor(q), { mode: 'print' });
+  // Android prints at 96 dpi, iOS at 72: enlarge by 96/72 on Android so the page fills the whole A4 sheet
+  const html = buildQuotationHtml(withType(q), await assetsFor(q), { mode: 'print', scale: Platform.OS === 'android' ? 96 / 72 : 1 });
   const { uri } = await Print.printToFileAsync({ html, width: 595, height: 842 });
   const dest = `${FileSystem.cacheDirectory}${fileName}.pdf`;
   await FileSystem.deleteAsync(dest, { idempotent: true });
