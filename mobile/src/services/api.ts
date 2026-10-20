@@ -325,6 +325,8 @@ export const mobileApi = {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (status) params.append('status', status);
+    // The Android app only handles Split quotations. Cassette / Duct / VRV live on the web only.
+    params.append('acType', 'SPLIT');
     return request<any>(`/quotations?${params.toString()}`);
   },
   getQuotation: (id: string) => request<any>(`/quotations/${id}`),

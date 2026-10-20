@@ -1,4 +1,10 @@
-const API_BASE = '/api';
+/**
+ * Where the backend lives.
+ *  - local dev  : VITE_API_URL is empty -> '/api', which vite.config.ts proxies to http://localhost:4000
+ *  - production : VITE_API_URL=https://ecdial-attend.vercel.app/api  (see .env.production), or leave it empty and
+ *                 let the host rewrite /api/* to the backend (vercel.json)
+ */
+const API_BASE: string = (((import.meta as any).env?.VITE_API_URL as string | undefined) || '/api').replace(/\/+$/, '');
 const TOKEN_KEY = 'ecdial_access_token';
 
 export function getAuthToken(): string | null {
@@ -135,6 +141,10 @@ export const api = {
   },
   createProduct: (payload: any) =>
     request<any>('/catalog/products', { method: 'POST', body: JSON.stringify(payload) }),
+  updateProduct: (id: string, payload: any) =>
+    request<any>(`/catalog/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteProduct: (id: string) =>
+    request<any>(`/catalog/products/${id}`, { method: 'DELETE' }),
 
   // Customers
   listCustomers: (search?: string) => {
@@ -166,22 +176,25 @@ export const api = {
     request<any>('/quotations/config', { method: 'PUT', body: JSON.stringify(data) }),
   createQuotation: (payload: any) =>
     request<any>('/quotations', { method: 'POST', body: JSON.stringify(payload) }),
-  listQuotations: (status?: string, search?: string) => {
+  listQuotations: (status?: string, search?: string, acType?: string) => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (search) params.append('search', search);
+    if (acType) params.append('acType', acType);
     return request<any>(`/quotations?${params.toString()}`);
   },
   getQuotationById: (id: string) => request<any>(`/quotations/${id}`),
   updateQuotation: (id: string, payload: any) =>
     request<any>(`/quotations/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteQuotation: (id: string) =>
+    request<any>(`/quotations/${id}`, { method: 'DELETE' }),
   updateQuotationStatus: (id: string, status: string) =>
     request<any>(`/quotations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-  getPdfDownloadUrl: (id: string) => `/api/quotations/${id}/pdf`,
+  getPdfDownloadUrl: (id: string) => `${API_BASE}/quotations/${id}/pdf`,
   // Download protected PDF with the same Bearer token used by normal API calls.
   downloadQuotationPdf: async (id: string): Promise<void> => {
     const token = getAuthToken();
-    const response = await fetch(`/api/quotations/${encodeURIComponent(id)}/pdf`, {
+    const response = await fetch(`${API_BASE}/quotations/${encodeURIComponent(id)}/pdf`, {
       method: 'GET',
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

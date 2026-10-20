@@ -273,7 +273,11 @@ export const quotationController = {
       return;
     }
 
-    const { createdBy, status } = req.query;
+    const { createdBy, status, acType } = req.query;
+    // ?acType=SPLIT -> only that category (the Android app always asks for SPLIT, so
+    // Cassette / Duct / VRV quotations made on the web never show up on the phone).
+    // No acType -> everything (the web register).
+    const acTypeFilter = acType ? String(acType).toUpperCase() : null;
     const isSales = req.user.role === 'SALES';
 
     try {
@@ -281,6 +285,7 @@ export const quotationController = {
         where: {
           ...(isSales ? { createdById: req.user.id } : createdBy ? { createdById: createdBy as string } : {}),
           ...(status ? { status: status as string } : {}),
+          ...(acTypeFilter ? { acType: acTypeFilter } : {}),
         },
         include: {
           createdBy: { select: { id: true, name: true, email: true, role: true } },

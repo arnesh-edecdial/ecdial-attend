@@ -118,7 +118,7 @@ export const QuotationListScreen: React.FC<QuotationListScreenProps> = ({
         </View>
 
         {userRole !== 'EMPLOYEE' && (
-          <TouchableOpacity style={styles.newBtn} onPress={() => setAcTypeModalVisible(true)}>
+          <TouchableOpacity style={styles.newBtn} onPress={() => setTypeModalVisible(true)}>
             <Text style={styles.newBtnText}>+ NEW</Text>
           </TouchableOpacity>
         )}

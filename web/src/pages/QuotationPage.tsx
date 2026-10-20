@@ -3,6 +3,10 @@ import { api } from '../services/api';
 import { Quotation, ProductItem, CustomerItem } from '../types';
 import { QuotationEditor } from '../components/quotation/QuotationEditor';
 import { QuotationPreviewModal } from '../components/quotation/QuotationPreviewModal';
+import { SplitQuotationEditor } from '../components/quotation/SplitQuotationEditor';
+import { ProposalQuotationEditor } from '../components/quotation/ProposalQuotationEditor';
+import { SplitQuotationPreview } from '../components/quotation/SplitQuotationPreview';
+import { resolveQuotationType } from '../utils/quotation/quotationType';
 import {
   FileSpreadsheet,
   FilePlus,
@@ -11,6 +15,7 @@ import {
   Download,
   Eye,
   Edit,
+  Trash2,
   Layers,
   Settings,
   Plus,
@@ -143,6 +148,17 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
       }
     } catch (err: any) {
       alert(err.message || 'Failed to open preview');
+    }
+  };
+
+  const handleDeleteQuotation = async (q: any) => {
+    if (!window.confirm(`Delete quotation ${q.quotationNumber}${q.customerName ? ' for ' + q.customerName : ''}? This cannot be undone.`)) return;
+    try {
+      const res = await api.deleteQuotation(q.id);
+      if (res?.success === false) throw new Error(res.message || 'Failed to delete quotation');
+      fetchQuotations();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete quotation');
     }
   };
 
@@ -692,6 +708,42 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
 
       {/* Tab 1: Editor View */}
       {activeTab === 'NEW_QUOTATION' && (editingQuotationId || newQuoteStep === 'EDITOR') && (
+        selectedAcType === 'SPLIT' ? (
+          <SplitQuotationEditor
+            key={editingQuotationId || 'new-split'}
+            editQuotationId={editingQuotationId}
+            initialAcType={selectedAcType}
+            initialQuotationType={selectedTemplate}
+            initialCustomer={selectedCustomer}
+            onBack={() => {
+              if (!editingQuotationId) setNewQuoteStep('CUSTOMER');
+            }}
+            onSuccess={() => {
+              setEditingQuotationId(null);
+              setNewQuoteStep('CATEGORY');
+              setActiveTab('QUOTATION_LIST');
+              fetchQuotations();
+            }}
+          />
+        ) : selectedAcType === 'CASSETTE' || selectedAcType === 'DUCT' || selectedAcType === 'VRV' ? (
+          <ProposalQuotationEditor
+            key={`${selectedAcType}-${editingQuotationId || 'new'}`}
+            acType={selectedAcType}
+            editQuotationId={editingQuotationId}
+            initialAcType={selectedAcType}
+            initialQuotationType={selectedTemplate}
+            initialCustomer={selectedCustomer}
+            onBack={() => {
+              if (!editingQuotationId) setNewQuoteStep('CUSTOMER');
+            }}
+            onSuccess={() => {
+              setEditingQuotationId(null);
+              setNewQuoteStep('CATEGORY');
+              setActiveTab('QUOTATION_LIST');
+              fetchQuotations();
+            }}
+          />
+        ) : (
         <QuotationEditor
           editQuotationId={editingQuotationId}
           initialAcType={selectedAcType}
@@ -705,6 +757,7 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
             fetchQuotations();
           }}
         />
+        )
       )}
 
       {/* Tab 2: All Quotations List */}
@@ -839,6 +892,9 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
                             className="btn btn-secondary btn-icon btn-sm"
                             title="Edit Quotation"
                             onClick={() => {
+                              // the editor needs to know which kind of quotation this is
+                              setSelectedAcType(((q as any).acType || 'SPLIT').toUpperCase());
+                              setSelectedTemplate(resolveQuotationType(q));
                               setEditingQuotationId(q.id);
                               setNewQuoteStep('EDITOR');
                               setActiveTab('NEW_QUOTATION');
@@ -846,15 +902,34 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
                           >
                             <Edit size={14} />
                           </button>
-                          <a
-                            href={api.getPdfDownloadUrl(q.id)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-primary btn-icon btn-sm"
-                            title="Download PDF"
+                          {['SPLIT', 'CASSETTE', 'DUCT', 'VRV'].includes(String((q as any).acType || 'SPLIT').toUpperCase()) ? (
+                            // Split and Cassette print from the shared A4 HTML templates (browser print -> Save as PDF)
+                            <button
+                              className="btn btn-primary btn-icon btn-sm"
+                              title="Preview & Download PDF"
+                              onClick={() => handleOpenPreview(q.id)}
+                            >
+                              <Download size={14} />
+                            </button>
+                          ) : (
+                            <a
+                              href={api.getPdfDownloadUrl(q.id)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn-primary btn-icon btn-sm"
+                              title="Download PDF"
+                            >
+                              <Download size={14} />
+                            </a>
+                          )}
+                          <button
+                            className="btn btn-secondary btn-icon btn-sm"
+                            title="Delete Quotation"
+                            style={{ color: '#F87171' }}
+                            onClick={() => handleDeleteQuotation(q)}
                           >
-                            <Download size={14} />
-                          </a>
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1019,14 +1094,20 @@ export const QuotationPage: React.FC<QuotationPageProps> = ({ activeTab, setActi
       )}
 
       {/* Preview Modal */}
-      {previewQuotation && (
+      {previewQuotation && ['SPLIT', 'CASSETTE', 'DUCT', 'VRV'].includes(String((previewQuotation as any).acType || 'SPLIT').toUpperCase()) ? (
+        <SplitQuotationPreview
+          isOpen={previewModalOpen}
+          onClose={() => setPreviewModalOpen(false)}
+          quotation={previewQuotation}
+        />
+      ) : previewQuotation ? (
         <QuotationPreviewModal
           isOpen={previewModalOpen}
           onClose={() => setPreviewModalOpen(false)}
           quotation={previewQuotation}
           items={previewQuotation.items || []}
         />
-      )}
+      ) : null}
     </div>
   );
 };
