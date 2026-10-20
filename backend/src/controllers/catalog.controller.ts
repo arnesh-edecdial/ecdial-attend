@@ -159,6 +159,7 @@ export const catalogController = {
       imageUrl,
       images,
       specifications,
+      catalogueDocId,
     } = req.body;
 
     const supRate = defaultSupplyRate !== undefined ? Number(defaultSupplyRate) : undefined;
@@ -190,6 +191,7 @@ export const catalogController = {
           imageUrl: imageUrl || null,
           images: imagesJson,
           specifications: specsJson,
+          catalogueDocId: catalogueDocId || null,
           isActive: true,
         },
       });
@@ -223,6 +225,7 @@ export const catalogController = {
       imageUrl,
       images,
       specifications,
+      catalogueDocId,
       isActive,
     } = req.body;
 
@@ -246,6 +249,7 @@ export const catalogController = {
       if (defaultInstallRate !== undefined) updateData.defaultInstallRate = Number(defaultInstallRate);
       if (availableStock !== undefined) updateData.availableStock = Number(availableStock);
       if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+      if (catalogueDocId !== undefined) updateData.catalogueDocId = catalogueDocId || null;
       if (isActive !== undefined) updateData.isActive = Boolean(isActive);
 
       if (images !== undefined) {

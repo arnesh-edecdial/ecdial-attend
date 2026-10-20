@@ -191,6 +191,16 @@ export const api = {
   updateQuotationStatus: (id: string, status: string) =>
     request<any>(`/quotations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getPdfDownloadUrl: (id: string) => `${API_BASE}/quotations/${id}/pdf`,
+
+  // Catalogue PDFs (stored in Supabase Storage; the browser uploads directly with a signed URL)
+  listCataloguePdfs: () => request<any>('/catalogues'),
+  createCatalogueUploadUrl: (fileName: string, fileSize: number) =>
+    request<any>('/catalogues/upload-url', { method: 'POST', body: JSON.stringify({ fileName, fileSize }) }),
+  registerCataloguePdf: (payload: { displayName: string; storagePath: string; category?: string; model?: string; description?: string }) =>
+    request<any>('/catalogues/register', { method: 'POST', body: JSON.stringify(payload) }),
+  renameCataloguePdf: (id: string, displayName: string) =>
+    request<any>(`/catalogues/${id}/rename`, { method: 'PATCH', body: JSON.stringify({ displayName }) }),
+  deleteCataloguePdf: (id: string) => request<any>(`/catalogues/${id}`, { method: 'DELETE' }),
   // Download protected PDF with the same Bearer token used by normal API calls.
   downloadQuotationPdf: async (id: string): Promise<void> => {
     const token = getAuthToken();

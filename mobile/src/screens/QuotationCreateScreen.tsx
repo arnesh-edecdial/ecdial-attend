@@ -25,11 +25,13 @@ interface QuotationCreateScreenProps {
   onClose: () => void;
   onSuccess: (quotation: any) => void;
   initialQuotationType?: 'DAIKIN' | 'ECDIAL';
-  initialAcType?: 'SPLIT' | 'VRV' | 'DUCT';
+  initialAcType?: AcType;
   quotationToEdit?: any | null;
 }
 
 type Section = 'MAIN_UNIT' | 'LOW_SIDE';
+type AcType = 'SPLIT' | 'VRV' | 'DUCT' | 'CASSETTE';
+const AC_LABEL: Record<AcType, string> = { SPLIT: 'Split AC', VRV: 'VRV / VRF', DUCT: 'Duct AC', CASSETTE: 'Cassette AC' };
 
 const money = (n: number) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -152,7 +154,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [quotationType, setQuotationType] = useState<'DAIKIN' | 'ECDIAL'>(initialQuotationType);
-  const [acType, setAcType] = useState<'SPLIT' | 'VRV' | 'DUCT'>(initialAcType);
+  const [acType, setAcType] = useState<AcType>(initialAcType);
   const [includeBankDetails, setIncludeBankDetails] = useState<boolean>(true);
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -180,7 +182,7 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
   useEffect(() => {
     if (quotationToEdit) {
       setQuotationType(resolveQuotationType(quotationToEdit) || initialQuotationType);
-      setAcType((quotationToEdit.acType || initialAcType || 'SPLIT').toUpperCase());
+      setAcType(String(quotationToEdit.acType || initialAcType || 'SPLIT').toUpperCase() as AcType);
       setIncludeBankDetails(quotationToEdit.includeBankDetails !== false);
       setSelectedCustomerId(quotationToEdit.customerId || null);
       setCustomerName(quotationToEdit.customerName || '');
@@ -363,7 +365,8 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
       customerAddress: customerAddress.trim(),
       customerPhone: customerPhone.trim(),
       quotationType,
-      acType,
+      // editing keeps the quote's stored type; only a brand-new quote takes the type chosen on the list screen
+      acType: quotationToEdit?.acType ? (String(quotationToEdit.acType).toUpperCase() as AcType) : acType,
       includeBankDetails,
       hasLowSide,
       items: allItems,
@@ -425,11 +428,11 @@ export const QuotationCreateScreen: React.FC<QuotationCreateScreenProps> = ({
               </Pressable>
             ))}
           </View>
-          <Text style={s.segHint}>{acType === 'VRV' ? 'VRV / VRF' : acType === 'DUCT' ? 'Duct AC' : 'Split AC'} quotation</Text>
+          <Text style={s.segHint}>{AC_LABEL[acType] || acType} quotation</Text>
 
           {!isSplit ? (
             <View style={[s.group, { padding: 22, alignItems: 'center', marginTop: 18 }]}>
-              <Text style={s.soonTitle}>{acType === 'VRV' ? 'VRV / VRF Quotation' : 'Duct AC Quotation'}</Text>
+              <Text style={s.soonTitle}>{AC_LABEL[acType] || acType} Quotation</Text>
               <Text style={s.soonText}>This quotation type has its own page flow and is coming in the next module. The Split AC flow is unchanged.</Text>
               <Pressable style={[s.secondary, { marginTop: 16, alignSelf: 'stretch' }]} onPress={onClose}>
                 <Text style={s.secondaryText}>Back</Text>

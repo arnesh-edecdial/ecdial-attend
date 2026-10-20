@@ -625,10 +625,17 @@ router.get(
 );
 
 router.post(
-  '/catalogues/upload',
+  '/catalogues/upload-url',
   authMiddleware,
   requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
-  catalogueController.uploadDocument
+  catalogueController.createUploadUrl
+);
+
+router.post(
+  '/catalogues/register',
+  authMiddleware,
+  requireRole(['ADMIN', 'MANAGER', 'IT_ADMIN']),
+  catalogueController.registerUpload
 );
 
 router.patch(

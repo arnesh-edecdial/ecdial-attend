@@ -215,6 +215,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   active={activeTab === 'QUOTATION_CONFIG'}
                   onClick={() => setActiveTab('QUOTATION_CONFIG')}
                 />
+
+                <NavItem
+                  icon={<Layers size={16} />}
+                  label="Catalogue PDFs"
+                  active={activeTab === 'CATALOGUE_PDFS'}
+                  onClick={() => setActiveTab('CATALOGUE_PDFS')}
+                />
               </>
             )}
           </div>

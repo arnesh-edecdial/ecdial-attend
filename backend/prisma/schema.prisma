@@ -173,6 +173,7 @@ model Product {
   brand              String?
   images             String?  @db.Text
   specifications     String?  @db.Text
+  catalogueDocId     String?  // Catalogue.id of the uploaded PDF shown for this product
   isActive           Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
@@ -340,6 +341,7 @@ model StockRequirement {
   productId   String
   quantity    Int
   requestedAt DateTime @default(now())
+  tentativeDate DateTime? // date the customer/sales expects the stock (date only, stored at UTC midnight)
   priority    String   @default("NORMAL") // "NORMAL", "URGENT", "EMERGENCY"
   status      String   @default("PENDING") // "PENDING", "ORDERED", "RECEIVED", "COMPLETED"
   note        String?  @db.Text
@@ -367,6 +369,7 @@ model Catalogue {
   description  String?  @db.Text
   uploadedById String?
   fileSize     Int?
+  storagePath  String?  // Supabase Storage object path; null = legacy B2/disk file
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

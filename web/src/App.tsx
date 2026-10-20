@@ -4,6 +4,7 @@ import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
 import { AttendancePage } from './pages/AttendancePage';
 import { QuotationPage } from './pages/QuotationPage';
+import { CataloguePdfAdminPage } from './pages/CataloguePdfAdminPage';
 import { LoginPage } from './pages/LoginPage';
 
 const AuthenticatedApp: React.FC = () => {
@@ -24,7 +25,9 @@ const AuthenticatedApp: React.FC = () => {
         <main className="content-body">
           {currentModule === 'ATTENDANCE'
             ? <AttendancePage activeTab={activeTab} setActiveTab={setActiveTab} />
-            : <QuotationPage activeTab={activeTab} setActiveTab={setActiveTab} />}
+            : activeTab === 'CATALOGUE_PDFS'
+              ? <CataloguePdfAdminPage />
+              : <QuotationPage activeTab={activeTab} setActiveTab={setActiveTab} />}
         </main>
       </div>
     </div>

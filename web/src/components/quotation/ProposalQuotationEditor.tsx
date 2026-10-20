@@ -4,7 +4,7 @@ import { api } from '../../services/api';
 import { CustomerItem } from '../../types';
 import { extractBrand } from '../../utils/quotation/brands';
 import { resolveQuotationType } from '../../utils/quotation/quotationType';
-import { LowSideItem, fetchLowSide, forCategory, sameLine } from '../../utils/quotation/lowSideLibrary';
+import { LowSideItem, LowSideCategory, fetchLowSide, forCategory, sameLine } from '../../utils/quotation/lowSideLibrary';
 import { DUCT_DEFAULTS, parseGroup, withGroup, parseKind, withKind, LineKind } from '../../utils/quotation/cassetteHtml';
 import { MachinePicker, LowSidePicker, LowSideManager } from './SplitPickers';
 import { SplitQuotationPreview } from './SplitQuotationPreview';
@@ -550,7 +550,7 @@ export const ProposalQuotationEditor: React.FC<Props> = ({ acType, editQuotation
       <MachinePicker isOpen={machineOpen} machines={machines} acType={acType} currentDescription={mainItems[activeMachine]?.description || ''} onSelect={selectMachine} multi={activeMachine >= mainItems.length} addedNames={mainItems.map((i) => i.description)} onSelectMany={selectMany} onClose={() => setMachineOpen(false)} onChanged={loadMachines} />
       <LowSidePicker isOpen={pickerOpen} library={library} acType={acType} currentDescriptions={lowNames} onApply={applyLow}
         onManage={() => { setPickerOpen(false); setTimeout(() => setManageOpen(true), 150); }} onClose={() => setPickerOpen(false)} />
-      <LowSideManager isOpen={manageOpen} library={library} defaultCategory={acType} onChanged={loadLibrary} onClose={() => setManageOpen(false)} />
+      <LowSideManager isOpen={manageOpen} library={library} defaultCategory={acType as LowSideCategory} onChanged={loadLibrary} onClose={() => setManageOpen(false)} />
 
       <SplitQuotationPreview
         isOpen={!!savedQuote}

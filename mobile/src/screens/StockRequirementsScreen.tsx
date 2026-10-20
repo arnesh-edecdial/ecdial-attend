@@ -27,6 +27,24 @@ interface StockRequirementsScreenProps {
 
 const ADMIN_MANAGEMENT_ROLES = ['ADMIN', 'MANAGER', 'IT_ADMIN', 'SERVICE_MANAGER'];
 
+// Tentative date is a date-only value stored at UTC midnight: always render it in UTC so it never shifts a day.
+const formatTentativeDate = (v: string) =>
+  new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** Auto-insert hyphens while typing: 20261125 -> 2026-11-25 */
+const maskDateInput = (t: string) => {
+  const d = t.replace(/\D/g, '').slice(0, 8);
+  return d.length > 6 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d.length > 4 ? `${d.slice(0, 4)}-${d.slice(4)}` : d;
+};
+
+const isValidDateInput = (v: string) => {
+  if (!v) return true;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+};
+
 export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = ({
   userRole = 'SALES',
   userName = '',
@@ -61,6 +79,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
   const [quantity, setQuantity] = useState<string>('1');
   const [priority, setPriority] = useState<'NORMAL' | 'URGENT' | 'EMERGENCY'>('NORMAL');
   const [note, setNote] = useState<string>('');
+  const [tentativeDate, setTentativeDate] = useState<string>(''); // YYYY-MM-DD, optional
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Admin Edit / Status Modal
@@ -70,6 +89,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
   const [editPriority, setEditPriority] = useState<string>('NORMAL');
   const [editStatus, setEditStatus] = useState<string>('PENDING');
   const [editNote, setEditNote] = useState<string>('');
+  const [editTentativeDate, setEditTentativeDate] = useState<string>('');
 
   const fetchRequirements = async (forceRefresh: boolean = false) => {
     try {
@@ -124,6 +144,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
     setQuantity('1');
     setPriority('NORMAL');
     setNote('');
+    setTentativeDate('');
     loadPickerData();
     setCreateModalVisible(true);
   };
@@ -143,6 +164,11 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
       return;
     }
 
+    if (!isValidDateInput(tentativeDate)) {
+      Alert.alert('Invalid date', 'Enter the tentative date as YYYY-MM-DD, or leave it empty.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       const res = await mobileApi.createStockRequirement({
@@ -151,6 +177,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
         quantity: qNum,
         priority,
         note: note.trim() || undefined,
+        tentativeDate: tentativeDate || undefined,
       });
 
       if (res.success) {
@@ -188,6 +215,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
     setEditPriority(item.priority || 'NORMAL');
     setEditStatus(item.status || 'PENDING');
     setEditNote(item.note || '');
+    setEditTentativeDate(item.tentativeDate ? String(item.tentativeDate).slice(0, 10) : '');
     setEditModalVisible(true);
   };
 
@@ -198,6 +226,10 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
       Alert.alert('Required', 'Quantity must be greater than 0.');
       return;
     }
+    if (!isValidDateInput(editTentativeDate)) {
+      Alert.alert('Invalid date', 'Enter the tentative date as YYYY-MM-DD, or leave it empty.');
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -206,6 +238,7 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
         quantity: qNum,
         priority: editPriority,
         note: editNote.trim() || undefined,
+        tentativeDate: editTentativeDate || null,
       });
 
       // Update status if changed and user is Admin
@@ -481,6 +514,13 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                     <Text style={styles.dateValue}>{formatDateShort(item.requestedAt)}</Text>
                   </View>
 
+                  {Boolean(item.tentativeDate) && (
+                    <View style={styles.dateCol}>
+                      <Text style={styles.dateLabel}>Tentative</Text>
+                      <Text style={styles.dateValue}>{formatTentativeDate(item.tentativeDate)}</Text>
+                    </View>
+                  )}
+
                   <View
                     style={[
                       styles.urgencyBadge,
@@ -695,8 +735,20 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                 </TouchableOpacity>
               </View>
 
-              {/* 5. OPTIONAL NOTE */}
-              <Text style={styles.inputLabel}>5. OPTIONAL NOTE</Text>
+              {/* 5. TENTATIVE DATE */}
+              <Text style={styles.inputLabel}>5. TENTATIVE DATE (OPTIONAL)</Text>
+              <TextInput
+                style={styles.inputField}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numbers-and-punctuation"
+                maxLength={10}
+                value={tentativeDate}
+                onChangeText={(t) => setTentativeDate(maskDateInput(t))}
+              />
+
+              {/* 6. OPTIONAL NOTE */}
+              <Text style={styles.inputLabel}>6. OPTIONAL NOTE</Text>
               <TextInput
                 style={styles.noteInput}
                 placeholder="e.g. Required for installation next week."
@@ -822,6 +874,13 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                   <Text style={styles.summaryValue}>
                     {selectedRequirement.salesUser?.name || 'Sales'}
                   </Text>
+
+                  {Boolean(selectedRequirement.tentativeDate) && (
+                    <>
+                      <Text style={[styles.summaryLabel, { marginTop: 6 }]}>Tentative Date</Text>
+                      <Text style={styles.summaryValue}>{formatTentativeDate(selectedRequirement.tentativeDate)}</Text>
+                    </>
+                  )}
                 </View>
               )}
 
@@ -885,6 +944,18 @@ export const StockRequirementsScreen: React.FC<StockRequirementsScreenProps> = (
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* TENTATIVE DATE */}
+              <Text style={styles.inputLabel}>TENTATIVE DATE</Text>
+              <TextInput
+                style={styles.inputField}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numbers-and-punctuation"
+                maxLength={10}
+                value={editTentativeDate}
+                onChangeText={(t) => setEditTentativeDate(maskDateInput(t))}
+              />
 
               {/* NOTE */}
               <Text style={styles.inputLabel}>NOTE</Text>

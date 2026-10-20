@@ -31,6 +31,18 @@ function validTillOrDefault(value: unknown, dateString: string): string {
   return addDaysToDateString(dateString, 10);
 }
 
+const AC_TYPES = ['SPLIT', 'CASSETTE', 'DUCT', 'VRV'];
+
+/**
+ * Resolve the quote type without ever coercing a real type into SPLIT.
+ * Missing/blank -> fallback (SPLIT on create, the stored type on update). Unknown value -> null (rejected with 400).
+ */
+function resolveAcType(raw: unknown, fallback: string): string | null {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const t = String(raw).trim().toUpperCase();
+  return AC_TYPES.includes(t) ? t : null;
+}
+
 export const quotationController = {
   // 1. Get Quotation System Configuration (GST rates, terms, payment methods, units)
   getConfig: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -124,7 +136,11 @@ export const quotationController = {
       const todayStr = getTodayDateString();
       const quotationNumber = await generateNextQuotationNumber();
       const validTillStr = validTillOrDefault(req.body.validTill, todayStr);
-      const currentAcType = String(acType || 'SPLIT').toUpperCase();
+      const currentAcType = resolveAcType(acType, 'SPLIT');
+      if (!currentAcType) {
+        res.status(400).json({ success: false, message: `Invalid acType. Use one of: ${AC_TYPES.join(', ')}.` });
+        return;
+      }
 
       const config = (await prisma.quotationConfig.findFirst()) || {
         defaultCgstPercent: 9.0,
@@ -419,7 +435,11 @@ export const quotationController = {
 
       const cgst = cgstPercent !== undefined ? Number(cgstPercent) : existing.cgstPercent;
       const sgst = sgstPercent !== undefined ? Number(sgstPercent) : existing.sgstPercent;
-      const currentAcType = acType !== undefined ? String(acType || 'SPLIT').toUpperCase() : ((existing as any).acType || 'SPLIT');
+      const currentAcType = resolveAcType(acType, (existing as any).acType || 'SPLIT');
+      if (!currentAcType) {
+        res.status(400).json({ success: false, message: `Invalid acType. Use one of: ${AC_TYPES.join(', ')}.` });
+        return;
+      }
 
       let processedItems = existing.items;
       if (Array.isArray(items)) {

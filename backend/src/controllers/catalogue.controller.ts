@@ -1,10 +1,20 @@
 import { Response } from 'express';
 import fs from 'fs';
-import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../db/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { catalogueSyncService } from '../services/catalogueSync.service';
 import { storageClient, B2_BUCKET_NAME } from '../config/storage';
+import {
+  CATALOGUE_BUCKET,
+  createSignedDownloadUrl,
+  createSignedUploadUrl,
+  deleteObject,
+  ensureBucket,
+  getObjectSize,
+  maxUploadBytes,
+  supabaseConfigured,
+} from '../services/supabaseStorage.service';
 
 const ADMIN_MANAGEMENT_ROLES = ['ADMIN', 'IT_ADMIN', 'MANAGER'] as const;
 
@@ -15,7 +25,6 @@ const ADMIN_MANAGEMENT_ROLES = ['ADMIN', 'IT_ADMIN', 'MANAGER'] as const;
  */
 const CATALOGUE_PREFIX = (process.env.B2_CATALOGUE_PREFIX || 'catalogues').replace(/^\/+|\/+$/g, '');
 const catalogueKey = (storedFileName: string) => `${CATALOGUE_PREFIX}/${storedFileName}`;
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 export const catalogueController = {
   /**
@@ -126,91 +135,77 @@ export const catalogueController = {
   },
 
   /**
-   * 4. Upload New Catalogue / Brochure PDF (Admin Only)
+   * 4a. Step 1 of upload (Admin Only): validate, then hand back a signed URL so the browser can
+   *     upload the PDF straight to Supabase Storage (no file passes through this server).
    */
-  uploadDocument: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  createUploadUrl: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
-      const isAdmin = Boolean(req.user?.role && (ADMIN_MANAGEMENT_ROLES as readonly string[]).includes(req.user.role));
-      if (!isAdmin) {
-        res.status(403).json({ success: false, message: 'Only Admins can upload catalogues/brochures.' });
+      if (!supabaseConfigured()) {
+        res.status(503).json({ success: false, message: 'Supabase Storage is not configured (set SUPABASE_SERVICE_ROLE_KEY).' });
         return;
       }
+      const { fileName, fileSize } = req.body || {};
+      if (typeof fileName !== 'string' || !/\.pdf$/i.test(fileName)) {
+        res.status(400).json({ success: false, message: 'Only .pdf files are allowed.' });
+        return;
+      }
+      await ensureBucket();
+      const limit = maxUploadBytes();
+      if (Number(fileSize) > limit) {
+        res.status(413).json({ success: false, message: `PDF exceeds the storage limit of ${Math.floor(limit / 1048576)} MB.` });
+        return;
+      }
+      const safe = fileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9_\-]+/g, '_').replace(/^_+|_+$/g, '') || 'catalogue';
+      const storagePath = `${Date.now()}_${safe}.pdf`;
+      const { uploadUrl } = await createSignedUploadUrl(storagePath);
+      res.json({ success: true, data: { uploadUrl, storagePath, bucket: CATALOGUE_BUCKET, maxBytes: limit } });
+    } catch (err: any) {
+      console.error('[Create Upload URL Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to prepare upload.' });
+    }
+  },
 
-      const { displayName, category = 'Catalogue', description, model, fileBase64 } = req.body;
-
-      if (!displayName || typeof displayName !== 'string' || displayName.trim().length === 0) {
+  /**
+   * 4b. Step 2 of upload (Admin Only): after the browser finished uploading, verify the object
+   *     exists in Supabase and store its metadata (name, path, size, date) in the Catalogue table.
+   */
+  registerUpload: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { displayName, storagePath, category = 'Catalogue', description, model } = req.body || {};
+      if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
         res.status(400).json({ success: false, message: 'Document name is required.' });
         return;
       }
-
-      if (!fileBase64 || typeof fileBase64 !== 'string') {
-        res.status(400).json({ success: false, message: 'File payload is required.' });
+      if (typeof storagePath !== 'string' || !/^[\w\-]+\.pdf$/i.test(storagePath)) {
+        res.status(400).json({ success: false, message: 'Invalid storage path.' });
         return;
       }
-
-      // Convert base64 data to buffer
-      // Handle optional data URI prefix e.g. "data:application/pdf;base64,..."
-      const rawBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '').trim();
-      const fileBuffer = Buffer.from(rawBase64, 'base64');
-
-      if (fileBuffer.length < 100) {
-        res.status(400).json({ success: false, message: 'Invalid or empty file payload.' });
+      const size = await getObjectSize(storagePath);
+      if (size === null) {
+        res.status(400).json({ success: false, message: 'The file was not found in storage. Upload it again.' });
         return;
       }
-
-      if (fileBuffer.length > MAX_PDF_BYTES) {
-        res.status(413).json({ success: false, message: 'PDF exceeds the maximum allowed size of 25MB.' });
+      const existing = await prisma.catalogue.findFirst({ where: { storagePath } });
+      if (existing) {
+        res.json({ success: true, data: existing });
         return;
       }
-      if (fileBuffer.subarray(0, 4).toString('latin1') !== '%PDF') {
-        res.status(400).json({ success: false, message: 'The uploaded file is not a valid PDF.' });
-        return;
-      }
-
-      const sanitizedName =
-        displayName.trim().replace(/[^a-zA-Z0-9_\-]+/g, '_').replace(/^_+|_+$/g, '') || 'catalogue';
-      const storageFileName = `${sanitizedName}_${Date.now()}.pdf`;
-
-      // Store in B2 (same bucket and client as product images)
-      await storageClient.send(
-        new PutObjectCommand({
-          Bucket: B2_BUCKET_NAME,
-          Key: catalogueKey(storageFileName),
-          Body: fileBuffer,
-          ContentType: 'application/pdf',
-          ContentLength: fileBuffer.length,
-        }),
-      );
-
-      let created;
-      try {
-        created = await prisma.catalogue.create({
-          data: {
-            displayName: displayName.trim(),
-            fileName: storageFileName,
-            category: category ? String(category).trim() : 'Catalogue',
-            description: description ? String(description).trim() : null,
-            model: model ? String(model).trim() : 'AC Unit / Brochure',
-            uploadedById: req.user?.id || null,
-            fileSize: fileBuffer.length,
-          },
-        });
-      } catch (dbErr) {
-        // do not leave an orphaned file in the bucket
-        await storageClient
-          .send(new DeleteObjectCommand({ Bucket: B2_BUCKET_NAME, Key: catalogueKey(storageFileName) }))
-          .catch(() => undefined);
-        throw dbErr;
-      }
-
-      res.status(201).json({
-        success: true,
-        message: 'Document uploaded and registered successfully.',
-        data: created,
+      const created = await prisma.catalogue.create({
+        data: {
+          displayName: displayName.trim(),
+          fileName: storagePath,
+          storagePath,
+          category: category ? String(category).trim() : 'Catalogue',
+          description: description ? String(description).trim() : null,
+          model: model ? String(model).trim() : 'AC Unit / Brochure',
+          uploadedById: req.user?.id || null,
+          fileSize: size,
+        },
       });
+      res.status(201).json({ success: true, message: 'Document registered successfully.', data: created });
     } catch (err: any) {
-      console.error('[Upload Document Error]', err);
-      res.status(500).json({ success: false, message: 'Failed to upload document.' });
+      console.error('[Register Upload Error]', err);
+      res.status(500).json({ success: false, message: 'Failed to register document.' });
     }
   },
 
@@ -233,7 +228,10 @@ export const catalogueController = {
         return;
       }
 
-      // New uploads live in B2
+      if ((existing as any).storagePath) {
+        await deleteObject((existing as any).storagePath);
+      } else {
+      // Legacy uploads live in B2
       try {
         await storageClient.send(
           new DeleteObjectCommand({ Bucket: B2_BUCKET_NAME, Key: catalogueKey(existing.fileName) }),
@@ -251,7 +249,10 @@ export const catalogueController = {
           console.warn('[Delete Catalogue Unlink Warning]', unlinkErr);
         }
       }
+      }
 
+      // products pointing at this PDF fall back to the generated spec PDF
+      await (prisma.product as any).updateMany({ where: { catalogueDocId: id }, data: { catalogueDocId: null } });
       await prisma.catalogue.delete({ where: { id } });
 
       res.json({
@@ -284,6 +285,17 @@ export const catalogueController = {
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${outputFilename}"`);
       };
+
+      // 0) Uploaded via the web admin page: redirect to a short-lived signed Supabase URL
+      if ((catalogue as any).storagePath) {
+        const signed = await createSignedDownloadUrl((catalogue as any).storagePath, outputFilename);
+        if (!signed) {
+          res.status(404).json({ success: false, message: 'Catalogue PDF file is missing in storage.' });
+          return;
+        }
+        res.redirect(302, signed);
+        return;
+      }
 
       // 1) Older catalogue files that ship with the deployment (read from disk)
       const legacyPath = catalogueSyncService.getCatalogueFilePath(catalogue.fileName);

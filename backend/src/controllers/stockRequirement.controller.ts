@@ -6,6 +6,16 @@ import { notificationService } from '../services/notification.service';
 
 const ADMIN_MANAGEMENT_ROLES = ['ADMIN', 'IT_ADMIN', 'MANAGER', 'SERVICE_MANAGER'] as const;
 
+/** 'YYYY-MM-DD' -> Date at UTC midnight. undefined = not provided, null = cleared, 'invalid' = bad input. */
+function parseTentativeDate(raw: unknown): Date | null | undefined | 'invalid' {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(raw));
+  if (!m) return 'invalid';
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCMonth() === +m[2] - 1 ? d : 'invalid';
+}
+
 export const stockRequirementController = {
   /**
    * 1. Create Stock Requirement (Sales / Admin)
@@ -13,7 +23,7 @@ export const stockRequirementController = {
   create: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       const salesUserId = req.user?.id;
-      const { customerId, productId, quantity, priority = 'NORMAL', note } = req.body;
+      const { customerId, productId, quantity, priority = 'NORMAL', note, tentativeDate } = req.body;
 
       if (!salesUserId) {
         res.status(401).json({ success: false, message: 'Authentication required.' });
@@ -28,6 +38,12 @@ export const stockRequirementController = {
       const parsedQty = parseInt(quantity, 10);
       if (isNaN(parsedQty) || parsedQty <= 0) {
         res.status(400).json({ success: false, message: 'A valid quantity greater than zero is required.' });
+        return;
+      }
+
+      const parsedDate = parseTentativeDate(tentativeDate);
+      if (parsedDate === 'invalid') {
+        res.status(400).json({ success: false, message: 'Tentative date must be a valid date (YYYY-MM-DD).' });
         return;
       }
 
@@ -62,6 +78,7 @@ export const stockRequirementController = {
           priority: safePriority,
           status: 'PENDING',
           note: note ? note.trim() : null,
+          tentativeDate: parsedDate ?? null,
           requestedAt: new Date(),
         },
         include: {
@@ -223,7 +240,7 @@ export const stockRequirementController = {
   update: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
-      const { quantity, priority, note } = req.body;
+      const { quantity, priority, note, tentativeDate } = req.body;
 
       const requirement = await prisma.stockRequirement.findUnique({
         where: { id },
@@ -268,6 +285,13 @@ export const stockRequirementController = {
       if (note !== undefined) {
         dataToUpdate.note = note ? note.trim() : null;
       }
+
+      const parsedDate = parseTentativeDate(tentativeDate);
+      if (parsedDate === 'invalid') {
+        res.status(400).json({ success: false, message: 'Tentative date must be a valid date (YYYY-MM-DD).' });
+        return;
+      }
+      if (parsedDate !== undefined) dataToUpdate.tentativeDate = parsedDate;
 
       const updated = await prisma.stockRequirement.update({
         where: { id },

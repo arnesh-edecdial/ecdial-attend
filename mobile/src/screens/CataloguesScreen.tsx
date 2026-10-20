@@ -13,8 +13,6 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { mobileApi, getAuthToken, getActiveEmployeeId } from '../services/api';
 import { dataCache } from '../services/dataCache';
 import { downloadAndSaveFile, shareDocument } from '../services/fileDownloader';
@@ -56,15 +54,6 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
   const [selectedCatalogue, setSelectedCatalogue] = useState<any | null>(null);
   const [newDisplayName, setNewDisplayName] = useState<string>('');
   const [isRenaming, setIsRenaming] = useState<boolean>(false);
-
-  // Upload Document Modal (Admin Only)
-  const [uploadModalVisible, setUploadModalVisible] = useState<boolean>(false);
-  const [uploadTitle, setUploadTitle] = useState<string>('');
-  const [uploadCategory, setUploadCategory] = useState<'CATALOGUE' | 'BROCHURE' | 'PRODUCT_GUIDE'>('CATALOGUE');
-  const [uploadModel, setUploadModel] = useState<string>('');
-  const [uploadDesc, setUploadDesc] = useState<string>('');
-  const [selectedPdfDoc, setSelectedPdfDoc] = useState<any | null>(null);
-  const [isUploading, setIsUploading] = useState<boolean>(false);
 
   const fetchCatalogues = async (forceRefresh: boolean = false) => {
     try {
@@ -241,73 +230,6 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
     );
   };
 
-  // Pick PDF for Upload
-  const handlePickDocument = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
-        copyToCacheDirectory: true,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        setSelectedPdfDoc(asset);
-        if (!uploadTitle.trim()) {
-          const cleanName = (asset.name || '').replace(/\.pdf$/i, '').replace(/[-_]/g, ' ');
-          setUploadTitle(cleanName);
-        }
-      }
-    } catch (err: any) {
-      console.error('[Document Pick Error]', err);
-      Alert.alert('Error', 'Failed to pick document: ' + (err.message || 'Unknown error'));
-    }
-  };
-
-  // Submit Upload
-  const handleUploadSubmit = async () => {
-    if (!selectedPdfDoc) {
-      Alert.alert('Required', 'Please select a PDF file to upload.');
-      return;
-    }
-    if (!uploadTitle.trim()) {
-      Alert.alert('Required', 'Please enter a title for this document.');
-      return;
-    }
-
-    try {
-      setIsUploading(true);
-      const base64Data = await FileSystem.readAsStringAsync(selectedPdfDoc.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const res = await mobileApi.uploadCatalogue({
-        displayName: uploadTitle.trim(),
-        category: uploadCategory,
-        model: uploadModel.trim() || undefined,
-        description: uploadDesc.trim() || undefined,
-        fileName: selectedPdfDoc.name || 'document.pdf',
-        fileBase64: base64Data,
-      });
-
-      if (res.success) {
-        Alert.alert('Success', 'Document uploaded successfully and synced to all staff.');
-        setUploadModalVisible(false);
-        setSelectedPdfDoc(null);
-        setUploadTitle('');
-        setUploadModel('');
-        setUploadDesc('');
-        fetchCatalogues();
-      } else {
-        Alert.alert('Upload Failed', res.message || 'Could not upload document.');
-      }
-    } catch (err: any) {
-      console.error('[Upload Error]', err);
-      Alert.alert('Upload Error', err.message || 'Failed to upload document.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   const filteredCatalogues = catalogues.filter((item) => {
     if (searchQuery.trim().length === 0) return true;
     const q = searchQuery.toLowerCase().trim();
@@ -341,15 +263,6 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
         </View>
 
         <View style={styles.headerActions}>
-          {isAdmin && (
-            <TouchableOpacity
-              style={styles.uploadBtn}
-              onPress={() => setUploadModalVisible(true)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.uploadBtnText}>+ Upload</Text>
-            </TouchableOpacity>
-          )}
 
           {onClose && (
             <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.8}>
@@ -465,8 +378,6 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
           <Text style={styles.emptySub}>
             {searchQuery.length > 0
               ? 'No documents match your search query.'
-              : isAdmin
-              ? 'Tap "+ Upload" to add new PDF catalogues and brochures.'
               : 'Product catalogues will appear here once uploaded by Admin.'}
           </Text>
         </View>
@@ -617,154 +528,6 @@ export const CataloguesScreen: React.FC<CataloguesScreenProps> = ({
         isSharing={previewItem ? activeSharingId === previewItem.id : false}
       />
 
-      {/* ADMIN UPLOAD MODAL */}
-      <Modal
-        visible={uploadModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setUploadModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Upload PDF Document</Text>
-              <TouchableOpacity onPress={() => setUploadModalVisible(false)}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* FILE PICKER BUTTON */}
-              <Text style={styles.inputLabel}>1. SELECT PDF FILE *</Text>
-              <TouchableOpacity
-                style={styles.filePickerBox}
-                onPress={handlePickDocument}
-                activeOpacity={0.8}
-              >
-                <Text style={{ fontSize: 24, marginBottom: 4 }}>📄</Text>
-                <Text style={styles.filePickerTitle}>
-                  {selectedPdfDoc ? selectedPdfDoc.name : 'Tap to browse PDF file from device'}
-                </Text>
-                {selectedPdfDoc ? (
-                  <Text style={styles.filePickerSize}>
-                    {formatFileSize(selectedPdfDoc.size)} • Tap to change
-                  </Text>
-                ) : (
-                  <Text style={styles.filePickerSub}>Supports AC catalogues, brochures, manuals</Text>
-                )}
-              </TouchableOpacity>
-
-              {/* TITLE */}
-              <Text style={styles.inputLabel}>2. DOCUMENT TITLE *</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={uploadTitle}
-                onChangeText={setUploadTitle}
-                placeholder="e.g. Daikin Inverter 2026 Catalogue"
-                placeholderTextColor="#94A3B8"
-              />
-
-              {/* CATEGORY SELECTOR */}
-              <Text style={styles.inputLabel}>3. DOCUMENT CATEGORY</Text>
-              <View style={styles.catSelectRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.catOptionBtn,
-                    uploadCategory === 'CATALOGUE' && styles.catOptionBtnActive,
-                  ]}
-                  onPress={() => setUploadCategory('CATALOGUE')}
-                >
-                  <Text
-                    style={[
-                      styles.catOptionText,
-                      uploadCategory === 'CATALOGUE' && styles.catOptionTextActive,
-                    ]}
-                  >
-                    Catalogue
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.catOptionBtn,
-                    uploadCategory === 'BROCHURE' && styles.catOptionBtnActive,
-                  ]}
-                  onPress={() => setUploadCategory('BROCHURE')}
-                >
-                  <Text
-                    style={[
-                      styles.catOptionText,
-                      uploadCategory === 'BROCHURE' && styles.catOptionTextActive,
-                    ]}
-                  >
-                    Brochure
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.catOptionBtn,
-                    uploadCategory === 'PRODUCT_GUIDE' && styles.catOptionBtnActive,
-                  ]}
-                  onPress={() => setUploadCategory('PRODUCT_GUIDE')}
-                >
-                  <Text
-                    style={[
-                      styles.catOptionText,
-                      uploadCategory === 'PRODUCT_GUIDE' && styles.catOptionTextActive,
-                    ]}
-                  >
-                    Product Guide
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* MODEL (OPTIONAL) */}
-              <Text style={styles.inputLabel}>4. MODEL / SERIES (OPTIONAL)</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={uploadModel}
-                onChangeText={setUploadModel}
-                placeholder="e.g. FTKF50, Sensira Series"
-                placeholderTextColor="#94A3B8"
-              />
-
-              {/* DESCRIPTION */}
-              <Text style={styles.inputLabel}>5. DESCRIPTION / NOTES (OPTIONAL)</Text>
-              <TextInput
-                style={[styles.modalInput, { minHeight: 60, textAlignVertical: 'top' }]}
-                value={uploadDesc}
-                onChangeText={setUploadDesc}
-                placeholder="Summary or customer specifications..."
-                placeholderTextColor="#94A3B8"
-                multiline
-              />
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={() => setUploadModalVisible(false)}
-                >
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.saveBtn, isUploading && { opacity: 0.6 }]}
-                  onPress={handleUploadSubmit}
-                  disabled={isUploading}
-                >
-                  {isUploading ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>Upload & Sync</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
       {/* ADMIN RENAME MODAL */}
       <Modal
         visible={renameModalVisible}
@@ -852,17 +615,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  uploadBtn: {
-    backgroundColor: '#0066CC',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  uploadBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
   },
   closeBtn: {
     width: 32,

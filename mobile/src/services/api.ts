@@ -129,7 +129,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     dataCache.invalidate('attendance');
   }
   if (endpoint.includes('/stock-requirements')) {
-    dataCache.invalidate('stock-requirements');
+    dataCache.invalidate('stock_req'); // must match the `stock_req:` cache keys (was 'stock-requirements', which never matched)
   }
   if (endpoint.includes('/catalogues')) {
     dataCache.invalidate('catalogues');
@@ -368,6 +368,7 @@ export const mobileApi = {
     quantity: number;
     priority?: string;
     note?: string;
+    tentativeDate?: string; // YYYY-MM-DD
   }) =>
     request<any>('/stock-requirements', { method: 'POST', body: JSON.stringify(payload) }),
   getMyStockRequirements: () =>
@@ -381,7 +382,7 @@ export const mobileApi = {
   },
   getStockRequirement: (id: string) =>
     request<any>(`/stock-requirements/${id}`),
-  updateStockRequirement: (id: string, payload: { quantity?: number; priority?: string; note?: string }) =>
+  updateStockRequirement: (id: string, payload: { quantity?: number; priority?: string; note?: string; tentativeDate?: string | null }) =>
     request<any>(`/stock-requirements/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   changeStockRequirementStatus: (id: string, status: string) =>
     request<any>(`/stock-requirements/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
@@ -397,18 +398,6 @@ export const mobileApi = {
   },
   getCatalogue: (id: string) =>
     request<any>(`/catalogues/${id}`),
-  uploadCatalogue: (payload: {
-    displayName: string;
-    category?: string;
-    description?: string;
-    model?: string;
-    fileBase64: string;
-    fileName?: string;
-  }) =>
-    request<any>('/catalogues/upload', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
   renameCatalogue: (id: string, payload: { displayName: string; model?: string; category?: string; description?: string }) =>
     request<any>(`/catalogues/${id}/rename`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteCatalogue: (id: string) =>

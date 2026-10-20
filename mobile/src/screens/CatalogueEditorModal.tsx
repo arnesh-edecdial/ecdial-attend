@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,8 +16,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { mobileApi } from '../services/api';
 import {
   AC_TYPES,
@@ -35,6 +33,7 @@ import {
   titleCase,
   uid,
 } from './catalogueShared';
+import { CataloguePdfPicker, PickedPdf, fmtPdfSize } from './CataloguePdfPicker';
 
 /* ------------------------------------------------------------------ */
 /* Matrix editor pieces (memoised: typing in one cell re-renders only  */
@@ -203,12 +202,6 @@ interface Props {
   onSaved: (id?: string) => void;
 }
 
-// Serverless hosts cap a request body at roughly 4.5 MB, and a PDF grows by a third when sent as text.
-// Raise this only if the backend is changed to accept larger uploads.
-const MAX_PDF_MB = 3;
-
-const fmtSize = (b?: number) => (!b ? '' : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
-
 export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSaved }) => {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -233,9 +226,25 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
   );
   const [uploading, setUploading] = useState(0);
 
-  const [newPdf, setNewPdf] = useState<{ uri: string; name: string; size?: number } | null>(null);
-  const [removePdf, setRemovePdf] = useState(false);
-  const hasPdf = !!newPdf || (!!product?.catalogueDocId && !removePdf);
+  // Selected PDF = reference to an already-uploaded Catalogue record (uploads happen on the web admin page).
+  const [pdf, setPdf] = useState<PickedPdf | null>(
+    product?.catalogueDocId ? { id: String(product.catalogueDocId), name: '' } : null
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const hasPdf = !!pdf;
+
+  // Resolve the display name of the PDF already linked to this catalogue (one request).
+  useEffect(() => {
+    if (!product?.catalogueDocId) return;
+    let alive = true;
+    mobileApi
+      .getCatalogue(String(product.catalogueDocId))
+      .then((r) => alive && r?.data && setPdf({ id: String(r.data.id), name: r.data.displayName || r.data.fileName, size: r.data.fileSize }))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [product?.catalogueDocId]);
 
   const [tables, setTables] = useState<SpecTable[]>(() => specsToTables(product?.specifications));
   const [saving, setSaving] = useState(false);
@@ -309,65 +318,16 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
     });
 
   /* ---------- pdf ---------- */
-  const pickPdf = async () => {
-    try {
-      const r = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-      if (r.canceled || !r.assets?.length) return;
-      const a = r.assets[0];
-      if (a.size && a.size > MAX_PDF_MB * 1024 * 1024) {
-        Alert.alert(
-          'File too large',
-          `The server accepts PDFs up to ${MAX_PDF_MB} MB for now (it is sent inside a single request). Please compress this one, e.g. with a PDF compressor, and try again.`
-        );
-        return;
-      }
-      setNewPdf({ uri: a.uri, name: a.name || 'catalogue.pdf', size: a.size });
-      setRemovePdf(false);
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not pick the file.');
-    }
-  };
-
   /* ---------- save ---------- */
-  const save = async (skipPdf = false) => {
+  const save = async () => {
     if (saving) return;
     if (!name.trim()) {
       Alert.alert('Name required', 'Please enter a catalogue name.');
       return;
     }
     setSaving(true);
-    let uploadedDocId: string | null = null;
     try {
       const finalBrand = brand.trim() || 'Other';
-      let docId: string | null = product?.catalogueDocId || null;
-
-      if (newPdf && !skipPdf) {
-        try {
-          const b64 = await FileSystem.readAsStringAsync(newPdf.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const up = await mobileApi.uploadCatalogue({
-            displayName: `${finalBrand} ${name.trim()}`.trim(),
-            category: 'CATALOGUE',
-            model: model.trim() || undefined,
-            description: desc.trim() || undefined,
-            fileName: newPdf.name,
-            fileBase64: b64,
-          });
-          if (!up?.success || !up.data?.id) throw new Error(up?.message || 'The server did not accept the PDF.');
-          uploadedDocId = String(up.data.id);
-          docId = uploadedDocId;
-        } catch (pdfErr: any) {
-          console.warn('[Catalogue PDF upload]', pdfErr);
-          // do not lose the rest of the form because of the PDF
-          Alert.alert('PDF upload failed', `${pdfErr?.message || 'Unknown error'}\n\nSave the catalogue without the PDF? You can add it again later.`, [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Save without PDF', onPress: () => save(true) },
-          ]);
-          return;
-        }
-      } else if (removePdf) {
-        docId = null;
-      }
-
       const payload: any = {
         name: name.trim(),
         model: model.trim() || null,
@@ -380,7 +340,7 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
         availableStock: product?.availableStock ?? 0,
         defaultUnit: product?.defaultUnit || 'Nos',
         specifications: tablesToSpecs(tables),
-        catalogueDocId: docId,
+        catalogueDocId: pdf?.id ?? null,
         images: images.filter((i) => !String(i.id).startsWith('pending_')),
       };
 
@@ -402,13 +362,8 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
         }
       }
 
-      // old PDF is replaced or removed: clean it up (best effort)
-      const oldDoc = product?.catalogueDocId;
-      if (oldDoc && oldDoc !== docId) Promise.resolve(mobileApi.deleteCatalogue(oldDoc)).catch(() => {});
-
       onSaved(savedId);
     } catch (e: any) {
-      if (uploadedDocId) Promise.resolve(mobileApi.deleteCatalogue(uploadedDocId)).catch(() => {});
       Alert.alert('Could not save', e?.message || 'Please try again.');
     } finally {
       setSaving(false);
@@ -504,8 +459,8 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
               <View style={s.pdfRow}>
                 <View style={s.pdfIcon}><Text style={s.pdfIconText}>PDF</Text></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.pdfName} numberOfLines={1}>{newPdf ? newPdf.name : 'Catalogue PDF attached'}</Text>
-                  <Text style={s.help2}>{newPdf ? `${fmtSize(newPdf.size)} · uploads when you save` : 'Replace or remove below'}</Text>
+                  <Text style={s.pdfName} numberOfLines={1}>{pdf?.name || 'Catalogue PDF attached'}</Text>
+                  {!!fmtPdfSize(pdf?.size) && <Text style={s.help2}>{fmtPdfSize(pdf?.size)}</Text>}
                 </View>
               </View>
             ) : (
@@ -513,19 +468,29 @@ export const CatalogueEditorModal: React.FC<Props> = ({ product, onClose, onSave
             )}
             <View style={s.hair} />
             <View style={{ flexDirection: 'row' }}>
-              <Pressable style={s.rowBtn} onPress={pickPdf}>
-                <Text style={s.navBlue}>{hasPdf ? 'Replace PDF' : 'Choose PDF'}</Text>
+              <Pressable style={s.rowBtn} onPress={() => setPickerOpen(true)}>
+                <Text style={s.navBlue}>{hasPdf ? 'Change PDF' : 'Select PDF'}</Text>
               </Pressable>
               {hasPdf && (
                 <>
                   <View style={s.vHair} />
-                  <Pressable style={s.rowBtn} onPress={() => { setNewPdf(null); setRemovePdf(true); }}>
+                  <Pressable style={s.rowBtn} onPress={() => setPdf(null)}>
                     <Text style={[s.navBlue, { color: C.red }]}>Remove</Text>
                   </Pressable>
                 </>
               )}
             </View>
           </View>
+          {pickerOpen && (
+            <CataloguePdfPicker
+              selectedId={pdf?.id}
+              onClose={() => setPickerOpen(false)}
+              onSelect={(p) => {
+                setPdf(p);
+                setPickerOpen(false);
+              }}
+            />
+          )}
 
           {/* TABLES */}
           <View style={s.secRow}>
